@@ -1,0 +1,155 @@
+Account types and RBAC for Cecille's N'Style
+
+Overview
+- Purpose: define account types, role-based access control (RBAC) permission strings, default role→permission mappings, and implementation notes for modules in the system.
+- Naming convention: module.action (e.g., products.create, sales.refund). Use CRUD plus domain actions.
+
+Account Types (roles) and short descriptions
+- Admin: Full system control — users, roles, settings, data export, all permissions.
+- Manager: Business-level tasks — reports, approve adjustments, supplier orders, view/modify most business data.
+- Sales Clerk: POS operations — create sales, refunds, view products and customers.
+- Inventory Clerk: Stock operations — stock-in, stock-out, adjustments, inventory reconciliation.
+- Accountant: Financial operations — payroll processing, financial reports, exports.
+- HR: Employee management — staff records, attendance management.
+- Auditor / ReadOnly: View-only access to reports and records.
+- Supplier (optional external): Limited portal for purchase orders/status (if built).
+
+Permission strings by module
+(Use these when storing/checking permissions.)
+
+Auth & Users
+- auth.login
+- auth.logout
+- users.view
+- users.create
+- users.update
+- users.delete
+- roles.view
+- roles.create
+- roles.update
+- roles.delete
+
+Products / Catalog
+- products.view
+- products.create
+- products.update
+- products.delete
+- products.import
+- products.export
+
+Inventory
+- inventory.view
+- inventory.receive        # stock-in
+- inventory.dispatch       # stock-out / transfer out
+- inventory.adjust         # manual adjustments
+- inventory.reconcile      # reconciliation actions
+- inventory.export
+- inventory.lowstock_alert_manage
+
+Sales / POS
+- sales.view
+- sales.create
+- sales.refund
+- sales.print_receipt
+- sales.export
+
+Customers
+- customers.view
+- customers.create
+- customers.update
+- customers.delete
+
+Suppliers & Purchases
+- suppliers.view
+- suppliers.create
+- suppliers.update
+- suppliers.delete
+- purchase.create
+- purchase.view
+- purchase.receive
+
+Employees & Attendance
+- employees.view
+- employees.create
+- employees.update
+- employees.delete
+- attendance.record
+- attendance.view
+
+Payroll & Finance
+- payroll.view
+- payroll.process
+- payroll.adjust
+- payroll.export
+- finance.reports.view
+
+Reports & Exports
+- reports.view
+- reports.generate
+- reports.export
+
+System & Health
+- system.health
+- system.config.update
+- system.audit.view
+
+Admin wildcard
+- admin.*  # maps to all permissions; use sparingly
+
+Default role → permission mapping (recommended starter sets)
+- Admin: all permissions (admin.*)
+- Manager: reports.view, reports.generate, products.view, products.create, products.update, inventory.view, inventory.reconcile, suppliers.view, purchase.create, sales.view, payroll.view
+- Sales Clerk: sales.create, sales.view (own), sales.print_receipt, customers.create, customers.view, products.view
+- Inventory Clerk: inventory.view, inventory.receive, inventory.dispatch, inventory.adjust, products.view
+- Accountant: payroll.view, payroll.process, payroll.export, finance.reports.view, reports.view
+- HR: employees.view, employees.create, employees.update, attendance.record, attendance.view
+- Auditor: reports.view, reports.export, system.audit.view
+- Supplier: suppliers.view (limited), purchase.view (limited), purchase.receive (if applicable)
+
+Principles
+- Least privilege: assign only required permissions per role; allow role composition if needed.
+- Granular over broad: prefer explicit permission strings for critical actions (e.g., payroll.process) rather than bundling.
+- Immutable audit trail: critical operations (stock adjustments, sales refunds, payroll changes) must be logged with user, timestamp, reason.
+
+Implementation notes (backend)
+- Schema suggestion (minimal):
+  - `roles` (id, name, description, created_at)
+  - `permissions` (id, name, description)
+  - `role_permissions` (role_id, permission_id)
+  - `users` (id, username, password_hash, role_id or use user_roles join)
+  - `user_roles` (user_id, role_id) -- support multi-role
+  - `user_permissions` (user_id, permission_id) -- optional for overrides
+  - `audit_logs` (id, user_id, action, resource, details, created_at)
+
+- Enforcement:
+  - Create an `authorize(permission)` middleware that checks `req.user.permissions` or resolves permissions from roles and user overrides.
+  - Protect controllers with `authorize('module.action')` checks.
+  - Admin wildcard support: when resolving permissions, expand `admin.*` into all permissions or treat it specially.
+
+- Token & session:
+  - Use JWT (short expiry + refresh token) or sessions. Store minimal role/permissions in token and verify server-side where required.
+  - Always re-check critical permissions server-side, don't rely solely on token content.
+
+Implementation notes (frontend)
+- Central `api` client should include user session token and a `getUserPermissions()` helper.
+- Route guarding:
+  - Add a `ProtectedRoute` that checks required permission and redirects to 403 or login.
+  - UI components should hide/disable actions based on permission checks (non-authoritative; backend must enforce).
+
+Example: protecting an endpoint
+- Backend route: `POST /inventory/adjust` -> middleware `authorize('inventory.adjust')` -> controller.
+- Frontend: `if (!hasPermission('inventory.adjust')) showDisabledButton()` and guard route.
+
+Bootstrap & admin UX
+- Provide one bootstrap Admin user during DB init (seed), instruct to change password.
+- Provide a `roles` management UI for Admin to adjust role→permission mappings.
+
+Testing & migration
+- Write integration tests asserting that each protected endpoint returns 403 for users without permission and 200 for users with permission.
+- Provide migration SQL or use a migrations tool (Knex/umzug) to add `roles/permissions` tables and seed default roles and permissions.
+
+Notes on extensibility
+- Consider feature flags for new modules.
+- Consider hierarchical roles or permission groups if many permissions grow.
+
+File created: account_rbac.txt

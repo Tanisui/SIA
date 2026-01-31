@@ -2,15 +2,20 @@
   "name": "frontend",
   "version": "1.0.0",
   "private": true,
-  "description": "Frontend React (JavaScript) for SIA project",
+  "description": "React.JS",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@reduxjs/toolkit": "^2.11.2",
+    "axios": "^1.13.4",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "react-redux": "^9.2.0",
+    "react-router-dom": "^7.13.0",
+    "redux": "^5.0.1"
   },
   "devDependencies": {
     "vite": "^7.3.1"

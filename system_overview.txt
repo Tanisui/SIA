@@ -1,0 +1,96 @@
+MANUSCRIPT
+
+- PDF found: "Cecilles-Nstyle-SAD-Manuscript-Ilanga-Palanca-Sintos-2 .pdf"
+- Extraction status: NOT EXTRACTED (environment prevented installing PyPDF2).
+
+How to extract locally (two options):
+
+Option A — Python venv + PyPDF2 (recommended):
+
+```bash
+cd /path/to/SIA
+python3 -m venv .venv
+source .venv/bin/activate
+pip install pypdf2
+python3 - <<'PY'
+from PyPDF2 import PdfReader
+r = PdfReader("Cecilles-Nstyle-SAD-Manuscript-Ilanga-Palanca-Sintos-2 .pdf")
+with open("manuscript.txt","w",encoding="utf-8") as f:
+    for p in r.pages:
+        f.write(p.extract_text() or "")
+        f.write("\n\n")
+print('WROTE manuscript.txt')
+PY
+```
+
+Option B — poppler `pdftotext` (fast, native):
+
+```bash
+brew install poppler
+pdftotext "Cecilles-Nstyle-SAD-Manuscript-Ilanga-Palanca-Sintos-2 .pdf" manuscript.txt
+```
+
+Once `manuscript.txt` is available I can produce a concise summary and integrate it into this file.
+
+
+PROJECT INVENTORY AND ASSESSMENT
+
+Files discovered:
+- backend/package.json
+- backend/package-lock.json
+- backend/.gitignore
+- backend/.npmrc
+- backend/server.js
+- backend/src/database/database.js
+- backend/src/database/sia.sql
+- frontend/index.html
+- frontend/package.json
+- frontend/package-lock.json
+- frontend/.gitignore
+- frontend/src/main.js
+- frontend/src/App.js
+- frontend/src/api/api.js (empty)
+- Cecilles-Nstyle-SAD-Manuscript-Ilanga-Palanca-Sintos-2 .pdf
+
+Backend (backend/)
+- `package.json`: Dependencies are `express`, `dotenv`, `mysql2`, `cors`. Start script: `node server.js`. Node engine >=14. Good minimal setup.
+- `server.js`: Uses `dotenv`, `express`, `cors`. Exposes `/` which calls `db.testConnection()` and `/health/db` to check DB; listens on `PORT` env var. Suggestion: handle uncaught rejections and add graceful shutdown.
+- `src/database/database.js`: Creates a MySQL pool via `mysql2/promise`; reads DB_* env variables. Warn: there are default credentials (`ferdinand` / `root`) in code — remove defaults and require env values or provide safer defaults. Also ensure the `.env` file is not committed with secrets.
+- `src/database/sia.sql`: DB schema present (good to initialize DB).
+
+Frontend (frontend/)
+- `package.json`: Uses React 18 and Vite; `axios` and `react-router-dom` are installed.
+- `index.html`: Vite entry; root `div#root` present.
+- `src/main.js`: Renders `App` using `createRoot`. `react-router-dom` not yet used — wrap `App` with `BrowserRouter` when adding routes.
+- `src/App.js`: Minimal placeholder UI.
+- `src/api/api.js`: Empty — good location to centralize `axios` configuration (baseURL, interceptors).
+
+Empty folders / files:
+- `frontend/src/api/api.js` is empty — add axios client there.
+
+Security & env
+- I created a backend `.env` earlier; ensure `backend/.env` is listed in `.gitignore` and not committed.
+- Add a `backend/.env.example` with placeholder values (DB_HOST, DB_PORT, DB_DATABASE, DB_USERNAME, DB_PASSWORD, PORT).
+
+Recommendations / Next steps
+1. Extract and summarize the manuscript locally (see commands above). I can then add a concise summary into this file.
+2. Backend:
+   - Remove hard-coded DB defaults from `database.js` and fail fast if required env vars are missing (or supply safe defaults only for local dev).
+   - Add scripts for migrations or run `sia.sql` as part of a setup script.
+   - Add `npm run start` logging and a `dev` script (e.g., `nodemon`) for development.
+   - Add basic error-handling middlewares and graceful shutdown.
+3. Frontend:
+   - Initialize `src/api/api.js` with an axios instance using an environment-based `REACT_APP_API_BASE` or Vite `import.meta.env.VITE_API_BASE`.
+   - Wire `react-router-dom`: wrap `App` (in `src/main.js`) with `BrowserRouter` and create a couple of placeholder routes.
+   - Add a simple fetch example (axios) in `App` or a new component to call backend `/health/db`.
+4. Repo hygiene:
+   - Add `backend/.env.example` and `frontend/.env.example` showing required env vars.
+   - Ensure `.gitignore` ignores actual `.env` files and node_modules.
+   - Add README at repo root with minimal setup/run instructions for both backend and frontend.
+
+If you want, I can now:
+- (A) Attempt extraction again inside a venv I create locally (I couldn't install system-wide packages here), or
+- (B) Add the `axios` client and `react-router` wiring in the frontend (`src/api/api.js`, `src/main.js`, and an example route/component), or
+- (C) Create `backend/.env.example` and improve `database.js` to avoid hard-coded defaults.
+
+Which should I do next? (If you want the manuscript summarized here, give me permission to create a local venv and extract it; otherwise run the extraction commands locally and I will summarize the resulting `manuscript.txt`.)

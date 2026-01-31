@@ -1,0 +1,90 @@
+Modules & Attributes — Cecille's N'Style
+
+1) Auth / Users
+- Attributes: id, username, email, password_hash, full_name, roles, is_active, last_login, created_at, updated_at
+- User inputs: email/username, password, full name, role selection, reset-password, activate/deactivate
+- Details: password strength, email uniqueness, optional 2FA, role assignment
+
+2) Roles & Permissions (RBAC)
+- Attributes: role_id, role_name, description; permission_id, permission_name; role_permissions
+- User inputs: role name, permissions checklist, assign role(s) to user
+- Details: support multi-role (user_roles), admin wildcard
+
+3) Products / Catalog
+- Attributes: id, sku, name, description, category_id, price, cost, stock_quantity, size, color, barcode, images, created_at, updated_at
+- User inputs: name, SKU, category, price, cost, initial stock, variant options, image upload
+- Details: SKU unique, price/cost numeric validation, optional bulk import CSV
+
+4) Inventory
+- Attributes: id, product_id, transaction_type (IN/OUT/ADJUST/RETURN), quantity, location, reference, user_id, reason, timestamp, balance_after
+- User inputs: select product, transaction type, quantity, location, reference/notes, date
+- Details: automatic stock updates, audit log for adjustments, reconcile flows
+
+5) Sales / POS
+- Attributes: sale_id, date, clerk_id, customer_id, items (sale_items), subtotal, tax, discount, total, payment_method, status, receipt_no
+- SaleItem: sale_item_id, sale_id, product_id, qty, unit_price, line_total
+- User inputs: add items (SKU/search), qty, discounts, payment method, customer lookup, confirm sale
+- Details: immediate stock decrement, receipt generation, refund flow
+
+6) Customers
+- Attributes: id, name, phone, email, address, notes, loyalty_points, created_at
+- User inputs: name, contact, email, address, notes
+- Details: lookup by phone, consent for marketing
+
+7) Suppliers & Purchases
+- Supplier attributes: supplier_id, name, contact_person, phone, email, address
+- Purchase Order: po_id, supplier_id, items, status, received_date, total
+- User inputs: supplier details, create PO (items, qty, expected date), mark received
+- Details: PO lifecycle, link received stock to inventory transactions
+
+8) Employees
+- Attributes: employee_id, name, role, contact, hire_date, pay_rate, employment_status, bank_details
+- User inputs: name, contact, role assignment, pay rate, start date
+- Details: tie to attendance and payroll
+
+9) Attendance / Timesheets
+- Attributes: attendance_id, employee_id, date, clock_in, clock_out, hours_worked, notes
+- User inputs: clock-in/out (or manual entry), date, reason for adjustments
+- Details: calculate hours, overtime, export for payroll
+
+10) Payroll
+- Attributes: payroll_id, employee_id, period_start, period_end, gross_pay, deductions, advances, net_pay, status, processed_by, processed_at
+- User inputs: select period, approve payroll, enter adjustments/deductions, confirm payment
+- Details: formula-based calculation from attendance and pay_rate; store payslip records
+
+11) Reports & Analytics
+- Attributes: saved reports: report_id, name, filters, owner, created_at (results are query-driven)
+- User inputs: date range, filters (product/category/supplier/employee), export format (CSV/PDF)
+- Details: prebuilt reports (sales summary, inventory movement, payroll summary), scheduling
+
+12) Audit / Logs
+- Attributes: log_id, user_id, action, resource_type, resource_id, details, timestamp
+- User inputs: reason field for important actions (stock adjustments, refunds)
+- Details: immutable audit entries for compliance and troubleshooting
+
+13) Files / Media
+- Attributes: file_id, path, original_name, type, size, uploaded_by, uploaded_at
+- User inputs: file upload (product images, receipts, payslips)
+- Details: storage (disk/cloud), file-type/size validation, signed URLs for private files
+
+14) Notifications / Email
+- Attributes: notification_id, type, recipient_user_id, payload, status, sent_at
+- User inputs: subscription preferences, manual trigger for notifications
+- Details: templates for email/SMS, background worker for sending
+
+15) System / Health / Config
+- Attributes: config_key, config_value, last_updated; health endpoints for service/db status
+- User inputs: system settings UI (business name, tax rates, receipt footer)
+- Details: protected by admin role; expose /health endpoints
+
+16) API / Integration
+- Attributes: api_key_id, key, name, permissions, created_at; webhooks: id, url, events
+- User inputs: generate API key, webhook URL and events
+- Details: rate-limit keys, restrict scopes, webhook retries
+
+Notes & Relations
+- Relationships: sales -> sale_items -> products; purchase_orders -> products; employees -> attendance -> payroll
+- Validation: qty >= 0, price >= 0, unique constraints (SKU, email), referential integrity
+- UI: forms with client-side validation, search/autocomplete for products/customers/suppliers
+
+Use this file as the canonical module + attribute reference for DB schema design, API contract, and frontend forms.

@@ -1,0 +1,88 @@
+Cecille's N'Style — Manuscript Summary
+
+Overview
+- Project: "Cecille's N'Style Boutique Management System" — a retail management system for a small clothing boutique in Davao City.
+- Purpose: Replace the current semi-manual, paper-based processes with a centralized system to manage sales, inventory, employees/payroll, suppliers, and reporting.
+- Scope: Point-of-sale, inventory tracking (stock-ins/stock-outs/returns), customer/supplier records, employee attendance and payroll calculations, basic analytics/reports, and administrative interfaces.
+
+Primary Actors
+- Store Owner / Manager (Admin)
+- Sales Clerk (POS user)
+- Supplier (external entity recorded in system)
+- Customer (recorded for orders/loyalty)
+
+Key Problems Identified
+- No centralized record system (customers, employees, products).
+- Inventory movement not tracked systematically (leading to inaccuracies).
+- Payroll computed manually (attendance, deductions, advances not automated).
+- Sales and supplier transactions not recorded electronically (traceability, profitability missing).
+- Lack of analytics and automated reports for decision-making.
+
+Functional Requirements (high level)
+1. Authentication & Authorization
+   - Admin and clerk roles, secure login.
+2. Product & Inventory Management
+   - CRUD for products, categories, sizing/variants.
+   - Record stock-ins, stock-outs, returns, damaged goods.
+   - Real-time stock level checks and alerts for low stock.
+3. Sales / POS
+   - Create sales transactions, support multiple payment methods.
+   - Generate receipts and persist sales records with timestamps, clerk, items, totals.
+4. Customer & Supplier Management
+   - Store customer contact and order history; record supplier details and purchase orders.
+5. Employee & Payroll Management
+   - Employee records, attendance logging, automated payroll calculations (hours, deductions, advances).
+6. Reporting & Analytics
+   - Daily/weekly/monthly sales reports, inventory valuation, payroll summaries, supplier purchase logs.
+7. Data Import / Initialization
+   - Schema and seed data loader (use `sia.sql` for DB initialization).
+
+Non-Functional Requirements
+- Use MySQL (existing choice in repo) via connection pool for concurrent access.
+- Simple, responsive frontend (Vite + React already present).
+- Local-first deployment for small-shop environment; support small-scale concurrency.
+- Basic logging and error handling; secure storage of credentials (use `.env`, ignore in git).
+
+Suggested Data Model (entities)
+- Product (id, sku, name, category, price, cost, stock_qty, size, color, notes)
+- InventoryTransaction (id, product_id, type[in/out/return/damage], qty, date, reference)
+- Sale (id, date, total, payment_method, clerk_id, customer_id)
+- SaleItem (sale_id, product_id, qty, unit_price)
+- Employee (id, name, role, contact, pay_rate)
+- Attendance (employee_id, date, clock_in, clock_out, hours)
+- Payroll (employee_id, period_start, period_end, gross_pay, deductions, net_pay)
+- Supplier (id, name, contact, address)
+- Customer (id, name, contact, notes)
+
+API / Endpoints (examples)
+- GET /health/db
+- POST /auth/login
+- GET /products, POST /products, PUT /products/:id
+- GET /inventory, POST /inventory/transaction
+- POST /sales, GET /sales/:id
+- GET /employees, POST /employees
+- GET /reports/sales?start=&end=
+
+Assessment of current repo (short)
+- Backend: Minimal Express server with `/` and `/health/db`; DB pool in `backend/src/database/database.js` uses env vars. `backend/src/database/sia.sql` provides schema. Remove hard-coded defaults in DB code; add `backend/.env.example`.
+- Frontend: Vite + React ready; `axios` and `react-router-dom` installed. `src/api/api.js` is empty — create axios client and wire `BrowserRouter` in `src/main.js`. `App.js` is placeholder.
+
+Immediate Next Steps (recommended)
+1. Create `backend/.env.example` and secure real `.env` locally.
+2. Harden `database.js` to require env vars in production and avoid insecure defaults.
+3. Implement basic axios client in `frontend/src/api/api.js` with `VITE_API_BASE` or similar.
+4. Wrap `App` with `BrowserRouter`; add routes for Dashboard, POS, Inventory, Employees, Reports.
+5. Implement backend CRUD endpoints for Products, InventoryTransactions, Sales, Employees.
+6. Load `sia.sql` to initialize the database and run integration tests against local DB.
+
+Files I created/updated
+- `manuscript.txt` (extracted full text)
+- `system_overview.txt` (project assessment)
+- `manuscript_summary.txt` (this summary)
+
+If you want, I can now:
+- Implement the `axios` client and basic route scaffolding in the frontend, or
+- Harden `database.js` and add `backend/.env.example`, or
+- Scaffold the main backend APIs and sample DB seed execution script.
+
+Which of these should I pick next?
