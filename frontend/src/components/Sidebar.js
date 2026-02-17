@@ -2,34 +2,69 @@ import React from 'react'
 import { NavLink } from 'react-router-dom'
 import { useSelector } from 'react-redux'
 
+const NAV_ITEMS = [
+  { section: 'Main' },
+  { to: '/',            label: 'Dashboard',  end: true,  icon: '⊞',  perm: null },
+  { section: 'Store' },
+  { to: '/products',    label: 'Products',   icon: '👗',  perm: 'products.view' },
+  { to: '/inventory',   label: 'Inventory',  icon: '📦',  perm: 'inventory.view' },
+  { to: '/sales',       label: 'Sales',      icon: '🧾',  perm: 'sales.view' },
+  { to: '/customers',   label: 'Customers',  icon: '👤',  perm: 'customers.view' },
+  { to: '/purchasing',  label: 'Purchasing', icon: '🛒',  perm: 'purchasing.view' },
+  { section: 'People' },
+  { to: '/employees',   label: 'Employees',  icon: '👥',  perm: 'employees.view' },
+  { to: '/payroll',     label: 'Payroll',    icon: '💰',  perm: 'payroll.view' },
+  { to: '/attendance',  label: 'Attendance', icon: '🕐',  perm: 'attendance.view' },
+  { section: 'Finance' },
+  { to: '/accounting',  label: 'Accounting', icon: '📊',  perm: 'finance.reports.view' },
+  { to: '/reports',     label: 'Reports',    icon: '📈',  perm: 'reports.view' },
+  { section: 'System' },
+  { to: '/users',       label: 'Users',      icon: '🔑',  perm: 'users.view' },
+  { to: '/roles',       label: 'Roles',      icon: '🛡',  perm: 'roles.view' },
+  { to: '/audit',       label: 'Audit',      icon: '📋',  perm: 'system.audit.view' },
+]
+
 export default function Sidebar() {
-  const permissions = useSelector(s => s.auth && s.auth.permissions ? s.auth.permissions : JSON.parse(localStorage.getItem('permissions') || '[]'))
+  const permissions = useSelector(s =>
+    s.auth && s.auth.permissions
+      ? s.auth.permissions
+      : JSON.parse(localStorage.getItem('permissions') || '[]')
+  )
 
   const can = (perm) => {
+    if (!perm) return true
     if (!permissions) return false
     if (permissions.includes('admin.*')) return true
     return permissions.includes(perm)
   }
 
-  return (
-    React.createElement('aside', { style: { width: 220, borderRight: '1px solid #eee', padding: 12 } },
-      React.createElement('nav', null,
-        React.createElement('ul', { style: { listStyle: 'none', padding: 0 } },
-          React.createElement('li', null, React.createElement(NavLink, { to: '/', end: true }, 'Dashboard')),
-          can('users.view') && React.createElement('li', null, React.createElement(NavLink, { to: '/users' }, 'Users')),
-          can('roles.view') && React.createElement('li', null, React.createElement(NavLink, { to: '/roles' }, 'Roles')),
-          can('products.view') && React.createElement('li', null, React.createElement(NavLink, { to: '/products' }, 'Products')),
-          can('inventory.view') && React.createElement('li', null, React.createElement(NavLink, { to: '/inventory' }, 'Inventory')),
-          can('sales.view') && React.createElement('li', null, React.createElement(NavLink, { to: '/sales' }, 'Sales')),
-          can('customers.view') && React.createElement('li', null, React.createElement(NavLink, { to: '/customers' }, 'Customers')),
-          can('purchase.view') && React.createElement('li', null, React.createElement(NavLink, { to: '/purchasing' }, 'Purchasing')),
-          can('employees.view') && React.createElement('li', null, React.createElement(NavLink, { to: '/employees' }, 'Employees')),
-          can('payroll.view') && React.createElement('li', null, React.createElement(NavLink, { to: '/payroll' }, 'Payroll')),
-          can('finance.reports.view') && React.createElement('li', null, React.createElement(NavLink, { to: '/accounting' }, 'Accounting')),
-          can('reports.view') && React.createElement('li', null, React.createElement(NavLink, { to: '/reports' }, 'Reports')),
-          can('system.audit.view') && React.createElement('li', null, React.createElement(NavLink, { to: '/audit' }, 'Audit')),
-          can('attendance.view') && React.createElement('li', null, React.createElement(NavLink, { to: '/attendance' }, 'Attendance'))
-        )
+  return React.createElement('aside', { className: 'sidebar' },
+    // Logo
+    React.createElement('div', { className: 'sidebar-logo' },
+      React.createElement('span', null, "Cecille's N'Style"),
+      React.createElement('small', null, 'POS System')
+    ),
+    // Nav
+    React.createElement('nav', null,
+      React.createElement('ul', null,
+        NAV_ITEMS.map((item, i) => {
+          if (item.section) {
+            return React.createElement('li', { key: `section-${i}` },
+              React.createElement('div', { className: 'sidebar-section' }, item.section)
+            )
+          }
+          if (!can(item.perm)) return null
+          return React.createElement('li', { key: item.to },
+            React.createElement(NavLink, {
+              to: item.to,
+              end: item.end || false,
+              className: ({ isActive }) => isActive ? 'active' : ''
+            },
+              React.createElement('span', { style: { fontSize: 15, width: 20, textAlign: 'center' } }, item.icon),
+              item.label
+            )
+          )
+        })
       )
     )
   )
