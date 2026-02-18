@@ -1,5 +1,5 @@
--- CREATE DATABASE cecille_nstyle; 
--- USE cecille_nstyle;
+CREATE DATABASE cecilles_nstyle_db; 
+USE cecilles_nstyle_db;
 
 SET FOREIGN_KEY_CHECKS = 0;
 
@@ -67,10 +67,12 @@ CREATE TABLE IF NOT EXISTS `products` (
 	`price` DECIMAL(12,2) DEFAULT 0.00,
 	`cost` DECIMAL(12,2) DEFAULT 0.00,
 	`stock_quantity` INT DEFAULT 0,
+	`low_stock_threshold` INT DEFAULT 10,
 	`size` VARCHAR(64),
 	`color` VARCHAR(64),
 	`barcode` VARCHAR(128),
 	`images` JSON,
+	`is_active` TINYINT(1) DEFAULT 1,
 	`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	`updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 	FOREIGN KEY (`category_id`) REFERENCES `categories`(`id`) ON DELETE SET NULL
@@ -89,6 +91,17 @@ CREATE TABLE IF NOT EXISTS `inventory_transactions` (
 	`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (`product_id`) REFERENCES `products`(`id`) ON DELETE CASCADE,
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `damaged_inventory` (
+	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+	`product_id` BIGINT UNSIGNED NOT NULL,
+	`quantity` INT NOT NULL,
+	`reason` TEXT,
+	`reported_by` BIGINT UNSIGNED,
+	`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY (`product_id`) REFERENCES `products`(`id`) ON DELETE CASCADE,
+	FOREIGN KEY (`reported_by`) REFERENCES `users`(`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `customers` (

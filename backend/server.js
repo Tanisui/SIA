@@ -7,6 +7,12 @@ const rbacRoutes = require('./src/routes/rbac')
 const authRoutes = require('./src/routes/auth')
 const usersRoutes = require('./src/routes/users')
 const rolesRoutes = require('./src/routes/roles')
+const productsRoutes = require('./src/routes/products')
+const suppliersRoutes = require('./src/routes/suppliers')
+const inventoryRoutes = require('./src/routes/inventory')
+const purchaseOrdersRoutes = require('./src/routes/purchaseOrders')
+const salesRoutes = require('./src/routes/sales')
+const customersRoutes = require('./src/routes/customers')
 
 const PORT = process.env.PORT || 3000
 
@@ -15,6 +21,12 @@ app.use('/rbac', rbacRoutes)
 app.use('/auth', express.json(), authRoutes)
 app.use('/users', usersRoutes)
 app.use('/roles', rolesRoutes)
+app.use('/products', productsRoutes)
+app.use('/suppliers', suppliersRoutes)
+app.use('/inventory', inventoryRoutes)
+app.use('/purchase-orders', purchaseOrdersRoutes)
+app.use('/sales', salesRoutes)
+app.use('/customers', customersRoutes)
 
 app.use((req, res, next) => {
   res.setHeader(
@@ -44,7 +56,8 @@ app.get('/health', async (req, res) => {
 
 
 const server = app.listen(PORT, () => {
-  console.log(`\nBackend initialized successfully!`)
+  console.log(`\nBackend initialized successfully!\n`)
+  console.log("Database has been initialized")
 })
 
 server.on('error', (err) => {

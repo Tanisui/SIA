@@ -7,7 +7,7 @@ const crypto = require('crypto')
 const {
 	DB_HOST = 'localhost',
 	DB_PORT = 3306,
-	DB_DATABASE = 'cecille_nstyle',
+	DB_DATABASE = 'cecilles_nstyle_db',
 	DB_USERNAME = 'root',
 	DB_PASSWORD = ''
 } = process.env
@@ -45,7 +45,7 @@ async function seed() {
 		'customers.view','customers.create','customers.update','customers.delete',
 
 		'suppliers.view','suppliers.create','suppliers.update','suppliers.delete',
-		'purchase.create','purchase.view','purchase.receive',
+		'purchase.create','purchase.view','purchase.receive','purchase.update','purchase.delete',
 
 		'employees.view','employees.create','employees.update','employees.delete','attendance.record','attendance.view',
 
@@ -65,13 +65,22 @@ async function seed() {
 		'Admin': ['admin.*'],
 		'Manager': [
 			'reports.view','reports.generate','products.view','products.create','products.update',
-			'inventory.view','inventory.reconcile','suppliers.view','purchase.create','sales.view','payroll.view'
+			'inventory.view','inventory.receive','inventory.dispatch','inventory.adjust','inventory.reconcile',
+			'suppliers.view','suppliers.create','suppliers.update',
+			'purchase.create','purchase.view','purchase.receive','purchase.update',
+			'sales.view','sales.create','sales.refund',
+			'customers.view','customers.create','customers.update',
+			'payroll.view'
 		],
 		'Sales Clerk': [
-			'sales.create','sales.view','sales.print_receipt','customers.create','customers.view','products.view'
+			'sales.create','sales.view','sales.print_receipt','sales.refund',
+			'customers.create','customers.view','customers.update',
+			'products.view','inventory.view'
 		],
 		'Inventory Clerk': [
-			'inventory.view','inventory.receive','inventory.dispatch','inventory.adjust','products.view'
+			'inventory.view','inventory.receive','inventory.dispatch','inventory.adjust',
+			'products.view','products.create','products.update',
+			'suppliers.view','purchase.view','purchase.create','purchase.receive'
 		],
 		'Accountant': [
 			'payroll.view','payroll.process','payroll.export','finance.reports.view','reports.view'

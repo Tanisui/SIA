@@ -18,9 +18,9 @@ if (!DB_HOST || !DB_DATABASE || !DB_USERNAME) {
 const pool = mysql.createPool({
   host: DB_HOST || 'localhost',
   port: DB_PORT ? Number(DB_PORT) : 3306,
-  user: DB_USERNAME || 'ferdinand',
-  password: DB_PASSWORD || 'root',
-  database: DB_DATABASE || undefined,
+  user: DB_USERNAME || 'root',
+  password: DB_PASSWORD || '',
+  database: DB_DATABASE || "cecilles_nstyle_db",
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0
