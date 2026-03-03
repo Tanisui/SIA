@@ -5,18 +5,18 @@ const schema = [
   { name: 'id', label: 'ID', hidden: true },
   { name: 'sku', label: 'SKU' },
   { name: 'name', label: 'Name' },
-  { name: 'category_id', label: 'Category ID' },
-  { name: 'category', label: 'Category' },
+  { name: 'brand', label: 'Brand' },
+  { name: 'category_id', label: 'Category ID', hidden: true },
+  { name: 'category', label: 'Category', hideInForm: true },
   { name: 'description', label: 'Description', type: 'textarea' },
-  { name: 'unit_price', label: 'Unit price', type: 'number' },
-  { name: 'cost_price', label: 'Cost price', type: 'number' },
-  { name: 'stock_quantity', label: 'Stock qty', type: 'number' },
+  { name: 'price', label: 'Price', type: 'number' },
+  { name: 'cost', label: 'Cost', type: 'number' },
+  { name: 'stock_quantity', label: 'Stock Qty', type: 'number' },
+  { name: 'low_stock_threshold', label: 'Low Stock Threshold', type: 'number' },
   { name: 'size', label: 'Size' },
   { name: 'color', label: 'Color' },
   { name: 'barcode', label: 'Barcode' },
-  { name: 'images', label: 'Images' },
-  { name: 'taxable', label: 'Taxable' },
-  { name: 'reorder_level', label: 'Reorder level', type: 'number' }
+  { name: 'is_active', label: 'Active', type: 'select', options: [{ value: '1', label: 'Yes' }, { value: '0', label: 'No' }] }
 ]
 
 export default function Products(){

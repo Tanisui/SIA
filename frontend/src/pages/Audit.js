@@ -3,11 +3,12 @@ import EntityPage from '../components/EntityPage.js'
 
 const schema = [
   { name: 'id', label: 'ID', hidden: true },
-  { name: 'user_id', label: 'User' },
+  { name: 'username', label: 'User', hideInForm: true },
   { name: 'action', label: 'Action' },
-  { name: 'entity', label: 'Entity' },
-  { name: 'entity_id', label: 'Entity ID' },
-  { name: 'timestamp', label: 'Timestamp' }
+  { name: 'resource_type', label: 'Resource Type' },
+  { name: 'resource_id', label: 'Resource ID' },
+  { name: 'details', label: 'Details' },
+  { name: 'created_at', label: 'Timestamp' }
 ]
 
 export default function Audit(){

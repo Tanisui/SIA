@@ -3,11 +3,19 @@ import EntityPage from '../components/EntityPage.js'
 
 const schema = [
   { name: 'id', label: 'ID', hidden: true },
-  { name: 'pay_period', label: 'Pay period' },
-  { name: 'employee_id', label: 'Employee' },
-  { name: 'gross_pay', label: 'Gross pay', type: 'number' },
-  { name: 'net_pay', label: 'Net pay', type: 'number' },
-  { name: 'payment_date', label: 'Payment date' }
+  { name: 'employee_id', label: 'Employee ID', type: 'number' },
+  { name: 'employee_name', label: 'Employee', hideInForm: true },
+  { name: 'period_start', label: 'Period Start' },
+  { name: 'period_end', label: 'Period End' },
+  { name: 'gross_pay', label: 'Gross Pay', type: 'number' },
+  { name: 'deductions', label: 'Deductions', type: 'number' },
+  { name: 'advances', label: 'Advances', type: 'number' },
+  { name: 'net_pay', label: 'Net Pay', type: 'number' },
+  { name: 'status', label: 'Status', type: 'select', options: [
+    { value: 'PENDING', label: 'Pending' },
+    { value: 'PROCESSED', label: 'Processed' },
+    { value: 'PAID', label: 'Paid' }
+  ] }
 ]
 
 export default function Payroll(){

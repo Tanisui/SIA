@@ -2,18 +2,17 @@ import React from 'react'
 import EntityPage from '../components/EntityPage.js'
 
 const schema = [
-  { name: 'id', label: 'ID' },
-  { name: 'employee_id', label: 'Employee ID' },
-  { name: 'first_name', label: 'First name' },
-  { name: 'last_name', label: 'Last name' },
-  { name: 'email', label: 'Email' },
-  { name: 'phone', label: 'Phone' },
+  { name: 'id', label: 'ID', hidden: true },
+  { name: 'name', label: 'Name' },
   { name: 'role', label: 'Role' },
-  { name: 'department', label: 'Department' },
-  { name: 'hire_date', label: 'Hire date' },
-  { name: 'pay_rate', label: 'Pay rate', type: 'number' },
-  { name: 'employment_status', label: 'Status' },
-  { name: 'bank_details', label: 'Bank details' }
+  { name: 'contact', label: 'Contact' },
+  { name: 'hire_date', label: 'Hire Date' },
+  { name: 'pay_rate', label: 'Pay Rate', type: 'number' },
+  { name: 'employment_status', label: 'Status', type: 'select', options: [
+    { value: 'ACTIVE', label: 'Active' },
+    { value: 'INACTIVE', label: 'Inactive' },
+    { value: 'TERMINATED', label: 'Terminated' }
+  ] }
 ]
 
 export default function Employees(){

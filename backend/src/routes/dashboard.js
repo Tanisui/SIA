@@ -1,0 +1,91 @@
+const express = require('express')
+const router = express.Router()
+const db = require('../database')
+const { verifyToken } = require('../middleware/authMiddleware')
+
+// Dashboard summary stats
+router.get('/stats', verifyToken, async (req, res) => {
+  try {
+    const results = {}
+
+    // Total sales (all time revenue)
+    const [salesTotal] = await db.pool.query(
+      `SELECT COALESCE(SUM(total), 0) AS total_sales, COUNT(*) AS total_orders FROM sales WHERE status = 'COMPLETED'`
+    )
+    results.total_sales = parseFloat(salesTotal[0].total_sales) || 0
+    results.total_orders = salesTotal[0].total_orders || 0
+
+    // Today's sales
+    const [todaySales] = await db.pool.query(
+      `SELECT COALESCE(SUM(total), 0) AS today_sales, COUNT(*) AS today_orders
+       FROM sales WHERE status = 'COMPLETED' AND DATE(date) = CURDATE()`
+    )
+    results.today_sales = parseFloat(todaySales[0].today_sales) || 0
+    results.today_orders = todaySales[0].today_orders || 0
+
+    // Active products count
+    const [prodCount] = await db.pool.query(
+      `SELECT COUNT(*) AS count FROM products WHERE is_active = 1`
+    )
+    results.products_count = prodCount[0].count || 0
+
+    // Low stock count
+    const [lowStock] = await db.pool.query(
+      `SELECT COUNT(*) AS count FROM products WHERE stock_quantity <= low_stock_threshold AND is_active = 1`
+    )
+    results.low_stock_count = lowStock[0].count || 0
+
+    // Customer count
+    const [custCount] = await db.pool.query(
+      `SELECT COUNT(*) AS count FROM customers`
+    )
+    results.customers_count = custCount[0].count || 0
+
+    // Active employees count
+    const [empCount] = await db.pool.query(
+      `SELECT COUNT(*) AS count FROM employees WHERE employment_status = 'ACTIVE'`
+    )
+    results.employees_count = empCount[0].count || 0
+
+    // Pending payroll count
+    const [pendingPayroll] = await db.pool.query(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(net_pay), 0) AS total FROM payrolls WHERE status = 'PENDING'`
+    )
+    results.pending_payroll_count = pendingPayroll[0].count || 0
+    results.pending_payroll_total = parseFloat(pendingPayroll[0].total) || 0
+
+    // Open purchase orders
+    const [openPO] = await db.pool.query(
+      `SELECT COUNT(*) AS count FROM purchase_orders WHERE status = 'OPEN'`
+    )
+    results.open_po_count = openPO[0].count || 0
+
+    // Recent sales (last 5)
+    const [recentSales] = await db.pool.query(
+      `SELECT s.id, s.sale_number, s.total, s.payment_method, s.date, u.username AS clerk
+       FROM sales s LEFT JOIN users u ON u.id = s.clerk_id
+       WHERE s.status = 'COMPLETED'
+       ORDER BY s.date DESC LIMIT 5`
+    )
+    results.recent_sales = recentSales
+
+    // Top selling products (last 30 days)
+    const [topProducts] = await db.pool.query(
+      `SELECT p.name, SUM(si.qty) AS total_qty, SUM(si.line_total) AS total_revenue
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       JOIN products p ON p.id = si.product_id
+       WHERE s.status = 'COMPLETED' AND s.date >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+       GROUP BY si.product_id, p.name
+       ORDER BY total_qty DESC LIMIT 5`
+    )
+    results.top_products = topProducts
+
+    res.json(results)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'failed to fetch dashboard stats' })
+  }
+})
+
+module.exports = router

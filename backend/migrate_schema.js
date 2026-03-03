@@ -85,7 +85,8 @@ async function run() {
   const productAlters = [
     ['sku', "ADD COLUMN sku VARCHAR(100) UNIQUE AFTER id"],
     ['name', "ADD COLUMN name VARCHAR(255) NOT NULL DEFAULT '' AFTER sku"],
-    ['description', "ADD COLUMN description TEXT AFTER name"],
+    ['brand', "ADD COLUMN brand VARCHAR(255) AFTER name"],
+    ['description', "ADD COLUMN description TEXT AFTER brand"],
     ['category_id', "ADD COLUMN category_id INT UNSIGNED AFTER description"],
     ['price', "ADD COLUMN price DECIMAL(12,2) DEFAULT 0.00 AFTER category_id"],
     ['cost', "ADD COLUMN cost DECIMAL(12,2) DEFAULT 0.00 AFTER price"],

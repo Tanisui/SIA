@@ -1,15 +1,19 @@
 import React, { useEffect, useState } from 'react'
 import api from '../api/api.js'
 
+function PasswordInput({ value, onChange, name }){
+  const [show, setShow] = useState(false)
+  return React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+    React.createElement('input', { value: value||'', onChange: e => onChange(name, e.target.value), type: show ? 'text' : 'password', style:{ flex: 1, padding:8 } }),
+    React.createElement('button', { type: 'button', onClick: () => setShow(s => !s), title: show ? 'Hide password' : 'Show password', style: { padding: '6px 8px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: 4, background: '#fff' } }, show ? '🙈' : '👁')
+  )
+}
+
 function FieldInput({ field, value, onChange }){
   const { name, label, type, options } = field
   if (type === 'textarea') return React.createElement('textarea', { value: value||'', onChange: e => onChange(name, e.target.value), style:{ width:'100%', minHeight:80 } })
   if (type === 'password') {
-    const [show, setShow] = useState(false)
-    return React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-      React.createElement('input', { value: value||'', onChange: e => onChange(name, e.target.value), type: show ? 'text' : 'password', style:{ flex: 1, padding:8 } }),
-      React.createElement('button', { type: 'button', onClick: () => setShow(s => !s), title: show ? 'Hide password' : 'Show password', style: { padding: '6px 8px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: 4, background: '#fff' } }, show ? '🙈' : '👁')
-    )
+    return React.createElement(PasswordInput, { value, onChange, name })
   }
   if (type === 'select') return React.createElement('select', { value: value||'', onChange: e => onChange(name, e.target.value) },
     React.createElement('option', { value: '' }, '-- select --'),
@@ -43,7 +47,8 @@ function FieldInput({ field, value, onChange }){
   return React.createElement('input', { value: value||'', onChange: e => onChange(name, e.target.value), type: type === 'number' ? 'number' : 'text', style:{ width:'100%', padding:8 } })
 }
 
-export default function EntityPage({ title, apiPath, schema }){
+export default function EntityPage({ title, apiPath, schema, idField }){
+  const pk = idField || 'id'
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -93,7 +98,7 @@ export default function EntityPage({ title, apiPath, schema }){
       if (editing === 'create'){
         await api.post(apiPath, payload)
       }else{
-        await api.put(`${apiPath}/${form.id}`, payload)
+        await api.put(`${apiPath}/${form[pk]}`, payload)
       }
       await fetchAll(); cancel()
     }catch(err){
@@ -139,7 +144,7 @@ export default function EntityPage({ title, apiPath, schema }){
             )
           ),
           React.createElement('tbody', null,
-            items.map(it => React.createElement('tr', { key: it.id || JSON.stringify(it) },
+            items.map(it => React.createElement('tr', { key: it[pk] || JSON.stringify(it) },
               visibleSchema.map(f => React.createElement('td', { key: f.name, style:{ padding:8, borderBottom:'1px solid #f6f6f6' } },
                 (()=>{
                   const val = it[f.name]
@@ -162,7 +167,7 @@ export default function EntityPage({ title, apiPath, schema }){
               )),
               React.createElement('td', { style:{ padding:8 } },
                 React.createElement('button', { onClick: ()=>startEdit(it), style:{ marginRight:8 } }, 'Edit'),
-                React.createElement('button', { onClick: ()=>remove(it.id) }, 'Delete')
+                React.createElement('button', { onClick: ()=>remove(it[pk]) }, 'Delete')
               )
             ))
           )
@@ -171,7 +176,7 @@ export default function EntityPage({ title, apiPath, schema }){
       editing && React.createElement('div', { style:{ marginTop:20, padding:12, border:'1px solid #eee', borderRadius:6 } },
         React.createElement('h3', null, editing === 'create' ? 'Create' : 'Edit'),
         React.createElement('form', { onSubmit: submit },
-          schema.filter(f => !f.hidden).map(f => React.createElement('div', { key: f.name, style:{ marginBottom:10 } },
+          schema.filter(f => !f.hidden && !f.hideInForm).map(f => React.createElement('div', { key: f.name, style:{ marginBottom:10 } },
             React.createElement('label', null, f.label || f.name),
             React.createElement(FieldInput, { field: f, value: form[f.name], onChange })
           )),

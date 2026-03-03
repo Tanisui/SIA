@@ -4,9 +4,13 @@ import EntityPage from '../components/EntityPage.js'
 const schema = [
   { name: 'id', label: 'ID', hidden: true },
   { name: 'po_number', label: 'PO #' },
-  { name: 'supplier_id', label: 'Supplier' },
-  { name: 'status', label: 'Status' },
-  { name: 'expected_delivery', label: 'Expected delivery' },
+  { name: 'supplier_id', label: 'Supplier ID', type: 'number' },
+  { name: 'status', label: 'Status', type: 'select', options: [
+    { value: 'OPEN', label: 'Open' },
+    { value: 'RECEIVED', label: 'Received' },
+    { value: 'CANCELLED', label: 'Cancelled' }
+  ] },
+  { name: 'expected_date', label: 'Expected Date' },
   { name: 'total', label: 'Total', type: 'number' }
 ]
 

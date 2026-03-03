@@ -24,6 +24,16 @@ async function run() {
   } catch (e) { console.error('Error checking low_stock_threshold:', e.message) }
 
   try {
+    const [cols] = await conn.query("SHOW COLUMNS FROM products LIKE 'brand'")
+    if (!cols.length) {
+      await conn.query("ALTER TABLE products ADD COLUMN brand VARCHAR(255) AFTER name")
+      console.log('Added brand column to products')
+    } else {
+      console.log('brand column already exists')
+    }
+  } catch (e) { console.error('Error checking brand:', e.message) }
+
+  try {
     const [cols] = await conn.query("SHOW COLUMNS FROM products LIKE 'is_active'")
     if (!cols.length) {
       await conn.query("ALTER TABLE products ADD COLUMN is_active TINYINT(1) DEFAULT 1 AFTER barcode")

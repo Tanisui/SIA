@@ -13,10 +13,31 @@ const inventoryRoutes = require('./src/routes/inventory')
 const purchaseOrdersRoutes = require('./src/routes/purchaseOrders')
 const salesRoutes = require('./src/routes/sales')
 const customersRoutes = require('./src/routes/customers')
+const employeesRoutes = require('./src/routes/employees')
+const attendanceRoutes = require('./src/routes/attendance')
+const payrollRoutes = require('./src/routes/payroll')
+const auditRoutes = require('./src/routes/audit')
+const settingsRoutes = require('./src/routes/settings')
+const notificationsRoutes = require('./src/routes/notifications')
+const reportsRoutes = require('./src/routes/reports')
+const filesRoutes = require('./src/routes/files')
+const categoriesRoutes = require('./src/routes/categories')
+const expensesRoutes = require('./src/routes/expenses')
+const dashboardRoutes = require('./src/routes/dashboard')
+const ledgerRoutes = require('./src/routes/ledger')
 
 const PORT = process.env.PORT || 3000
 
 app.use(cors())
+
+app.use((req, res, next) => {
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; connect-src 'self' http://localhost:3000 ws://localhost:3000; img-src 'self' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';"
+  )
+  next()
+})
+
 app.use('/rbac', rbacRoutes)
 app.use('/auth', express.json(), authRoutes)
 app.use('/users', usersRoutes)
@@ -27,14 +48,18 @@ app.use('/inventory', inventoryRoutes)
 app.use('/purchase-orders', purchaseOrdersRoutes)
 app.use('/sales', salesRoutes)
 app.use('/customers', customersRoutes)
-
-app.use((req, res, next) => {
-  res.setHeader(
-    'Content-Security-Policy',
-    "default-src 'self'; connect-src 'self' http://localhost:3000 ws://localhost:3000; img-src 'self' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';"
-  )
-  next()
-})
+app.use('/employees', employeesRoutes)
+app.use('/attendance', attendanceRoutes)
+app.use('/payroll', payrollRoutes)
+app.use('/audit', auditRoutes)
+app.use('/settings', settingsRoutes)
+app.use('/notifications', notificationsRoutes)
+app.use('/reports', reportsRoutes)
+app.use('/files', filesRoutes)
+app.use('/categories', categoriesRoutes)
+app.use('/expenses', expensesRoutes)
+app.use('/dashboard', dashboardRoutes)
+app.use('/ledger', ledgerRoutes)
 
 app.get('/', async (req, res) => {
   try {
@@ -48,7 +73,7 @@ app.get('/', async (req, res) => {
 app.get('/health', async (req, res) => {
   try {
     await database.testConnection()
-    res.json({ status: 'sucess', database: 'success' })
+    res.json({ status: 'success', database: 'success' })
   } catch (err) {
     res.status(500).json({ status: 'error', database: 'error', message: err.message })
   }

@@ -3,11 +3,12 @@ import EntityPage from '../components/EntityPage.js'
 
 const schema = [
   { name: 'id', label: 'ID', hidden: true },
-  { name: 'filename', label: 'Filename' },
-  { name: 'file_type', label: 'Type' },
-  { name: 'linked_entity', label: 'Linked to' },
-  { name: 'uploaded_by', label: 'Uploaded by' },
-  { name: 'uploaded_at', label: 'Uploaded at' }
+  { name: 'original_name', label: 'Filename' },
+  { name: 'path', label: 'Path' },
+  { name: 'type', label: 'Type' },
+  { name: 'size', label: 'Size', type: 'number' },
+  { name: 'uploader_name', label: 'Uploaded By', hideInForm: true },
+  { name: 'uploaded_at', label: 'Uploaded At', hideInForm: true }
 ]
 
 export default function Files(){

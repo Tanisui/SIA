@@ -56,12 +56,12 @@ router.get('/:id', verifyToken, authorize('products.view'), async (req, res) => 
 // Create product
 router.post('/', express.json(), verifyToken, authorize('products.create'), async (req, res) => {
   try {
-    const { sku, name, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode } = req.body
+    const { sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode } = req.body
     if (!name) return res.status(400).json({ error: 'name is required' })
     const [result] = await db.pool.query(
-      `INSERT INTO products (sku, name, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [sku || null, name, description || null, category_id || null,
+      `INSERT INTO products (sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [sku || null, name, brand || null, description || null, category_id || null,
        price || 0, cost || 0, stock_quantity || 0, low_stock_threshold || 10,
        size || null, color || null, barcode || null]
     )
@@ -77,11 +77,12 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
 router.put('/:id', express.json(), verifyToken, authorize('products.update'), async (req, res) => {
   try {
     const id = req.params.id
-    const { sku, name, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active } = req.body
+    const { sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active } = req.body
     const updates = []
     const params = []
     if (sku !== undefined) { updates.push('sku = ?'); params.push(sku || null) }
     if (name !== undefined) { updates.push('name = ?'); params.push(name) }
+    if (brand !== undefined) { updates.push('brand = ?'); params.push(brand || null) }
     if (description !== undefined) { updates.push('description = ?'); params.push(description) }
     if (category_id !== undefined) { updates.push('category_id = ?'); params.push(category_id || null) }
     if (price !== undefined) { updates.push('price = ?'); params.push(price) }
