@@ -69,7 +69,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
   } catch (err) {
     console.error(err)
     if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'SKU already exists' })
-    res.status(500).json({ error: 'failed to create product' })
+    res.status(500).json({ error: err.message || 'failed to create product' })
   }
 })
 

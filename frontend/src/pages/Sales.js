@@ -25,6 +25,7 @@ export default function Sales() {
   const [tax, setTax] = useState('')
   const [lastReceipt, setLastReceipt] = useState(null)
   const [searchTerm, setSearchTerm] = useState('')
+  const [productDropdownOpen, setProductDropdownOpen] = useState(false)
   const receiptRef = useRef(null)
 
   // Report filters
@@ -87,6 +88,7 @@ export default function Sales() {
     setSelectedProduct('')
     setCustomPrice('')
     setCustomQty('1')
+    setSearchTerm('')
   }
 
   const updateCartQty = (idx, qty) => {
@@ -123,6 +125,10 @@ export default function Sales() {
       setDiscount('')
       setTax('')
       setCustomerId('')
+      setSelectedProduct('')
+      setCustomPrice('')
+      setCustomQty('1')
+      setSearchTerm('')
       showMsg(`Sale ${res.data.sale_number} completed! Receipt: ${res.data.receipt_no}`)
       fetchProducts()
     } catch (err) { setError(err?.response?.data?.error || 'Sale failed') }
@@ -203,20 +209,65 @@ export default function Sales() {
         React.createElement('div', { className: 'card', style: { marginBottom: 16 } },
           React.createElement('h3', { style: { marginBottom: 12 } }, 'Select Item'),
           React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: 8, alignItems: 'end' } },
-            React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('div', { className: 'form-group', style: { marginBottom: 0, position: 'relative' } },
               React.createElement('label', { className: 'form-label' }, 'Product'),
-              React.createElement('select', { className: 'form-input', value: selectedProduct, onChange: e => {
-                setSelectedProduct(e.target.value)
-                const p = products.find(pp => String(pp.id) === e.target.value)
-                if (p) setCustomPrice(String(p.price || ''))
-              }},
-                React.createElement('option', { value: '' }, '— Select product —'),
-                ...filteredProducts.map(p =>
-                  React.createElement('option', { key: p.id, value: p.id },
-                    `${p.sku ? p.sku + ' — ' : ''}${p.name} (${fmt(p.price)}) [Stock: ${p.stock_quantity}]`
-                  )
-                )
-              )
+              React.createElement('input', {
+                className: 'form-input',
+                value: searchTerm,
+                onChange: e => {
+                  setSearchTerm(e.target.value)
+                  setProductDropdownOpen(true)
+                  if (!e.target.value) {
+                    setSelectedProduct('')
+                    setCustomPrice('')
+                  }
+                },
+                onFocus: () => setProductDropdownOpen(true),
+                placeholder: 'Search by name, SKU or barcode...',
+                autoComplete: 'off'
+              }),
+              productDropdownOpen && React.createElement('div', {
+                style: {
+                  position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                  background: 'var(--card-bg, #fff)', border: '1px solid var(--border, #ddd)',
+                  borderRadius: 6, maxHeight: 250, overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+                  marginTop: 4
+                }
+              },
+                filteredProducts.length === 0
+                  ? React.createElement('div', { style: { padding: '10px 14px', color: 'var(--text-light, #999)', fontSize: 13 } }, 'No products found')
+                  : filteredProducts.map(p => React.createElement('div', {
+                      key: p.id,
+                      style: {
+                        padding: '10px 14px', cursor: 'pointer', fontSize: 13,
+                        background: String(selectedProduct) === String(p.id) ? 'var(--gold-light, #fef3c7)' : 'transparent',
+                        borderBottom: '1px solid var(--border-light, #f0f0f0)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 2
+                      },
+                      onMouseDown: (e) => {
+                        e.preventDefault()
+                        setSelectedProduct(String(p.id))
+                        setSearchTerm(`${p.sku ? p.sku + ' — ' : ''}${p.name}`)
+                        setCustomPrice(String(p.price || ''))
+                        setProductDropdownOpen(false)
+                      },
+                      onMouseEnter: (e) => { e.currentTarget.style.background = 'var(--gold-light, #fef3c7)' },
+                      onMouseLeave: (e) => { e.currentTarget.style.background = String(selectedProduct) === String(p.id) ? 'var(--gold-light, #fef3c7)' : 'transparent' }
+                    },
+                    React.createElement('div', { style: { fontWeight: 500 } },
+                      `${p.sku ? p.sku + ' — ' : ''}${p.name}`
+                    ),
+                    React.createElement('div', { style: { fontSize: 11, color: 'var(--text-light, #666)' } },
+                      `${fmt(p.price)} • Stock: ${p.stock_quantity}${p.barcode ? ' • ' + p.barcode : ''}`
+                    )
+                  ))
+              ),
+              productDropdownOpen && React.createElement('div', {
+                style: { position: 'fixed', inset: 0, zIndex: 49 },
+                onClick: () => setProductDropdownOpen(false)
+              })
             ),
             React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
               React.createElement('label', { className: 'form-label' }, 'Price'),
@@ -227,10 +278,6 @@ export default function Sales() {
               React.createElement('input', { className: 'form-input', type: 'number', min: 1, value: customQty, onChange: e => setCustomQty(e.target.value) })
             ),
             React.createElement('button', { className: 'btn btn-primary', onClick: addToCart, style: { height: 42 } }, 'Add')
-          ),
-          // Search bar
-          React.createElement('div', { style: { marginTop: 8 } },
-            React.createElement('input', { className: 'form-input', placeholder: 'Search by name, SKU or barcode...', value: searchTerm, onChange: e => setSearchTerm(e.target.value), style: { width: '100%' } })
           )
         ),
 

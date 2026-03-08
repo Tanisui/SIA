@@ -44,6 +44,36 @@ function FieldInput({ field, value, onChange }){
       )
     })
   )
+  if (type === 'date') {
+    let dateValue = value || ''
+    if (dateValue && typeof dateValue === 'string') {
+      try {
+        const d = new Date(dateValue)
+        if (!isNaN(d.getTime())) {
+          dateValue = d.toISOString().split('T')[0]
+        }
+      } catch (e) {}
+    }
+    return React.createElement('input', { value: dateValue, onChange: e => onChange(name, e.target.value), type: 'date', style:{ width:'100%', padding:8 } })
+  }
+  if (type === 'phone') {
+    const handlePhoneChange = (e) => {
+      const val = e.target.value.replace(/\D/g, '')
+      const maxLen = field.maxLength || 11
+      onChange(name, val.slice(0, maxLen))
+    }
+    return React.createElement('div', null,
+      React.createElement('input', { 
+        value: value||'', 
+        onChange: handlePhoneChange, 
+        type: 'text', 
+        placeholder: 'e.g., 09163550310',
+        maxLength: field.maxLength || 11,
+        style:{ width:'100%', padding:8 } 
+      }),
+      React.createElement('small', { style: { color: '#666', fontSize: 12 } }, `Must be ${field.maxLength || 11} digits`)
+    )
+  }
   return React.createElement('input', { value: value||'', onChange: e => onChange(name, e.target.value), type: type === 'number' ? 'number' : 'text', style:{ width:'100%', padding:8 } })
 }
 
@@ -54,7 +84,9 @@ export default function EntityPage({ title, apiPath, schema, idField }){
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState({})
   const [error, setError] = useState(null)
+  const [showActive, setShowActive] = useState(false)
   const [showInactive, setShowInactive] = useState(false)
+  const [showTerminated, setShowTerminated] = useState(false)
 
   const fetchAll = async () =>{
     setLoading(true)
@@ -62,6 +94,18 @@ export default function EntityPage({ title, apiPath, schema, idField }){
       const res = await api.get(apiPath)
       const data = res.data || []
       const filtered = data.filter(it => {
+        // Check for employment_status field (Employees)
+        if (it.employment_status !== undefined && it.employment_status !== null) {
+          const status = String(it.employment_status).toUpperCase()
+          // If no filters selected, show all
+          if (!showActive && !showInactive && !showTerminated) return true
+          // If filters selected, show only matching statuses
+          if (showActive && status === 'ACTIVE') return true
+          if (showInactive && status === 'INACTIVE') return true
+          if (showTerminated && status === 'TERMINATED') return true
+          return false
+        }
+        // Fallback to is_active field for other entities
         if (it.is_active === undefined || it.is_active === null) return true
         const isActive = (String(it.is_active) === '1' || it.is_active === 1 || it.is_active === true)
         return showInactive ? !isActive : isActive
@@ -72,7 +116,7 @@ export default function EntityPage({ title, apiPath, schema, idField }){
     }finally{ setLoading(false) }
   }
 
-  useEffect(()=>{ fetchAll() },[apiPath, showInactive])
+  useEffect(()=>{ fetchAll() },[apiPath, showActive, showInactive, showTerminated])
 
   const onChange = (name, value) => setForm(prev => ({ ...prev, [name]: value }))
 
@@ -125,32 +169,59 @@ export default function EntityPage({ title, apiPath, schema, idField }){
   const visibleSchema = schema.filter(f => !f.hidden && !f.hideInList)
 
   return (
-    React.createElement('div', { style:{ padding:20 } },
-      React.createElement('h2', null, title),
-      React.createElement('div', { style:{ marginBottom:12, display: 'flex', alignItems: 'center', gap: 12 } },
-        React.createElement('button', { onClick: startCreate }, 'Create new'),
-          React.createElement('label', { style: { fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 } },
+    React.createElement('div', { className: 'page' },
+      React.createElement('div', { className: 'page-header' },
+        React.createElement('div', null,
+          React.createElement('h1', { className: 'page-title' }, title),
+          React.createElement('p', { className: 'page-subtitle' }, 'Manage and organize your team members')
+        )
+      ),
+      React.createElement('div', { className: 'card', style: { marginBottom: 16 } },
+        React.createElement('div', { style:{ marginBottom:12, display: 'flex', alignItems: 'center', gap: 12 } },
+          React.createElement('button', { className: 'btn btn-primary', onClick: startCreate }, '+ Create new'),
+          schema.some(f => f.name === 'employment_status') && React.createElement('label', { style: { fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 } },
+            React.createElement('input', { type: 'checkbox', checked: showActive, onChange: e => setShowActive(e.target.checked) }),
+            'Active'
+          ),
+          schema.some(f => f.name === 'employment_status') && React.createElement('label', { style: { fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 } },
+            React.createElement('input', { type: 'checkbox', checked: showInactive, onChange: e => setShowInactive(e.target.checked) }),
+            'Inactive'
+          ),
+          schema.some(f => f.name === 'employment_status') && React.createElement('label', { style: { fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 } },
+            React.createElement('input', { type: 'checkbox', checked: showTerminated, onChange: e => setShowTerminated(e.target.checked) }),
+            'Terminated'
+          ),
+          schema.some(f => f.name === 'is_active') && !schema.some(f => f.name === 'employment_status') && React.createElement('label', { style: { fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 } },
             React.createElement('input', { type: 'checkbox', checked: showInactive, onChange: e => setShowInactive(e.target.checked) }),
             'Show inactive'
           )
-      ),
-      error && React.createElement('div', { style:{ color:'red', marginBottom:8 } }, error),
-      loading ? React.createElement('div', null, 'Loading...') : (
-        React.createElement('table', { style:{ width:'100%', borderCollapse:'collapse' } },
-          React.createElement('thead', null,
-            React.createElement('tr', null,
-              visibleSchema.map(f => React.createElement('th', { key: f.name, style:{ textAlign:'left', borderBottom:'1px solid #ddd', padding:8 } }, f.label || f.name)),
-              React.createElement('th', { style:{ borderBottom:'1px solid #ddd', padding:8 } }, 'Actions')
-            )
-          ),
-          React.createElement('tbody', null,
-            items.map(it => React.createElement('tr', { key: it[pk] || JSON.stringify(it) },
-              visibleSchema.map(f => React.createElement('td', { key: f.name, style:{ padding:8, borderBottom:'1px solid #f6f6f6' } },
+        ),
+        error && React.createElement('div', { className: 'error-msg', style: { marginBottom: 12 } }, error),
+        loading ? React.createElement('div', { style: { padding: 40, textAlign: 'center', color: 'var(--text-light)' } }, 'Loading...') : (
+          React.createElement('div', { className: 'table-wrap' },
+            React.createElement('table', null,
+              React.createElement('thead', null,
+                React.createElement('tr', null,
+                  visibleSchema.map(f => React.createElement('th', { key: f.name }, f.label || f.name)),
+                  React.createElement('th', { style: { textAlign: 'right' } }, 'Actions')
+                )
+                  ),
+              React.createElement('tbody', null,
+                items.map(it => React.createElement('tr', { key: it[pk] || JSON.stringify(it) },
+                  visibleSchema.map(f => React.createElement('td', { key: f.name },
                 (()=>{
                   const val = it[f.name]
                   if (Array.isArray(val)) return val.join(', ')
                   if (f.name === 'is_active'){
                     return (val === 1 || val === '1' || val === true) ? 'Yes' : 'No'
+                  }
+                  if (f.type === 'date' && val){
+                    try {
+                      const d = new Date(val)
+                      if (!isNaN(d.getTime())) {
+                        return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                      }
+                    } catch (e) {}
                   }
                   if ((f.type === 'select' || f.type === 'multiselect') && f.options){
                     if (Array.isArray(val)){
@@ -165,15 +236,17 @@ export default function EntityPage({ title, apiPath, schema, idField }){
                   return (val === null || val === undefined) ? '' : String(val)
                 })()
               )),
-              React.createElement('td', { style:{ padding:8 } },
-                React.createElement('button', { onClick: ()=>startEdit(it), style:{ marginRight:8 } }, 'Edit'),
-                React.createElement('button', { onClick: ()=>remove(it[pk]) }, 'Delete')
+              React.createElement('td', { style: { textAlign: 'right' } },
+                React.createElement('button', { className: 'btn btn-secondary', onClick: ()=>startEdit(it), style:{ marginRight:8, padding: '6px 12px', fontSize: 12 } }, 'Edit'),
+                React.createElement('button', { className: 'btn btn-danger', onClick: ()=>remove(it[pk]), style: { padding: '6px 12px', fontSize: 12 } }, 'Delete')
               )
             ))
           )
         )
+      )
+    ),
       ),
-      editing && React.createElement('div', { style:{ marginTop:20, padding:12, border:'1px solid #eee', borderRadius:6 } },
+      editing && React.createElement('div', { className: 'card', style:{ marginTop:20 } },
         React.createElement('h3', null, editing === 'create' ? 'Create' : 'Edit'),
         React.createElement('form', { onSubmit: submit },
           schema.filter(f => !f.hidden && !f.hideInForm).map(f => React.createElement('div', { key: f.name, style:{ marginBottom:10 } },

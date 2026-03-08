@@ -105,7 +105,7 @@ router.post('/stock-out/adjust', express.json(), verifyToken, authorize('invento
   const conn = await db.pool.getConnection()
   try {
     await conn.beginTransaction()
-    const { product_id, quantity, reason } = req.body
+    const { product_id, quantity, reason, reference } = req.body
     if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
 
     const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [product_id])
@@ -114,9 +114,9 @@ router.post('/stock-out/adjust', express.json(), verifyToken, authorize('invento
     await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, product_id])
 
     await conn.query(
-      `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after)
-       VALUES (?, 'ADJUST', ?, ?, ?, ?)`,
-      [product_id, -quantity, req.auth.id, reason || 'Net adjustment', newQty]
+      `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after)
+       VALUES (?, 'ADJUST', ?, ?, ?, ?, ?)`,
+      [product_id, -quantity, reference || null, req.auth.id, reason || 'Net adjustment', newQty]
     )
     await conn.commit()
     conn.release()
@@ -134,7 +134,7 @@ router.post('/stock-out/damage', express.json(), verifyToken, authorize('invento
   const conn = await db.pool.getConnection()
   try {
     await conn.beginTransaction()
-    const { product_id, quantity, reason } = req.body
+    const { product_id, quantity, reason, reference } = req.body
     if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
 
     const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [product_id])
@@ -150,9 +150,9 @@ router.post('/stock-out/damage', express.json(), verifyToken, authorize('invento
 
     // Record transaction
     await conn.query(
-      `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after)
-       VALUES (?, 'OUT', ?, ?, ?, ?)`,
-      [product_id, -quantity, req.auth.id, `Damaged: ${reason || 'defective stock'}`, newQty]
+      `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after)
+       VALUES (?, 'OUT', ?, ?, ?, ?, ?)`,
+      [product_id, -quantity, reference || null, req.auth.id, `Damaged: ${reason || 'defective stock'}`, newQty]
     )
     await conn.commit()
     conn.release()

@@ -6,7 +6,7 @@ const NAV_ITEMS = [
   { section: 'Main' },
   { to: '/',            label: 'Dashboard',  end: true,  icon: '⊞',  perm: null },
   { section: 'Store' },
-  { to: '/products',    label: 'Products',   icon: '👗',  perm: 'products.view' },
+  { to: '/categories',  label: 'Categories', icon: '🏷',  perm: 'products.view' },
   { to: '/inventory',   label: 'Inventory',  icon: '📦',  perm: 'inventory.view' },
   { to: '/sales',       label: 'Sales',      icon: '🧾',  perm: 'sales.view' },
   { to: '/customers',   label: 'Customers',  icon: '👤',  perm: 'customers.view' },

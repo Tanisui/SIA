@@ -137,6 +137,62 @@ async function seed() {
 		await conn.execute(`INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)`, [adminId, adminRoleId])
 	}
 
+	// ── Seed Categories ──
+	const categories = [
+		// Dress Types
+		{ name: 'A-Line Dress', description: 'Fitted at the hips and gradually widens towards the hem' },
+		{ name: 'Maxi Dress', description: 'Full-length dress reaching the ankles or floor' },
+		{ name: 'Mini Dress', description: 'Short dress ending above the knee' },
+		{ name: 'Midi Dress', description: 'Mid-length dress ending between the knee and ankle' },
+		{ name: 'Wrap Dress', description: 'Dress with a front closure formed by wrapping one side over the other' },
+		{ name: 'Bodycon Dress', description: 'Figure-hugging tight-fitted dress' },
+		{ name: 'Shift Dress', description: 'Straight-cut dress that hangs from the shoulders' },
+		{ name: 'Sheath Dress', description: 'Fitted dress that follows the body contour' },
+		{ name: 'Ball Gown', description: 'Formal full-skirted evening gown' },
+		{ name: 'Cocktail Dress', description: 'Semi-formal dress for cocktail parties and events' },
+		{ name: 'Sun Dress', description: 'Casual, lightweight dress for warm weather' },
+		{ name: 'Shirt Dress', description: 'Dress styled like an elongated button-down shirt' },
+		{ name: 'Halter Dress', description: 'Dress with straps that wrap around the back of the neck' },
+		{ name: 'Off-Shoulder Dress', description: 'Dress with sleeves or neckline sitting below the shoulders' },
+		{ name: 'Tube Dress', description: 'Strapless, straight-cut fitted dress' },
+		{ name: 'Peplum Dress', description: 'Dress with a short flared strip of fabric at the waist' },
+		{ name: 'Empire Dress', description: 'Dress with a high waistline just below the bust' },
+		{ name: 'Fit & Flare Dress', description: 'Fitted bodice with a flared-out skirt' },
+		{ name: 'Asymmetrical Dress', description: 'Dress with an uneven hemline' },
+		{ name: 'Tiered Dress', description: 'Dress with layered horizontal sections' },
+		{ name: 'Slip Dress', description: 'Lightweight, sleeveless dress resembling an undergarment slip' },
+		{ name: 'Blazer Dress', description: 'Dress styled like an oversized blazer' },
+		// Clothing Types
+		{ name: 'Tops & Blouses', description: 'Upper body garments including blouses, shirts, and tops' },
+		{ name: 'T-Shirts', description: 'Casual short-sleeved tops' },
+		{ name: 'Skirts', description: 'Lower body garments from waist down' },
+		{ name: 'Pants & Trousers', description: 'Full-length lower body garments' },
+		{ name: 'Shorts', description: 'Short-length lower body garments' },
+		{ name: 'Jeans', description: 'Denim pants' },
+		{ name: 'Jumpsuits & Rompers', description: 'One-piece garments combining top and bottom' },
+		{ name: 'Jackets & Coats', description: 'Outerwear for layering' },
+		{ name: 'Sweaters & Cardigans', description: 'Knitted upper body garments' },
+		{ name: 'Activewear', description: 'Athletic and sports clothing' },
+		{ name: 'Sleepwear & Loungewear', description: 'Comfortable clothing for home and sleep' },
+		{ name: 'Swimwear', description: 'Clothing for swimming and beach' },
+		{ name: 'Formal Wear', description: 'Elegant clothing for formal occasions' },
+		// Accessories
+		{ name: 'Bags & Purses', description: 'Handbags, clutches, tote bags' },
+		{ name: 'Shoes & Footwear', description: 'Sandals, heels, flats, boots' },
+		{ name: 'Jewelry', description: 'Necklaces, earrings, bracelets, rings' },
+		{ name: 'Scarves & Wraps', description: 'Neck and body accessories' },
+		{ name: 'Belts', description: 'Waist accessories' },
+		{ name: 'Hats & Hair Accessories', description: 'Head and hair accessories' },
+		{ name: 'Sunglasses', description: 'Eyewear accessories' },
+	]
+
+	for (const cat of categories) {
+		await conn.execute(
+			`INSERT IGNORE INTO categories (name, description) VALUES (?, ?)`,
+			[cat.name, cat.description]
+		)
+	}
+
 	console.log('Seeding complete.')
 	await conn.end()
 }

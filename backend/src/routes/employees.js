@@ -29,12 +29,13 @@ router.get('/:id', verifyToken, authorize('employees.view'), async (req, res) =>
 // Create employee
 router.post('/', express.json(), verifyToken, authorize('employees.create'), async (req, res) => {
   try {
-    const { name, role, contact, hire_date, pay_rate, employment_status, bank_details } = req.body
+    const { name, role, contact_type, contact, hire_date, pay_rate, employment_status, bank_details } = req.body
+    console.log('📝 Creating employee with data:', { name, role, contact_type, contact, hire_date, pay_rate, employment_status })
     if (!name) return res.status(400).json({ error: 'name is required' })
     const [result] = await db.pool.query(
-      `INSERT INTO employees (name, role, contact, hire_date, pay_rate, employment_status, bank_details)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [name, role || null, contact || null, hire_date || null,
+      `INSERT INTO employees (name, role, contact_type, contact, hire_date, pay_rate, employment_status, bank_details)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [name, role || null, contact_type || null, contact || null, hire_date || null,
        pay_rate || 0, employment_status || 'ACTIVE',
        bank_details ? JSON.stringify(bank_details) : null]
     )
@@ -49,11 +50,13 @@ router.post('/', express.json(), verifyToken, authorize('employees.create'), asy
 router.put('/:id', express.json(), verifyToken, authorize('employees.update'), async (req, res) => {
   try {
     const id = req.params.id
-    const { name, role, contact, hire_date, pay_rate, employment_status, bank_details } = req.body
+    const { name, role, contact_type, contact, hire_date, pay_rate, employment_status, bank_details } = req.body
+    console.log(`📝 Updating employee ${id} with data:`, { name, role, contact_type, contact, hire_date, pay_rate, employment_status })
     const updates = []
     const params = []
     if (name !== undefined) { updates.push('name = ?'); params.push(name) }
     if (role !== undefined) { updates.push('role = ?'); params.push(role) }
+    if (contact_type !== undefined) { updates.push('contact_type = ?'); params.push(contact_type) }
     if (contact !== undefined) { updates.push('contact = ?'); params.push(contact) }
     if (hire_date !== undefined) { updates.push('hire_date = ?'); params.push(hire_date) }
     if (pay_rate !== undefined) { updates.push('pay_rate = ?'); params.push(pay_rate) }

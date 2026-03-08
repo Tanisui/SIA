@@ -9,8 +9,12 @@ const schema = [
     { value: 'Manager', label: 'Manager' },
     { value: 'Sales Clerk', label: 'Sales Clerk' }
   ] },
-  { name: 'contact', label: 'Contact' },
-  { name: 'hire_date', label: 'Hire Date' },
+  { name: 'contact_type', label: 'Contact Type', type: 'select', options: [
+    { value: 'Mobile', label: 'Mobile Number' },
+    { value: 'Telephone', label: 'Telephone Number' }
+  ] },
+  { name: 'contact', label: 'Contact', type: 'phone', maxLength: 11 },
+  { name: 'hire_date', label: 'Hire Date', type: 'date' },
   { name: 'pay_rate', label: 'Pay Rate', type: 'number' },
   { name: 'employment_status', label: 'Status', type: 'select', options: [
     { value: 'ACTIVE', label: 'Active' },

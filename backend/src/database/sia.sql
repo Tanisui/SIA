@@ -179,6 +179,7 @@ CREATE TABLE IF NOT EXISTS `employees` (
 	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 	`name` VARCHAR(255) NOT NULL,
 	`role` VARCHAR(100),
+	`contact_type` VARCHAR(50),
 	`contact` VARCHAR(255),
 	`hire_date` DATE,
 	`pay_rate` DECIMAL(12,2) DEFAULT 0.00,

@@ -6,7 +6,7 @@ import ForgotEmail from './pages/ForgotEmail.js'
 import Dashboard from './pages/Dashboard.js'
 import Users from './pages/Users.js'
 import Roles from './pages/Roles.js'
-import Products from './pages/Products.js'
+import Categories from './pages/Categories.js'
 import Inventory from './pages/Inventory.js'
 import Sales from './pages/Sales.js'
 import Customers from './pages/Customers.js'
@@ -36,7 +36,7 @@ export default function App() {
           React.createElement(Route, { path: 'users', element: React.createElement(Users, null) }),
           React.createElement(Route, { path: 'roles', element: React.createElement(Roles, null) }),
           React.createElement(Route, { path: 'employees', element: React.createElement(Employees, null) }),
-          React.createElement(Route, { path: 'products', element: React.createElement(Products, null) }),
+          React.createElement(Route, { path: 'categories', element: React.createElement(Categories, null) }),
           React.createElement(Route, { path: 'inventory', element: React.createElement(Inventory, null) }),
           React.createElement(Route, { path: 'sales', element: React.createElement(Sales, null) }),
           React.createElement(Route, { path: 'customers', element: React.createElement(Customers, null) }),

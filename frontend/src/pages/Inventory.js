@@ -10,6 +10,7 @@ export default function Inventory() {
   const [tab, setTab] = useState('overview')
   const [products, setProducts] = useState([])
   const [suppliers, setSuppliers] = useState([])
+  const [categories, setCategories] = useState([])
   const [transactions, setTransactions] = useState([])
   const [damaged, setDamaged] = useState([])
   const [lowStock, setLowStock] = useState([])
@@ -21,26 +22,30 @@ export default function Inventory() {
   const [success, setSuccess] = useState(null)
 
   // forms
-  const [stockInForm, setStockInForm] = useState({ product_id: '', quantity: '', cost: '', reference: '', supplier_id: '', date: '' })
-  const [adjustForm, setAdjustForm] = useState({ product_id: '', quantity: '', reason: '' })
-  const [damageForm, setDamageForm] = useState({ product_id: '', quantity: '', reason: '' })
+  const [stockInForm, setStockInForm] = useState({ product_id: '', quantity: '', reference: '', supplier_id: '', date: '' })
+  const [adjustForm, setAdjustForm] = useState({ product_id: '', quantity: '', reason: '', reference: '' })
+  const [damageForm, setDamageForm] = useState({ product_id: '', quantity: '', reason: '', reference: '' })
   const [returnForm, setReturnForm] = useState({ product_id: '', quantity: '', return_type: 'customer', reason: '', sale_id: '' })
   const [poForm, setPoForm] = useState({ supplier_id: '', expected_date: '', items: [{ product_id: '', quantity: '', unit_cost: '' }] })
-  const [productForm, setProductForm] = useState({ sku: '', name: '', description: '', category_id: '', price: '', cost: '', stock_quantity: '', low_stock_threshold: '10', size: '', color: '', barcode: '' })
+  const [productForm, setProductForm] = useState({ sku: '', name: '', brand: '', description: '', category_id: '', price: '', cost: '', stock_quantity: '', low_stock_threshold: '10', size: '', color: '', barcode: '' })
   const [editingProduct, setEditingProduct] = useState(null)
   const [showProductModal, setShowProductModal] = useState(false)
   const [filterType, setFilterType] = useState('')
+  const [categorySearch, setCategorySearch] = useState('')
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false)
 
   // ── data fetchers ──
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [prodRes, supRes] = await Promise.all([
+      const [prodRes, supRes, catRes] = await Promise.all([
         api.get('/products'),
-        api.get('/suppliers')
+        api.get('/suppliers'),
+        api.get('/categories')
       ])
       setProducts(prodRes.data || [])
       setSuppliers(supRes.data || [])
+      setCategories(catRes.data || [])
     } catch (e) { /* ignore */ }
     setLoading(false)
   }, [])
@@ -91,16 +96,31 @@ export default function Inventory() {
   // ── Stock In ──
   const handleStockIn = async (e) => {
     e.preventDefault(); clearMessages()
+    
+    // Validate against threshold
+    const selectedProduct = products.find(p => p.id === Number(stockInForm.product_id))
+    if (selectedProduct) {
+      const newTotal = selectedProduct.stock_quantity + Number(stockInForm.quantity)
+      const threshold = selectedProduct.low_stock_threshold || 10
+      if (selectedProduct.stock_quantity > threshold) {
+        setError(`Cannot add stock: ${selectedProduct.name} is already above low stock threshold (Current: ${selectedProduct.stock_quantity}, Threshold: ${threshold})`)
+        return
+      }
+      if (newTotal > threshold * 10) {
+        setError(`Warning: Adding ${stockInForm.quantity} items would bring total to ${newTotal}, which is ${Math.floor(newTotal/threshold)}x the threshold. Please verify this is correct.`)
+        return
+      }
+    }
+    
     try {
       await api.post('/inventory/stock-in', {
         product_id: Number(stockInForm.product_id),
         quantity: Number(stockInForm.quantity),
-        cost: stockInForm.cost ? Number(stockInForm.cost) : undefined,
         reference: stockInForm.reference,
         supplier_id: stockInForm.supplier_id ? Number(stockInForm.supplier_id) : undefined,
         date: stockInForm.date || undefined
       })
-      setStockInForm({ product_id: '', quantity: '', cost: '', reference: '', supplier_id: '', date: '' })
+      setStockInForm({ product_id: '', quantity: '', reference: '', supplier_id: '', date: '' })
       showMsg('Stock in recorded successfully')
       fetchAll()
     } catch (err) { setError(err?.response?.data?.error || 'Stock in failed') }
@@ -124,9 +144,10 @@ export default function Inventory() {
       await api.post('/inventory/stock-out/adjust', {
         product_id: Number(adjustForm.product_id),
         quantity: Number(adjustForm.quantity),
-        reason: adjustForm.reason
+        reason: adjustForm.reason,
+        reference: adjustForm.reference
       })
-      setAdjustForm({ product_id: '', quantity: '', reason: '' })
+      setAdjustForm({ product_id: '', quantity: '', reason: '', reference: '' })
       showMsg('Adjustment recorded')
       fetchAll()
     } catch (err) { setError(err?.response?.data?.error || 'Adjustment failed') }
@@ -139,9 +160,10 @@ export default function Inventory() {
       await api.post('/inventory/stock-out/damage', {
         product_id: Number(damageForm.product_id),
         quantity: Number(damageForm.quantity),
-        reason: damageForm.reason
+        reason: damageForm.reason,
+        reference: damageForm.reference
       })
-      setDamageForm({ product_id: '', quantity: '', reason: '' })
+      setDamageForm({ product_id: '', quantity: '', reason: '', reference: '' })
       showMsg('Damage recorded')
       fetchAll()
     } catch (err) { setError(err?.response?.data?.error || 'Damage record failed') }
@@ -227,7 +249,8 @@ export default function Inventory() {
         await api.post('/products', payload)
         showMsg('Product created')
       }
-      setProductForm({ sku: '', name: '', description: '', category_id: '', price: '', cost: '', stock_quantity: '', low_stock_threshold: '10', size: '', color: '', barcode: '' })
+      setProductForm({ sku: '', name: '', brand: '', description: '', category_id: '', price: '', cost: '', stock_quantity: '', low_stock_threshold: '10', size: '', color: '', barcode: '' })
+      setCategorySearch('')
       setEditingProduct(null)
       setShowProductModal(false)
       fetchAll()
@@ -237,11 +260,12 @@ export default function Inventory() {
   const startEditProduct = (p) => {
     setEditingProduct(p.id)
     setProductForm({
-      sku: p.sku || '', name: p.name || '', description: p.description || '',
+      sku: p.sku || '', name: p.name || '', brand: p.brand || '', description: p.description || '',
       category_id: p.category_id || '', price: p.price || '', cost: p.cost || '',
       stock_quantity: p.stock_quantity || '', low_stock_threshold: p.low_stock_threshold || '10',
       size: p.size || '', color: p.color || '', barcode: p.barcode || ''
     })
+    setCategorySearch(p.category || '')
     setShowProductModal(true)
   }
 
@@ -370,10 +394,6 @@ export default function Inventory() {
               React.createElement('input', { className: 'form-input', type: 'number', min: 1, value: stockInForm.quantity, onChange: e => setStockInForm(f => ({ ...f, quantity: e.target.value })), required: true })
             ),
             React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Unit Cost'),
-              React.createElement('input', { className: 'form-input', type: 'number', step: '0.01', value: stockInForm.cost, onChange: e => setStockInForm(f => ({ ...f, cost: e.target.value })) })
-            ),
-            React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'OR/Invoice Reference'),
               React.createElement('input', { className: 'form-input', value: stockInForm.reference, onChange: e => setStockInForm(f => ({ ...f, reference: e.target.value })), placeholder: 'OR/Invoice #' })
             ),
@@ -414,6 +434,10 @@ export default function Inventory() {
             React.createElement('label', { className: 'form-label' }, 'Reason'),
             React.createElement('input', { className: 'form-input', value: adjustForm.reason, onChange: e => setAdjustForm(f => ({ ...f, reason: e.target.value })), placeholder: 'Lost, shrinkage, manual correction...' })
           ),
+          React.createElement('div', { className: 'form-group' },
+            React.createElement('label', { className: 'form-label' }, 'Reference (OR/Invoice)'),
+            React.createElement('input', { className: 'form-input', value: adjustForm.reference, onChange: e => setAdjustForm(f => ({ ...f, reference: e.target.value })), placeholder: 'Optional reference number' })
+          ),
           React.createElement('button', { type: 'submit', className: 'btn btn-primary' }, 'Record Adjustment')
         )
       ),
@@ -434,6 +458,10 @@ export default function Inventory() {
           React.createElement('div', { className: 'form-group' },
             React.createElement('label', { className: 'form-label' }, 'Reason'),
             React.createElement('input', { className: 'form-input', value: damageForm.reason, onChange: e => setDamageForm(f => ({ ...f, reason: e.target.value })), placeholder: 'Defective, broken, unsellable...' })
+          ),
+          React.createElement('div', { className: 'form-group' },
+            React.createElement('label', { className: 'form-label' }, 'Reference (OR/Invoice)'),
+            React.createElement('input', { className: 'form-input', value: damageForm.reference, onChange: e => setDamageForm(f => ({ ...f, reference: e.target.value })), placeholder: 'Optional reference number' })
           ),
           React.createElement('button', { type: 'submit', className: 'btn btn-danger' }, 'Record Damage')
         )
@@ -554,7 +582,7 @@ export default function Inventory() {
     // ═══════════════ PRODUCTS ═══════════════
     tab === 'products' && React.createElement('div', null,
       React.createElement('div', { style: { marginBottom: 16 } },
-        React.createElement('button', { className: 'btn btn-primary', onClick: () => { setEditingProduct(null); setProductForm({ sku: '', name: '', description: '', category_id: '', price: '', cost: '', stock_quantity: '', low_stock_threshold: '10', size: '', color: '', barcode: '' }); setShowProductModal(true) } }, '+ Create Product')
+        React.createElement('button', { className: 'btn btn-primary', onClick: () => { setEditingProduct(null); setProductForm({ sku: '', name: '', brand: '', description: '', category_id: '', price: '', cost: '', stock_quantity: '', low_stock_threshold: '10', size: '', color: '', barcode: '' }); setCategorySearch(''); setShowProductModal(true) } }, '+ Create Product')
       ),
 
       showProductModal && React.createElement('div', { className: 'card', style: { marginBottom: 20 } },
@@ -572,6 +600,50 @@ export default function Inventory() {
             React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Barcode'),
               React.createElement('input', { className: 'form-input', value: productForm.barcode, onChange: e => setProductForm(f => ({ ...f, barcode: e.target.value })) })
+            ),
+            React.createElement('div', { className: 'form-group', style: { position: 'relative' } },
+              React.createElement('label', { className: 'form-label' }, 'Category'),
+              React.createElement('input', {
+                className: 'form-input',
+                value: categorySearch,
+                onChange: e => { setCategorySearch(e.target.value); setCategoryDropdownOpen(true); if (!e.target.value) setProductForm(f => ({ ...f, category_id: '' })) },
+                onFocus: () => setCategoryDropdownOpen(true),
+                placeholder: '— Search or select category —',
+                autoComplete: 'off'
+              }),
+              categoryDropdownOpen && React.createElement('div', {
+                style: {
+                  position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                  background: 'var(--card-bg, #fff)', border: '1px solid var(--border, #ddd)',
+                  borderRadius: 6, maxHeight: 200, overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.12)'
+                }
+              },
+                categories
+                  .filter(c => !categorySearch || c.name.toLowerCase().includes(categorySearch.toLowerCase()))
+                  .length === 0
+                  ? React.createElement('div', { style: { padding: '10px 14px', color: 'var(--text-light, #999)', fontSize: 13 } }, 'No categories found')
+                  : categories
+                      .filter(c => !categorySearch || c.name.toLowerCase().includes(categorySearch.toLowerCase()))
+                      .map(c => React.createElement('div', {
+                        key: c.id,
+                        style: {
+                          padding: '8px 14px', cursor: 'pointer', fontSize: 13,
+                          background: String(productForm.category_id) === String(c.id) ? 'var(--gold-light, #fef3c7)' : 'transparent',
+                          borderBottom: '1px solid var(--border-light, #f0f0f0)'
+                        },
+                        onMouseDown: (e) => { e.preventDefault(); setProductForm(f => ({ ...f, category_id: c.id })); setCategorySearch(c.name); setCategoryDropdownOpen(false) },
+                        onMouseEnter: (e) => { e.currentTarget.style.background = 'var(--gold-light, #fef3c7)' },
+                        onMouseLeave: (e) => { e.currentTarget.style.background = String(productForm.category_id) === String(c.id) ? 'var(--gold-light, #fef3c7)' : 'transparent' }
+                      }, c.name))
+              ),
+              categoryDropdownOpen && React.createElement('div', {
+                style: { position: 'fixed', inset: 0, zIndex: 49 },
+                onClick: () => setCategoryDropdownOpen(false)
+              })
+            ),
+            React.createElement('div', { className: 'form-group' },
+              React.createElement('label', { className: 'form-label' }, 'Brand'),
+              React.createElement('input', { className: 'form-input', value: productForm.brand, onChange: e => setProductForm(f => ({ ...f, brand: e.target.value })), placeholder: 'e.g. Nike, Zara...' })
             ),
             React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Selling Price'),
@@ -591,7 +663,24 @@ export default function Inventory() {
             ),
             React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Size'),
-              React.createElement('input', { className: 'form-input', value: productForm.size, onChange: e => setProductForm(f => ({ ...f, size: e.target.value })) })
+              React.createElement('select', { className: 'form-input', value: productForm.size, onChange: e => setProductForm(f => ({ ...f, size: e.target.value })) },
+                React.createElement('option', { value: '' }, '— Select size —'),
+                React.createElement('option', { value: 'XXS' }, 'XXS'),
+                React.createElement('option', { value: 'XS' }, 'XS'),
+                React.createElement('option', { value: 'S' }, 'Small (S)'),
+                React.createElement('option', { value: 'M' }, 'Medium (M)'),
+                React.createElement('option', { value: 'L' }, 'Large (L)'),
+                React.createElement('option', { value: 'XL' }, 'XL'),
+                React.createElement('option', { value: 'XXL' }, 'XXL'),
+                React.createElement('option', { value: '3XL' }, '3XL'),
+                React.createElement('option', { value: 'Free Size' }, 'Free Size'),
+                React.createElement('option', { value: '6' }, '6'),
+                React.createElement('option', { value: '8' }, '8'),
+                React.createElement('option', { value: '10' }, '10'),
+                React.createElement('option', { value: '12' }, '12'),
+                React.createElement('option', { value: '14' }, '14'),
+                React.createElement('option', { value: '16' }, '16')
+              )
             ),
             React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Color'),
@@ -604,7 +693,7 @@ export default function Inventory() {
           ),
           React.createElement('div', { style: { display: 'flex', gap: 8 } },
             React.createElement('button', { type: 'submit', className: 'btn btn-primary' }, editingProduct ? 'Update Product' : 'Create Product'),
-            React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: () => setShowProductModal(false) }, 'Cancel')
+            React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: () => { setShowProductModal(false); setCategorySearch('') } }, 'Cancel')
           )
         )
       ),
@@ -615,6 +704,7 @@ export default function Inventory() {
             React.createElement('tr', null,
               React.createElement('th', null, 'SKU'),
               React.createElement('th', null, 'Name'),
+              React.createElement('th', null, 'Brand'),
               React.createElement('th', null, 'Category'),
               React.createElement('th', null, 'Price'),
               React.createElement('th', null, 'Cost'),
@@ -627,6 +717,7 @@ export default function Inventory() {
             products.map(p => React.createElement('tr', { key: p.id },
               React.createElement('td', null, p.sku || '—'),
               React.createElement('td', { style: { fontWeight: 500 } }, p.name),
+              React.createElement('td', null, p.brand || '—'),
               React.createElement('td', null, p.category || '—'),
               React.createElement('td', null, fmt(p.price)),
               React.createElement('td', null, fmt(p.cost)),
@@ -643,8 +734,9 @@ export default function Inventory() {
     ),
 
     // ═══════════════ TRANSACTIONS ═══════════════
-    tab === 'transactions' && React.createElement('div', null,
-      React.createElement('div', { style: { marginBottom: 12 } },
+    tab === 'transactions' && React.createElement('div', { className: 'card' },
+      React.createElement('div', { style: { marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 } },
+        React.createElement('h3', { style: { flex: 1, margin: 0 } }, 'Inventory Transactions'),
         React.createElement('select', { className: 'form-input', style: { width: 200 }, value: filterType, onChange: e => setFilterType(e.target.value) },
           React.createElement('option', { value: '' }, 'All types'),
           React.createElement('option', { value: 'IN' }, 'Stock In'),
@@ -660,8 +752,8 @@ export default function Inventory() {
               React.createElement('th', null, 'Date'),
               React.createElement('th', null, 'Type'),
               React.createElement('th', null, 'Product'),
-              React.createElement('th', null, 'Qty'),
-              React.createElement('th', null, 'Balance After'),
+              React.createElement('th', { style: { textAlign: 'center' } }, 'Qty'),
+              React.createElement('th', { style: { textAlign: 'center' } }, 'Balance After'),
               React.createElement('th', null, 'Reference'),
               React.createElement('th', null, 'Reason'),
               React.createElement('th', null, 'User')
@@ -674,8 +766,8 @@ export default function Inventory() {
                 React.createElement('span', { className: `badge ${t.transaction_type === 'IN' ? 'badge-success' : t.transaction_type === 'RETURN' ? 'badge-warning' : 'badge-danger'}` }, t.transaction_type)
               ),
               React.createElement('td', null, `${t.sku ? t.sku + ' — ' : ''}${t.product_name || ''}`),
-              React.createElement('td', { style: { fontWeight: 600, color: t.quantity > 0 ? 'var(--success)' : 'var(--error)' } }, t.quantity > 0 ? `+${t.quantity}` : t.quantity),
-              React.createElement('td', null, t.balance_after),
+              React.createElement('td', { style: { fontWeight: 600, color: t.quantity > 0 ? 'var(--success)' : 'var(--error)', textAlign: 'center' } }, t.quantity > 0 ? `+${t.quantity}` : t.quantity),
+              React.createElement('td', { style: { textAlign: 'center', fontWeight: 500 } }, t.balance_after),
               React.createElement('td', null, t.reference || '—'),
               React.createElement('td', null, t.reason || '—'),
               React.createElement('td', null, t.user_name || '—')
