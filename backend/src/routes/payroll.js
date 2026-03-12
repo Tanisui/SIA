@@ -65,7 +65,7 @@ router.post('/', express.json(), verifyToken, authorize('payroll.process'), asyn
   }
 })
 
-// Auto-generate payroll from attendance
+// Auto-generate payroll from attendance, revenue, and supplier purchases
 router.post('/generate', express.json(), verifyToken, authorize('payroll.process'), async (req, res) => {
   try {
     const { employee_id, period_start, period_end } = req.body
@@ -85,14 +85,44 @@ router.post('/generate', express.json(), verifyToken, authorize('payroll.process
       [employee_id, period_start, period_end]
     )
     const totalHours = parseFloat(att[0].total_hours) || 0
-    const gross = (totalHours * payRate).toFixed(2)
+    const attendanceBase = (totalHours * payRate)
+
+    // Get revenue from sales (where this employee is the clerk)
+    const [sales] = await db.pool.query(
+      `SELECT COALESCE(SUM(total), 0) AS total_revenue
+       FROM sales WHERE clerk_id = ? AND date BETWEEN ? AND ? AND status = 'COMPLETED'`,
+      [employee_id, period_start, period_end]
+    )
+    const totalRevenue = parseFloat(sales[0].total_revenue) || 0
+
+    // Get total supplier purchase costs in period (for reference/deduction)
+    const [purchases] = await db.pool.query(
+      `SELECT COALESCE(SUM(total), 0) AS total_cost
+       FROM purchase_orders WHERE created_at BETWEEN ? AND ? AND status IN ('RECEIVED', 'CANCELLED')`,
+      [period_start, period_end]
+    )
+    const totalPurchaseCost = parseFloat(purchases[0].total_cost) || 0
+
+    // Calculate gross pay: attendance base + (5% of revenue) - overhead (0.5% of purchase costs)
+    const revenueBonus = totalRevenue * 0.05
+    const costDeduction = totalPurchaseCost * 0.005
+    const gross = (attendanceBase + revenueBonus - costDeduction).toFixed(2)
 
     const [result] = await db.pool.query(
       `INSERT INTO payrolls (employee_id, period_start, period_end, gross_pay, deductions, advances, net_pay, status)
        VALUES (?, ?, ?, ?, 0, 0, ?, 'PENDING')`,
       [employee_id, period_start, period_end, gross, gross]
     )
-    res.json({ id: result.insertId, total_hours: totalHours, gross_pay: gross })
+    res.json({ 
+      id: result.insertId, 
+      total_hours: totalHours, 
+      attendance_base: attendanceBase.toFixed(2),
+      total_revenue: totalRevenue.toFixed(2),
+      revenue_bonus: revenueBonus.toFixed(2),
+      total_purchase_cost: totalPurchaseCost.toFixed(2),
+      overhead_deduction: costDeduction.toFixed(2),
+      gross_pay: gross 
+    })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'failed to generate payroll' })

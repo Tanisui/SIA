@@ -16,7 +16,6 @@ const NAV_ITEMS = [
   { to: '/payroll',     label: 'Payroll',    icon: '💰',  perm: 'payroll.view' },
   { to: '/attendance',  label: 'Attendance', icon: '🕐',  perm: 'attendance.view' },
   { section: 'Finance' },
-  { to: '/accounting',  label: 'Accounting', icon: '📊',  perm: 'finance.reports.view' },
   { to: '/reports',     label: 'Reports',    icon: '📈',  perm: 'reports.view' },
   { section: 'System' },
   { to: '/users',       label: 'Users',      icon: '🔑',  perm: 'users.view' },

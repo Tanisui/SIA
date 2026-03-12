@@ -10,6 +10,7 @@ export default function Inventory() {
   const [tab, setTab] = useState('overview')
   const [products, setProducts] = useState([])
   const [suppliers, setSuppliers] = useState([])
+  const [employees, setEmployees] = useState([])
   const [categories, setCategories] = useState([])
   const [transactions, setTransactions] = useState([])
   const [damaged, setDamaged] = useState([])
@@ -23,8 +24,8 @@ export default function Inventory() {
 
   // forms
   const [stockInForm, setStockInForm] = useState({ product_id: '', quantity: '', reference: '', supplier_id: '', date: '' })
-  const [adjustForm, setAdjustForm] = useState({ product_id: '', quantity: '', reason: '', reference: '' })
-  const [damageForm, setDamageForm] = useState({ product_id: '', quantity: '', reason: '', reference: '' })
+  const [adjustForm, setAdjustForm] = useState({ product_id: '', quantity: '', reason: '', reference: '', employee_id: '' })
+  const [damageForm, setDamageForm] = useState({ product_id: '', quantity: '', reason: '', reference: '', employee_id: '' })
   const [returnForm, setReturnForm] = useState({ product_id: '', quantity: '', return_type: 'customer', reason: '', sale_id: '' })
   const [poForm, setPoForm] = useState({ supplier_id: '', expected_date: '', items: [{ product_id: '', quantity: '', unit_cost: '' }] })
   const [productForm, setProductForm] = useState({ sku: '', name: '', brand: '', description: '', category_id: '', price: '', cost: '', stock_quantity: '', low_stock_threshold: '10', size: '', color: '', barcode: '' })
@@ -38,14 +39,16 @@ export default function Inventory() {
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [prodRes, supRes, catRes] = await Promise.all([
+      const [prodRes, supRes, catRes, empRes] = await Promise.all([
         api.get('/products'),
         api.get('/suppliers'),
-        api.get('/categories')
+        api.get('/categories'),
+        api.get('/employees')
       ])
       setProducts(prodRes.data || [])
       setSuppliers(supRes.data || [])
       setCategories(catRes.data || [])
+      setEmployees(empRes.data || [])
     } catch (e) { /* ignore */ }
     setLoading(false)
   }, [])
@@ -145,9 +148,10 @@ export default function Inventory() {
         product_id: Number(adjustForm.product_id),
         quantity: Number(adjustForm.quantity),
         reason: adjustForm.reason,
-        reference: adjustForm.reference
+        reference: adjustForm.reference,
+        employee_id: adjustForm.employee_id ? Number(adjustForm.employee_id) : undefined
       })
-      setAdjustForm({ product_id: '', quantity: '', reason: '', reference: '' })
+      setAdjustForm({ product_id: '', quantity: '', reason: '', reference: '', employee_id: '' })
       showMsg('Adjustment recorded')
       fetchAll()
     } catch (err) { setError(err?.response?.data?.error || 'Adjustment failed') }
@@ -161,9 +165,10 @@ export default function Inventory() {
         product_id: Number(damageForm.product_id),
         quantity: Number(damageForm.quantity),
         reason: damageForm.reason,
-        reference: damageForm.reference
+        reference: damageForm.reference,
+        employee_id: damageForm.employee_id ? Number(damageForm.employee_id) : undefined
       })
-      setDamageForm({ product_id: '', quantity: '', reason: '', reference: '' })
+      setDamageForm({ product_id: '', quantity: '', reason: '', reference: '', employee_id: '' })
       showMsg('Damage recorded')
       fetchAll()
     } catch (err) { setError(err?.response?.data?.error || 'Damage record failed') }
@@ -285,6 +290,9 @@ export default function Inventory() {
   )
   const supplierOptions = suppliers.map(s =>
     React.createElement('option', { key: s.id, value: s.id }, s.name)
+  )
+  const employeeOptions = employees.map(e =>
+    React.createElement('option', { key: e.id, value: e.id }, e.name)
   )
 
   // ── Tabs ──
@@ -438,6 +446,13 @@ export default function Inventory() {
             React.createElement('label', { className: 'form-label' }, 'Reference (OR/Invoice)'),
             React.createElement('input', { className: 'form-input', value: adjustForm.reference, onChange: e => setAdjustForm(f => ({ ...f, reference: e.target.value })), placeholder: 'Optional reference number' })
           ),
+          React.createElement('div', { className: 'form-group' },
+            React.createElement('label', { className: 'form-label' }, 'Employee Responsible'),
+            React.createElement('select', { className: 'form-input', value: adjustForm.employee_id, onChange: e => setAdjustForm(f => ({ ...f, employee_id: e.target.value })) },
+              React.createElement('option', { value: '' }, '— Select employee —'),
+              ...employeeOptions
+            )
+          ),
           React.createElement('button', { type: 'submit', className: 'btn btn-primary' }, 'Record Adjustment')
         )
       ),
@@ -462,6 +477,13 @@ export default function Inventory() {
           React.createElement('div', { className: 'form-group' },
             React.createElement('label', { className: 'form-label' }, 'Reference (OR/Invoice)'),
             React.createElement('input', { className: 'form-input', value: damageForm.reference, onChange: e => setDamageForm(f => ({ ...f, reference: e.target.value })), placeholder: 'Optional reference number' })
+          ),
+          React.createElement('div', { className: 'form-group' },
+            React.createElement('label', { className: 'form-label' }, 'Employee Responsible'),
+            React.createElement('select', { className: 'form-input', value: damageForm.employee_id, onChange: e => setDamageForm(f => ({ ...f, employee_id: e.target.value })) },
+              React.createElement('option', { value: '' }, '— Select employee —'),
+              ...employeeOptions
+            )
           ),
           React.createElement('button', { type: 'submit', className: 'btn btn-danger' }, 'Record Damage')
         )

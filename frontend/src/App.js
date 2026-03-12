@@ -12,7 +12,6 @@ import Sales from './pages/Sales.js'
 import Customers from './pages/Customers.js'
 import Purchasing from './pages/Purchasing.js'
 import Payroll from './pages/Payroll.js'
-import Accounting from './pages/Accounting.js'
 import Expenses from './pages/Expenses.js'
 import Audit from './pages/Audit.js'
 import Files from './pages/Files.js'
@@ -42,7 +41,6 @@ export default function App() {
           React.createElement(Route, { path: 'customers', element: React.createElement(Customers, null) }),
           React.createElement(Route, { path: 'purchasing', element: React.createElement(Purchasing, null) }),
           React.createElement(Route, { path: 'payroll', element: React.createElement(Payroll, null) }),
-          React.createElement(Route, { path: 'accounting', element: React.createElement(Accounting, null) }),
           React.createElement(Route, { path: 'expenses', element: React.createElement(Expenses, null) }),
           React.createElement(Route, { path: 'audit', element: React.createElement(Audit, null) }),
           React.createElement(Route, { path: 'files', element: React.createElement(Files, null) }),

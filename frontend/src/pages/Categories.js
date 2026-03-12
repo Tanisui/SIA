@@ -127,25 +127,21 @@ export default function Categories() {
           React.createElement('table', null,
             React.createElement('thead', null,
               React.createElement('tr', null,
-                React.createElement('th', null, 'ID'),
                 React.createElement('th', null, 'Name'),
                 React.createElement('th', null, 'Description'),
-                React.createElement('th', null, 'Created'),
                 React.createElement('th', null, 'Actions')
               )
             ),
             React.createElement('tbody', null,
               categories.length === 0
                 ? React.createElement('tr', null,
-                    React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } },
+                    React.createElement('td', { colSpan: 3, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } },
                       'No categories yet. Click "+ Add Category" to create one.'
                     )
                   )
                 : categories.map(c => React.createElement('tr', { key: c.id },
-                    React.createElement('td', null, c.id),
                     React.createElement('td', { style: { fontWeight: 500 } }, c.name),
                     React.createElement('td', null, c.description || '—'),
-                    React.createElement('td', null, c.created_at ? new Date(c.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'),
                     React.createElement('td', null,
                       React.createElement('button', {
                         className: 'btn btn-secondary',
