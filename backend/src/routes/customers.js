@@ -45,7 +45,7 @@ router.post('/', express.json(), verifyToken, authorize('customers.create'), asy
 // Update customer
 router.put('/:id', express.json(), verifyToken, authorize('customers.update'), async (req, res) => {
   try {
-    const { name, phone, email, address, notes, loyalty_points } = req.body
+    const { name, phone, email, address, notes } = req.body
     const updates = []
     const params = []
     if (name !== undefined) { updates.push('name = ?'); params.push(name) }
@@ -53,7 +53,6 @@ router.put('/:id', express.json(), verifyToken, authorize('customers.update'), a
     if (email !== undefined) { updates.push('email = ?'); params.push(email) }
     if (address !== undefined) { updates.push('address = ?'); params.push(address) }
     if (notes !== undefined) { updates.push('notes = ?'); params.push(notes) }
-    if (loyalty_points !== undefined) { updates.push('loyalty_points = ?'); params.push(loyalty_points) }
     if (!updates.length) return res.status(400).json({ error: 'nothing to update' })
     params.push(req.params.id)
     await db.pool.query(`UPDATE customers SET ${updates.join(', ')} WHERE id = ?`, params)

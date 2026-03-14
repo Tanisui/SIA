@@ -4,7 +4,7 @@ USE cecilles_nstyle_db;
 SET FOREIGN_KEY_CHECKS = 0;
 
 CREATE TABLE IF NOT EXISTS `users` (
-	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+	`id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 	`username` VARCHAR(100) UNIQUE,
 	`email` VARCHAR(255) UNIQUE,
 	`password_hash` VARCHAR(255) NOT NULL,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS `role_permissions` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `user_roles` (
-	`user_id` BIGINT UNSIGNED NOT NULL,
+	`user_id` INT UNSIGNED NOT NULL,
 	`role_id` INT UNSIGNED NOT NULL,
 	PRIMARY KEY (`user_id`,`role_id`),
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS `user_roles` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `user_permissions` (
-	`user_id` BIGINT UNSIGNED NOT NULL,
+	`user_id` INT UNSIGNED NOT NULL,
 	`permission_id` INT UNSIGNED NOT NULL,
 	PRIMARY KEY (`user_id`,`permission_id`),
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS `inventory_transactions` (
 	`quantity` INT NOT NULL,
 	`location` VARCHAR(255),
 	`reference` VARCHAR(255),
-	`user_id` BIGINT UNSIGNED,
+	`user_id` INT UNSIGNED,
 	`reason` TEXT,
 	`balance_after` INT,
 	`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS `damaged_inventory` (
 	`product_id` BIGINT UNSIGNED NOT NULL,
 	`quantity` INT NOT NULL,
 	`reason` TEXT,
-	`reported_by` BIGINT UNSIGNED,
+	`reported_by` INT UNSIGNED,
 	`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (`product_id`) REFERENCES `products`(`id`) ON DELETE CASCADE,
 	FOREIGN KEY (`reported_by`) REFERENCES `users`(`id`) ON DELETE SET NULL
@@ -112,7 +112,6 @@ CREATE TABLE IF NOT EXISTS `customers` (
 	`email` VARCHAR(255),
 	`address` TEXT,
 	`notes` TEXT,
-	`loyalty_points` INT DEFAULT 0,
 	`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -151,7 +150,7 @@ CREATE TABLE IF NOT EXISTS `sales` (
 	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 	`sale_number` VARCHAR(100) UNIQUE,
 	`date` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	`clerk_id` BIGINT UNSIGNED,
+	`clerk_id` INT UNSIGNED,
 	`customer_id` BIGINT UNSIGNED,
 	`subtotal` DECIMAL(12,2) DEFAULT 0.00,
 	`tax` DECIMAL(12,2) DEFAULT 0.00,
@@ -176,7 +175,7 @@ CREATE TABLE IF NOT EXISTS `sale_items` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `employees` (
-	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+	`id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 	`name` VARCHAR(255) NOT NULL,
 	`role` VARCHAR(100),
 	`contact_type` VARCHAR(50),
@@ -190,7 +189,7 @@ CREATE TABLE IF NOT EXISTS `employees` (
 
 CREATE TABLE IF NOT EXISTS `attendance` (
 	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-	`employee_id` BIGINT UNSIGNED NOT NULL,
+	`employee_id` INT UNSIGNED NOT NULL,
 	`date` DATE NOT NULL,
 	`clock_in` TIME,
 	`clock_out` TIME,
@@ -201,7 +200,7 @@ CREATE TABLE IF NOT EXISTS `attendance` (
 
 CREATE TABLE IF NOT EXISTS `payrolls` (
 	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-	`employee_id` BIGINT UNSIGNED NOT NULL,
+	`employee_id` INT UNSIGNED NOT NULL,
 	`period_start` DATE,
 	`period_end` DATE,
 	`gross_pay` DECIMAL(12,2) DEFAULT 0.00,
@@ -209,7 +208,7 @@ CREATE TABLE IF NOT EXISTS `payrolls` (
 	`advances` DECIMAL(12,2) DEFAULT 0.00,
 	`net_pay` DECIMAL(12,2) DEFAULT 0.00,
 	`status` ENUM('PENDING','PROCESSED','PAID') DEFAULT 'PENDING',
-	`processed_by` BIGINT UNSIGNED,
+	`processed_by` INT UNSIGNED,
 	`processed_at` TIMESTAMP NULL,
 	FOREIGN KEY (`employee_id`) REFERENCES `employees`(`id`) ON DELETE CASCADE,
 	FOREIGN KEY (`processed_by`) REFERENCES `users`(`id`) ON DELETE SET NULL
@@ -219,14 +218,14 @@ CREATE TABLE IF NOT EXISTS `saved_reports` (
 	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 	`name` VARCHAR(255),
 	`filters` JSON,
-	`owner_id` BIGINT UNSIGNED,
+	`owner_id` INT UNSIGNED,
 	`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (`owner_id`) REFERENCES `users`(`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `audit_logs` (
 	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-	`user_id` BIGINT UNSIGNED,
+	`user_id` INT UNSIGNED,
 	`action` VARCHAR(255) NOT NULL,
 	`resource_type` VARCHAR(100),
 	`resource_id` VARCHAR(255),
@@ -241,7 +240,7 @@ CREATE TABLE IF NOT EXISTS `files` (
 	`original_name` VARCHAR(255),
 	`type` VARCHAR(50),
 	`size` BIGINT,
-	`uploaded_by` BIGINT UNSIGNED,
+	`uploaded_by` INT UNSIGNED,
 	`uploaded_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (`uploaded_by`) REFERENCES `users`(`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -249,7 +248,7 @@ CREATE TABLE IF NOT EXISTS `files` (
 CREATE TABLE IF NOT EXISTS `notifications` (
 	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 	`type` VARCHAR(100),
-	`recipient_user_id` BIGINT UNSIGNED,
+	`recipient_user_id` INT UNSIGNED,
 	`payload` JSON,
 	`status` ENUM('PENDING','SENT','FAILED') DEFAULT 'PENDING',
 	`sent_at` TIMESTAMP NULL,

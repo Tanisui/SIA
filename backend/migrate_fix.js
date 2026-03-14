@@ -86,7 +86,6 @@ async function run() {
       email VARCHAR(255),
       address TEXT,
       notes TEXT,
-      loyalty_points INT DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
