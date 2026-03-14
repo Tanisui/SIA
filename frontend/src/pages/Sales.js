@@ -19,6 +19,7 @@ export default function Sales() {
   const [selectedProduct, setSelectedProduct] = useState('')
   const [customPrice, setCustomPrice] = useState('')
   const [customQty, setCustomQty] = useState('1')
+  const [qtyValidationError, setQtyValidationError] = useState('')
   const [paymentMethod, setPaymentMethod] = useState('cash')
   const [customerId, setCustomerId] = useState('')
   const [discount, setDiscount] = useState('')
@@ -69,14 +70,59 @@ export default function Sales() {
 
   const clearMessages = () => { setError(null); setSuccess(null) }
   const showMsg = (msg) => { setSuccess(msg); setTimeout(() => setSuccess(null), 4000) }
+  const STOCK_ERROR_MESSAGE = 'Insufficient stock. Cannot proceed.'
+
+  const getAvailableStock = (productId) => {
+    const product = products.find(p => String(p.id) === String(productId))
+    return Number(product?.stock_quantity) || 0
+  }
+
+  const getCartQtyForProduct = (productId, excludeIdx = -1) => (
+    cart.reduce((sum, item, idx) => {
+      if (idx === excludeIdx) return sum
+      return String(item.product_id) === String(productId) ? sum + Number(item.quantity || 0) : sum
+    }, 0)
+  )
+
+  const getQtyInputError = useCallback((qtyValue, productId = selectedProduct) => {
+    if (!productId) return ''
+
+    const qty = Number(qtyValue)
+    if (!Number.isFinite(qty) || qty <= 0) return 'Quantity must be greater than 0'
+
+    const availableStock = getAvailableStock(productId)
+    const inCartQty = getCartQtyForProduct(productId)
+    return inCartQty + qty > availableStock ? STOCK_ERROR_MESSAGE : ''
+  }, [selectedProduct, products, cart])
+
+  const handleQtyInputChange = (value) => {
+    setCustomQty(value)
+    setQtyValidationError(getQtyInputError(value, selectedProduct))
+  }
+
+  useEffect(() => {
+    setQtyValidationError(getQtyInputError(customQty, selectedProduct))
+  }, [customQty, selectedProduct, cart, products, getQtyInputError])
 
   // ── POS: Add product to cart ──
   const addToCart = () => {
+    clearMessages()
     if (!selectedProduct) return
     const product = products.find(p => String(p.id) === String(selectedProduct))
     if (!product) return
+
+    const qtyError = getQtyInputError(customQty, selectedProduct)
+    if (qtyError) return setError(qtyError)
+
     const qty = Number(customQty) || 1
     const price = customPrice ? Number(customPrice) : Number(product.price)
+    const availableStock = getAvailableStock(product.id)
+    const inCartQty = getCartQtyForProduct(product.id)
+
+    if (qty <= 0) return setError('Quantity must be greater than 0')
+    if (inCartQty + qty > availableStock) {
+      return setError(`Cannot add ${qty} item(s). Only ${Math.max(availableStock - inCartQty, 0)} left in stock for ${product.name}.`)
+    }
 
     setCart(prev => {
       const existing = prev.find(c => c.product_id === product.id && c.unit_price === price)
@@ -88,11 +134,34 @@ export default function Sales() {
     setSelectedProduct('')
     setCustomPrice('')
     setCustomQty('1')
+    setQtyValidationError('')
     setSearchTerm('')
   }
 
   const updateCartQty = (idx, qty) => {
-    setCart(prev => prev.map((c, i) => i === idx ? { ...c, quantity: Math.max(1, qty) } : c))
+    clearMessages()
+    const item = cart[idx]
+    if (!item) return
+
+    const normalizedQty = Math.max(1, Number(qty) || 1)
+    const availableStock = getAvailableStock(item.product_id)
+    const otherInCartQty = getCartQtyForProduct(item.product_id, idx)
+    const maxAllowedQty = Math.max(availableStock - otherInCartQty, 0)
+
+    if (maxAllowedQty === 0) {
+      setError(`${item.name} has no stock left and was removed from cart.`)
+      setCart(prev => prev.filter((_, i) => i !== idx))
+      return
+    }
+
+    if (normalizedQty > maxAllowedQty) {
+      setError(`Only ${maxAllowedQty} item(s) available for ${item.name}.`)
+    }
+
+    setCart(prev => prev.map((c, i) => {
+      if (i !== idx) return c
+      return { ...c, quantity: Math.min(normalizedQty, maxAllowedQty) }
+    }))
   }
 
   const updateCartPrice = (idx, price) => {
@@ -107,11 +176,23 @@ export default function Sales() {
   const discountAmt = Number(discount) || 0
   const taxAmt = Number(tax) || 0
   const total = subtotal - discountAmt + taxAmt
+  const cartHasStockError = cart.some(item => getCartQtyForProduct(item.product_id) > getAvailableStock(item.product_id))
+  const disableAddToCart = !selectedProduct || !!qtyValidationError
+  const disableFinalize = cart.length === 0 || cartHasStockError || !!qtyValidationError
 
   // ── POS: Finalize order ──
   const finalizeOrder = async () => {
     clearMessages()
     if (cart.length === 0) return setError('Add items to cart first')
+
+    for (const item of cart) {
+      const availableStock = getAvailableStock(item.product_id)
+      const inCartQty = getCartQtyForProduct(item.product_id)
+      if (inCartQty > availableStock) {
+        return setError(`Insufficient stock for ${item.name}. Available: ${availableStock}, in cart: ${inCartQty}.`)
+      }
+    }
+
     try {
       const res = await api.post('/sales', {
         items: cart.map(c => ({ product_id: c.product_id, quantity: c.quantity, unit_price: c.unit_price })),
@@ -208,7 +289,7 @@ export default function Sales() {
         // Add product
         React.createElement('div', { className: 'card', style: { marginBottom: 16 } },
           React.createElement('h3', { style: { marginBottom: 12 } }, 'Select Item'),
-          React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: 8, alignItems: 'end' } },
+          React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '2fr 1fr minmax(180px, 1.1fr) auto', gap: 12, alignItems: 'end' } },
             React.createElement('div', { className: 'form-group', style: { marginBottom: 0, position: 'relative' } },
               React.createElement('label', { className: 'form-label' }, 'Product'),
               React.createElement('input', {
@@ -275,9 +356,55 @@ export default function Sales() {
             ),
             React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
               React.createElement('label', { className: 'form-label' }, 'Qty'),
-              React.createElement('input', { className: 'form-input', type: 'number', min: 1, value: customQty, onChange: e => setCustomQty(e.target.value) })
+              React.createElement('div', { style: { position: 'relative' } },
+                qtyValidationError && React.createElement('div', {
+                  style: {
+                    position: 'absolute',
+                    left: 0,
+                    bottom: 'calc(100% + 8px)',
+                    zIndex: 60,
+                    background: '#fff5f5',
+                    color: '#b42318',
+                    border: '1px solid #fda29b',
+                    borderRadius: 999,
+                    padding: '4px 10px',
+                    fontSize: 11,
+                    lineHeight: 1.2,
+                    whiteSpace: 'nowrap',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
+                  }
+                },
+                  qtyValidationError,
+                  React.createElement('span', {
+                    style: {
+                      position: 'absolute',
+                      left: 16,
+                      top: '100%',
+                      width: 8,
+                      height: 8,
+                      background: '#fff5f5',
+                      borderRight: '1px solid #fda29b',
+                      borderBottom: '1px solid #fda29b',
+                      transform: 'translateY(-4px) rotate(45deg)'
+                    }
+                  })
+                ),
+                React.createElement('input', {
+                  className: 'form-input',
+                  type: 'number',
+                  min: 1,
+                  value: customQty,
+                  onChange: e => handleQtyInputChange(e.target.value),
+                  onInput: e => handleQtyInputChange(e.target.value)
+                })
+              )
             ),
-            React.createElement('button', { className: 'btn btn-primary', onClick: addToCart, style: { height: 42 } }, 'Add')
+            React.createElement('button', {
+              className: 'btn btn-primary',
+              onClick: addToCart,
+              disabled: disableAddToCart,
+              style: { height: 42, opacity: disableAddToCart ? 0.6 : 1, cursor: disableAddToCart ? 'not-allowed' : 'pointer' }
+            }, 'Add')
           )
         ),
 
@@ -380,7 +507,8 @@ export default function Sales() {
           React.createElement('button', {
             className: 'btn btn-primary',
             style: { width: '100%', marginTop: 16, padding: '14px', fontSize: 15, fontWeight: 600 },
-            onClick: finalizeOrder
+            onClick: finalizeOrder,
+            disabled: disableFinalize
           }, 'Finalize Order'),
 
           // Last receipt
