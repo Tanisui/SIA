@@ -5,6 +5,27 @@ import api from '../api/api.js'
 const fmt = (n) => Number(n || 0).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
 
+const infoTip = (text) => React.createElement('span', {
+  title: text,
+  style: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 16,
+    height: 16,
+    marginLeft: 6,
+    borderRadius: 999,
+    border: '1px solid #cbd5e1',
+    background: '#f8fafc',
+    color: '#334155',
+    fontSize: 10,
+    fontWeight: 700,
+    lineHeight: 1,
+    cursor: 'help',
+    userSelect: 'none'
+  }
+}, 'i')
+
 export default function Inventory() {
   // ── state ──
   const [tab, setTab] = useState('overview')
@@ -241,11 +262,15 @@ export default function Inventory() {
     e.preventDefault(); clearMessages()
     try {
       const payload = { ...productForm }
+      payload.sku = String(payload.sku || '').trim()
+      payload.barcode = String(payload.barcode || '').trim()
       if (payload.price) payload.price = Number(payload.price)
       if (payload.cost) payload.cost = Number(payload.cost)
       if (payload.stock_quantity) payload.stock_quantity = Number(payload.stock_quantity)
       if (payload.low_stock_threshold) payload.low_stock_threshold = Number(payload.low_stock_threshold)
       if (payload.category_id) payload.category_id = Number(payload.category_id)
+      if (!payload.sku) delete payload.sku
+      if (!payload.barcode && !editingProduct) delete payload.barcode
 
       if (editingProduct) {
         await api.put(`/products/${editingProduct}`, payload)
@@ -612,16 +637,16 @@ export default function Inventory() {
         React.createElement('form', { onSubmit: handleSaveProduct },
           React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 } },
             React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'SKU'),
-              React.createElement('input', { className: 'form-input', value: productForm.sku, onChange: e => setProductForm(f => ({ ...f, sku: e.target.value })) })
+              React.createElement('label', { className: 'form-label' }, 'SKU', infoTip('Auto-generated unless you change it')),
+              React.createElement('input', { className: 'form-input', value: productForm.sku, onChange: e => setProductForm(f => ({ ...f, sku: e.target.value })), placeholder: 'Auto-generated if left blank' })
             ),
             React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Name *'),
               React.createElement('input', { className: 'form-input', value: productForm.name, onChange: e => setProductForm(f => ({ ...f, name: e.target.value })), required: true })
             ),
             React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Barcode'),
-              React.createElement('input', { className: 'form-input', value: productForm.barcode, onChange: e => setProductForm(f => ({ ...f, barcode: e.target.value })) })
+              React.createElement('label', { className: 'form-label' }, 'Barcode', infoTip('Auto-generated unless you change it')),
+              React.createElement('input', { className: 'form-input', value: productForm.barcode, onChange: e => setProductForm(f => ({ ...f, barcode: e.target.value })), placeholder: 'Scan, enter, or leave blank to auto-generate' })
             ),
             React.createElement('div', { className: 'form-group', style: { position: 'relative' } },
               React.createElement('label', { className: 'form-label' }, 'Category'),
@@ -725,6 +750,7 @@ export default function Inventory() {
           React.createElement('thead', null,
             React.createElement('tr', null,
               React.createElement('th', null, 'SKU'),
+              React.createElement('th', null, 'Barcode'),
               React.createElement('th', null, 'Name'),
               React.createElement('th', null, 'Brand'),
               React.createElement('th', null, 'Category'),
@@ -738,6 +764,7 @@ export default function Inventory() {
           React.createElement('tbody', null,
             products.map(p => React.createElement('tr', { key: p.id },
               React.createElement('td', null, p.sku || '—'),
+              React.createElement('td', null, p.barcode || '—'),
               React.createElement('td', { style: { fontWeight: 500 } }, p.name),
               React.createElement('td', null, p.brand || '—'),
               React.createElement('td', null, p.category || '—'),
