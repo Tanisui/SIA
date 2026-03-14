@@ -61,13 +61,13 @@ export default function Dashboard() {
     React.createElement('div', { className: 'dashboard-grid' },
       cards.map(card =>
         React.createElement('div', { key: card.title, className: 'card' },
-          React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
-            React.createElement('div', null,
+          React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' } },
+            React.createElement('div', { style: { flex: 1 } },
               React.createElement('div', { className: 'card-title' }, card.title),
               React.createElement('div', { className: 'card-value' }, card.value),
-              React.createElement('div', { className: 'text-muted mt-1', style: { fontSize: 12 } }, card.sub)
+              React.createElement('div', { className: 'card-subtitle' }, card.sub)
             ),
-            React.createElement('span', { style: { fontSize: 28, opacity: 0.6 } }, card.icon)
+            React.createElement('span', { style: { fontSize: 32, opacity: 0.5, flexShrink: 0 } }, card.icon)
           )
         )
       )
@@ -75,26 +75,31 @@ export default function Dashboard() {
 
     // Recent Sales
     stats && stats.recent_sales && stats.recent_sales.length > 0 &&
-    React.createElement('div', { className: 'card', style: { marginTop: 16 } },
-      React.createElement('h3', { style: { marginBottom: 12, fontFamily: 'Cormorant Garamond, serif' } }, 'Recent Sales'),
-      React.createElement('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 14 } },
-        React.createElement('thead', null,
-          React.createElement('tr', null,
-            React.createElement('th', { style: { textAlign: 'left', padding: 8, borderBottom: '1px solid #ddd' } }, 'Sale #'),
-            React.createElement('th', { style: { textAlign: 'left', padding: 8, borderBottom: '1px solid #ddd' } }, 'Clerk'),
-            React.createElement('th', { style: { textAlign: 'right', padding: 8, borderBottom: '1px solid #ddd' } }, 'Total'),
-            React.createElement('th', { style: { textAlign: 'left', padding: 8, borderBottom: '1px solid #ddd' } }, 'Payment'),
-            React.createElement('th', { style: { textAlign: 'left', padding: 8, borderBottom: '1px solid #ddd' } }, 'Date')
-          )
-        ),
-        React.createElement('tbody', null,
-          stats.recent_sales.map(s =>
-            React.createElement('tr', { key: s.id },
-              React.createElement('td', { style: { padding: 8, borderBottom: '1px solid #f6f6f6' } }, s.sale_number || `#${s.id}`),
-              React.createElement('td', { style: { padding: 8, borderBottom: '1px solid #f6f6f6' } }, s.clerk || '—'),
-              React.createElement('td', { style: { padding: 8, borderBottom: '1px solid #f6f6f6', textAlign: 'right' } }, fmtMoney(s.total)),
-              React.createElement('td', { style: { padding: 8, borderBottom: '1px solid #f6f6f6' } }, s.payment_method || '—'),
-              React.createElement('td', { style: { padding: 8, borderBottom: '1px solid #f6f6f6' } }, new Date(s.date).toLocaleDateString('en-PH'))
+    React.createElement('div', { className: 'card mb-4' },
+      React.createElement('div', { className: 'card-header' },
+        React.createElement('h3', null, 'Recent Sales'),
+        React.createElement('span', { className: 'badge badge-neutral' }, `${stats.recent_sales.length} sales`)
+      ),
+      React.createElement('div', { className: 'table-wrap' },
+        React.createElement('table', null,
+          React.createElement('thead', null,
+            React.createElement('tr', null,
+              React.createElement('th', null, 'Sale #'),
+              React.createElement('th', null, 'Clerk'),
+              React.createElement('th', { className: 'text-right' }, 'Total'),
+              React.createElement('th', null, 'Payment'),
+              React.createElement('th', null, 'Date')
+            )
+          ),
+          React.createElement('tbody', null,
+            stats.recent_sales.slice(0, 10).map(s =>
+              React.createElement('tr', { key: s.id },
+                React.createElement('td', null, s.sale_number || `#${s.id}`),
+                React.createElement('td', null, s.clerk || '—'),
+                React.createElement('td', { className: 'text-right text-dark', style: { fontWeight: '600', color: 'var(--gold-dark)' } }, fmtMoney(s.total)),
+                React.createElement('td', null, s.payment_method || '—'),
+                React.createElement('td', { className: 'text-muted' }, new Date(s.date).toLocaleDateString('en-PH'))
+              )
             )
           )
         )
@@ -103,22 +108,27 @@ export default function Dashboard() {
 
     // Top Products
     stats && stats.top_products && stats.top_products.length > 0 &&
-    React.createElement('div', { className: 'card', style: { marginTop: 16 } },
-      React.createElement('h3', { style: { marginBottom: 12, fontFamily: 'Cormorant Garamond, serif' } }, 'Top Products (Last 30 Days)'),
-      React.createElement('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 14 } },
-        React.createElement('thead', null,
-          React.createElement('tr', null,
-            React.createElement('th', { style: { textAlign: 'left', padding: 8, borderBottom: '1px solid #ddd' } }, 'Product'),
-            React.createElement('th', { style: { textAlign: 'right', padding: 8, borderBottom: '1px solid #ddd' } }, 'Qty Sold'),
-            React.createElement('th', { style: { textAlign: 'right', padding: 8, borderBottom: '1px solid #ddd' } }, 'Revenue')
-          )
-        ),
-        React.createElement('tbody', null,
-          stats.top_products.map((p, i) =>
-            React.createElement('tr', { key: i },
-              React.createElement('td', { style: { padding: 8, borderBottom: '1px solid #f6f6f6' } }, p.name),
-              React.createElement('td', { style: { padding: 8, borderBottom: '1px solid #f6f6f6', textAlign: 'right' } }, fmt(p.total_qty)),
-              React.createElement('td', { style: { padding: 8, borderBottom: '1px solid #f6f6f6', textAlign: 'right' } }, fmtMoney(p.total_revenue))
+    React.createElement('div', { className: 'card mb-4' },
+      React.createElement('div', { className: 'card-header' },
+        React.createElement('h3', null, 'Top Products (Last 30 Days)'),
+        React.createElement('span', { className: 'badge badge-primary' }, 'Bestsellers')
+      ),
+      React.createElement('div', { className: 'table-wrap' },
+        React.createElement('table', null,
+          React.createElement('thead', null,
+            React.createElement('tr', null,
+              React.createElement('th', null, 'Product'),
+              React.createElement('th', { className: 'text-right' }, 'Qty Sold'),
+              React.createElement('th', { className: 'text-right' }, 'Revenue')
+            )
+          ),
+          React.createElement('tbody', null,
+            stats.top_products.slice(0, 8).map((p, i) =>
+              React.createElement('tr', { key: i },
+                React.createElement('td', null, p.name),
+                React.createElement('td', { className: 'text-right' }, fmt(p.total_qty)),
+                React.createElement('td', { className: 'text-right text-dark', style: { fontWeight: '600', color: 'var(--success)' } }, fmtMoney(p.total_revenue))
+              )
             )
           )
         )
@@ -126,15 +136,15 @@ export default function Dashboard() {
     ),
 
     // Info Banner
-    React.createElement('div', { className: 'card', style: { marginTop: 16, background: 'linear-gradient(135deg, #2C2116 0%, #4A3520 100%)', border: 'none', color: '#EDE0C4' } },
-      React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+    React.createElement('div', { className: 'card', style: { marginTop: '24px', background: 'linear-gradient(135deg, var(--sidebar-bg) 0%, #3A2F25 100%)', border: 'none', color: 'var(--sidebar-text)' } },
+      React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '24px' } },
         React.createElement('div', null,
-          React.createElement('h3', { style: { color: '#D4B483', fontFamily: 'Cormorant Garamond, serif', fontSize: 22 } }, "Cecille's N'Style POS"),
-          React.createElement('p', { style: { fontSize: 13.5, color: '#A89070', marginTop: 4 } },
-            'Boutique Management System — Sales, Inventory, Employees & more.'
+          React.createElement('h3', { style: { color: 'var(--tan)', fontFamily: 'Cormorant Garamond, serif', fontSize: '24px', margin: '0 0 8px 0' } }, "Cecille's N'Style POS"),
+          React.createElement('p', { style: { fontSize: '14px', color: 'var(--sidebar-muted)', margin: 0, lineHeight: '1.6' } },
+            'Complete Boutique Management System — Sales, Inventory, Employees, Payroll & Accounting integrated.'
           )
         ),
-        React.createElement('span', { style: { fontSize: 36 } }, '✨')
+        React.createElement('span', { style: { fontSize: '48px', flexShrink: 0 } }, '✨')
       )
     )
   )

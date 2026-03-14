@@ -14,9 +14,9 @@ const initTable = async () => {
         description TEXT,
         amount DECIMAL(12,2) DEFAULT 0.00,
         vendor VARCHAR(255),
-        employee_id BIGINT UNSIGNED,
+        employee_id INT UNSIGNED,
         status ENUM('PENDING','APPROVED','REJECTED','PAID') DEFAULT 'PENDING',
-        approved_by BIGINT UNSIGNED,
+        approved_by INT UNSIGNED,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE SET NULL,
         FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL

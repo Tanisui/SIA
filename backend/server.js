@@ -34,7 +34,7 @@ app.use(express.json())
 app.use((req, res, next) => {
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'self'; connect-src 'self' http://localhost:3000 ws://localhost:3000; img-src 'self' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';"
+    "default-src 'self'; connect-src 'self' http://localhost:3000 http://localhost:5000 http://localhost:5173 http://localhost:5174 ws://localhost:3000 ws://localhost:5000; img-src 'self' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;"
   )
   next()
 })
