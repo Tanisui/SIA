@@ -27,6 +27,64 @@ function PasswordInput({ value, onChange, name, placeholder, inputProps }) {
   )
 }
 
+/**
+ * Enhanced Checkbox Group with Select All functionality
+ */
+function CheckboxGroup({ options, value, onChange, name }) {
+  const allValues = options ? options.map(o => String(o.value || o)) : [];
+  const currentValues = Array.isArray(value) ? value.map(String) : [];
+  const isAllSelected = allValues.length > 0 && allValues.every(v => currentValues.includes(v));
+
+  const toggleAll = () => {
+    if (isAllSelected) {
+      onChange(name, []); // Clear all
+    } else {
+      onChange(name, allValues); // Select all
+    }
+  };
+
+  return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+    options && options.length > 1 && React.createElement('button', {
+      type: 'button',
+      onClick: toggleAll,
+      style: {
+        alignSelf: 'flex-start',
+        padding: '4px 10px',
+        fontSize: '11.5px',
+        marginBottom: '8px',
+        cursor: 'pointer',
+        borderRadius: '4px',
+        border: '1px solid #cbd5e1',
+        background: '#f8fafc',
+        fontWeight: '600',
+        color: '#334155'
+      }
+    }, isAllSelected ? 'Deselect All' : 'Select All'),
+    React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+      options && options.map((o) => {
+        const val = o.value || o
+        const checked = currentValues.includes(String(val))
+        return React.createElement('label', { key: val, style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: '13px', cursor: 'pointer' } },
+          React.createElement('input', {
+            type: 'checkbox',
+            checked,
+            onChange: (e) => {
+              let next = [...currentValues]
+              if (e.target.checked) {
+                if (!next.includes(String(val))) next.push(String(val))
+              } else {
+                next = next.filter(v => v !== String(val))
+              }
+              onChange(name, next)
+            }
+          }),
+          React.createElement('span', null, o.label || String(val))
+        )
+      })
+    )
+  );
+}
+
 function FieldInput({ field, value, onChange }) {
   const { name, type, options, placeholder, inputProps } = field
   const baseStyle = { width: '100%', padding: 8 }
@@ -71,29 +129,7 @@ function FieldInput({ field, value, onChange }) {
   }
 
   if (type === 'checkboxes') {
-    return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-      options && options.map((o) => {
-        const val = o.value || o
-        const checked = Array.isArray(value) ? value.map(String).includes(String(val)) : false
-        return React.createElement('label', { key: val, style: { display: 'flex', alignItems: 'center', gap: 8 } },
-          React.createElement('input', {
-            type: 'checkbox',
-            checked,
-            onChange: (e) => {
-              const cur = Array.isArray(value) ? [...value.map(String)] : []
-              if (e.target.checked) {
-                cur.push(String(val))
-              } else {
-                const idx = cur.indexOf(String(val))
-                if (idx !== -1) cur.splice(idx, 1)
-              }
-              onChange(name, cur)
-            }
-          }),
-          React.createElement('span', null, o.label || String(val))
-        )
-      })
-    )
+    return React.createElement(CheckboxGroup, { options, value, onChange, name });
   }
 
   if (type === 'date') {

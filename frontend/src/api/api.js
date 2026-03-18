@@ -12,16 +12,28 @@ api.interceptors.request.use((config) => {
 })
 
 api.interceptors.response.use((res) => res, (err) => {
-  try{
+  try {
     const status = err?.response?.status
+    const url = err?.config?.url || ''
+
+    // If it's a 401 Unauthorized error
     if (status === 401) {
+      // Check if this error came from the change-password request
+      // If it did, we DON'T logout so the user can see the error message
+      if (url.includes('/auth/change-password')) {
+        return Promise.reject(err)
+      }
+
+      // For all other 401s (expired session, etc.), clear storage and redirect
       localStorage.removeItem('token')
       localStorage.removeItem('user')
       localStorage.removeItem('permissions')
       window.location.href = '/login'
       return Promise.reject(err)
     }
-  }catch(e){ console.error('api response handler error', e) }
+  } catch (e) { 
+    console.error('api response handler error', e) 
+  }
   return Promise.reject(err)
 })
 

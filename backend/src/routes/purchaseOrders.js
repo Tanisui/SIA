@@ -3,8 +3,8 @@ const router = express.Router()
 const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 
-// List all purchase orders
-router.get('/', verifyToken, authorize('purchase.view'), async (req, res) => {
+// ─── List all purchase orders (Allow products.view to see order history) ───
+router.get('/', verifyToken, authorize(['purchase.view', 'products.view']), async (req, res) => {
   try {
     const { status } = req.query
     let sql = `
@@ -35,8 +35,8 @@ router.get('/', verifyToken, authorize('purchase.view'), async (req, res) => {
   }
 })
 
-// Get single PO
-router.get('/:id', verifyToken, authorize('purchase.view'), async (req, res) => {
+// ─── Get single PO (Allow products.view) ───
+router.get('/:id', verifyToken, authorize(['purchase.view', 'products.view']), async (req, res) => {
   try {
     const [rows] = await db.pool.query(`
       SELECT po.*, s.name AS supplier_name
@@ -60,7 +60,7 @@ router.get('/:id', verifyToken, authorize('purchase.view'), async (req, res) => 
   }
 })
 
-// Create PO
+// ─── Create PO ───
 router.post('/', express.json(), verifyToken, authorize('purchase.create'), async (req, res) => {
   const conn = await db.pool.getConnection()
   try {
@@ -69,7 +69,6 @@ router.post('/', express.json(), verifyToken, authorize('purchase.create'), asyn
     if (!supplier_id) return res.status(400).json({ error: 'supplier_id required' })
     if (!items || !items.length) return res.status(400).json({ error: 'at least one item required' })
 
-    // Generate PO number
     const [countRows] = await conn.query('SELECT COUNT(*) AS cnt FROM purchase_orders')
     const poNum = `PO-${String(countRows[0].cnt + 1).padStart(6, '0')}`
 
@@ -102,7 +101,7 @@ router.post('/', express.json(), verifyToken, authorize('purchase.create'), asyn
   }
 })
 
-// Update PO (only OPEN orders)
+// ─── Update PO ───
 router.put('/:id', express.json(), verifyToken, authorize('purchase.create'), async (req, res) => {
   const conn = await db.pool.getConnection()
   try {
@@ -149,7 +148,7 @@ router.put('/:id', express.json(), verifyToken, authorize('purchase.create'), as
   }
 })
 
-// Cancel PO
+// ─── Cancel PO ───
 router.post('/:id/cancel', express.json(), verifyToken, authorize('purchase.create'), async (req, res) => {
   try {
     const [po] = await db.pool.query('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id])
@@ -163,7 +162,7 @@ router.post('/:id/cancel', express.json(), verifyToken, authorize('purchase.crea
   }
 })
 
-// Delete PO
+// ─── Delete PO ───
 router.delete('/:id', verifyToken, authorize('purchase.create'), async (req, res) => {
   try {
     await db.pool.query('DELETE FROM purchase_orders WHERE id = ?', [req.params.id])

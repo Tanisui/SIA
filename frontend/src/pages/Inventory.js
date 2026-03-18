@@ -60,16 +60,24 @@ export default function Inventory() {
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [prodRes, supRes, catRes, empRes] = await Promise.all([
+      const permissions = JSON.parse(localStorage.getItem('permissions') || '[]')
+      const hasSupplierView = permissions.includes('suppliers.view')
+      
+      const [prodRes, catRes, empRes] = await Promise.all([
         api.get('/products'),
-        api.get('/suppliers'),
         api.get('/categories'),
         api.get('/employees')
       ])
       setProducts(prodRes.data || [])
-      setSuppliers(supRes.data || [])
       setCategories(catRes.data || [])
       setEmployees(empRes.data || [])
+      
+      if (hasSupplierView) {
+        try {
+          const supRes = await api.get('/suppliers')
+          setSuppliers(supRes.data || [])
+        } catch (e) { /* ignore suppliers fetch error */ }
+      }
     } catch (e) { /* ignore */ }
     setLoading(false)
   }, [])

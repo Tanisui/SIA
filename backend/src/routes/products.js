@@ -3,6 +3,7 @@ const router = express.Router()
 const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 
+// Helper: Normalize SKU
 function normalizeProvidedSku(sku) {
   const raw = String(sku || '').trim()
   if (!raw) return null
@@ -10,11 +11,13 @@ function normalizeProvidedSku(sku) {
   return raw.toUpperCase()
 }
 
+// Helper: Normalize Barcode
 function normalizeProvidedBarcode(barcode) {
   const raw = String(barcode || '').trim()
   return raw || null
 }
 
+// Helper: Generate Category Prefix for SKU
 function categoryPrefix(name) {
   const clean = String(name || '').replace(/[^a-zA-Z0-9\s]/g, ' ').trim()
   if (!clean) return 'PRD'
@@ -28,6 +31,7 @@ function categoryPrefix(name) {
   return 'PRD'
 }
 
+// Helper: Auto-generate SKU
 async function generateSku(categoryId) {
   let prefix = 'PRD'
   if (categoryId) {
@@ -45,22 +49,23 @@ async function generateSku(categoryId) {
       if (Number.isFinite(seq) && seq > maxSeq) maxSeq = seq
     }
   }
-
   return `${prefix}-${String(maxSeq + 1).padStart(4, '0')}`
 }
 
+// Helper: Auto-generate Barcode
 async function generateBarcode() {
   const [rows] = await db.pool.query(
     "SELECT barcode FROM products WHERE barcode REGEXP '^[0-9]{12}$' ORDER BY barcode DESC LIMIT 1"
   )
-
   const last = rows.length ? Number(rows[0].barcode) : 0
   const next = Number.isFinite(last) ? last + 1 : 1
   return String(next).padStart(12, '0')
 }
 
-// Low stock alerts — MUST be before /:id
-router.get('/alerts/low-stock', verifyToken, authorize('inventory.view'), async (req, res) => {
+// ─── ROUTES ───
+
+// Low stock alerts (Updated to allow products.view)
+router.get('/alerts/low-stock', verifyToken, authorize('products.view'), async (req, res) => {
   try {
     const [rows] = await db.pool.query(`
       SELECT p.*, c.name AS category
@@ -120,7 +125,6 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
 
     if (!cleanName) return res.status(400).json({ error: 'Product name is required' })
     if (!Number.isFinite(sellingPrice) || sellingPrice <= 0) return res.status(400).json({ error: 'Selling price must be greater than 0' })
-    if (Number.isFinite(quantity) && quantity < 0) return res.status(400).json({ error: 'Quantity cannot be negative' })
 
     let finalSku = normalizeProvidedSku(sku)
     if (!finalSku) finalSku = await generateSku(category_id || null)
@@ -139,11 +143,9 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
   } catch (err) {
     console.error(err)
     if (err.code === 'ER_DUP_ENTRY') {
-      const msg = String(err.sqlMessage || '').toLowerCase()
-      if (msg.includes('barcode')) return res.status(400).json({ error: 'Barcode already exists' })
-      return res.status(400).json({ error: 'SKU already exists' })
+      return res.status(400).json({ error: 'SKU or Barcode already exists' })
     }
-    res.status(500).json({ error: err.message || 'failed to create product' })
+    res.status(500).json({ error: 'failed to create product' })
   }
 })
 
@@ -154,51 +156,34 @@ router.put('/:id', express.json(), verifyToken, authorize('products.edit'), asyn
     const { sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active } = req.body
     const updates = []
     const params = []
+
     if (sku !== undefined) { updates.push('sku = ?'); params.push(normalizeProvidedSku(sku)) }
-    if (name !== undefined) {
-      const cleanName = String(name || '').trim()
-      if (!cleanName) return res.status(400).json({ error: 'Product name is required' })
-      updates.push('name = ?')
-      params.push(cleanName)
-    }
+    if (name !== undefined) { updates.push('name = ?'); params.push(String(name || '').trim()) }
     if (brand !== undefined) { updates.push('brand = ?'); params.push(brand || null) }
     if (description !== undefined) { updates.push('description = ?'); params.push(description) }
     if (category_id !== undefined) { updates.push('category_id = ?'); params.push(category_id || null) }
-    if (price !== undefined) {
-      const sellingPrice = Number(price)
-      if (!Number.isFinite(sellingPrice) || sellingPrice <= 0) return res.status(400).json({ error: 'Selling price must be greater than 0' })
-      updates.push('price = ?')
-      params.push(sellingPrice)
-    }
+    if (price !== undefined) { updates.push('price = ?'); params.push(Number(price)) }
     if (cost !== undefined) { updates.push('cost = ?'); params.push(cost) }
-    if (stock_quantity !== undefined) {
-      const quantity = Number(stock_quantity)
-      if (Number.isFinite(quantity) && quantity < 0) return res.status(400).json({ error: 'Quantity cannot be negative' })
-      updates.push('stock_quantity = ?')
-      params.push(Number.isFinite(quantity) ? quantity : 0)
-    }
+    if (stock_quantity !== undefined) { updates.push('stock_quantity = ?'); params.push(Number(stock_quantity)) }
     if (low_stock_threshold !== undefined) { updates.push('low_stock_threshold = ?'); params.push(low_stock_threshold) }
     if (size !== undefined) { updates.push('size = ?'); params.push(size) }
     if (color !== undefined) { updates.push('color = ?'); params.push(color) }
+    if (is_active !== undefined) { updates.push('is_active = ?'); params.push(is_active ? 1 : 0) }
+    
     if (barcode !== undefined) {
       let finalBarcode = normalizeProvidedBarcode(barcode)
       if (!finalBarcode) finalBarcode = await generateBarcode()
       updates.push('barcode = ?')
       params.push(finalBarcode)
     }
-    if (is_active !== undefined) { updates.push('is_active = ?'); params.push(is_active ? 1 : 0) }
+
     if (!updates.length) return res.status(400).json({ error: 'nothing to update' })
     params.push(id)
     await db.pool.query(`UPDATE products SET ${updates.join(', ')} WHERE id = ?`, params)
     res.json({ success: true })
   } catch (err) {
     console.error(err)
-    if (err.code === 'ER_DUP_ENTRY') {
-      const msg = String(err.sqlMessage || '').toLowerCase()
-      if (msg.includes('barcode')) return res.status(400).json({ error: 'Barcode already exists' })
-      return res.status(400).json({ error: 'SKU already exists' })
-    }
-    res.status(500).json({ error: err.message || 'failed to update product' })
+    res.status(500).json({ error: 'failed to update product' })
   }
 })
 

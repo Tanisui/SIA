@@ -4,23 +4,25 @@ import { useSelector } from 'react-redux'
 
 const NAV_ITEMS = [
   { section: 'Main' },
-  { to: '/',            label: 'Dashboard',  end: true,  icon: '⊞',  perm: null },
+  { to: '/',             label: 'Dashboard',  end: true,  icon: '⊞',  perm: null },
   { section: 'Store' },
-  { to: '/categories',  label: 'Categories', icon: '🏷',  perm: 'products.view' },
-  { to: '/inventory',   label: 'Inventory',  icon: '📦',  perm: 'inventory.view' },
-  { to: '/sales',       label: 'Sales',      icon: '🧾',  perm: 'sales.view' },
-  { to: '/customers',   label: 'Customers',  icon: '👤',  perm: 'customers.view' },
-  { to: '/purchasing',  label: 'Purchasing', icon: '🛒',  perm: 'purchasing.view' },
+  { to: '/categories',   label: 'Categories', icon: '🏷',  perm: 'products.view' },
+  { to: '/inventory',    label: 'Inventory',  icon: '📦',  perm: 'inventory.view' },
+  { to: '/sales',        label: 'Sales',      icon: '🧾',  perm: 'sales.view' },
+  { to: '/customers',    label: 'Customers',  icon: '👤',  perm: 'customers.view' },
+  { to: '/purchasing',   label: 'Purchasing', icon: '🛒',  perm: 'purchasing.view' },
   { section: 'People' },
-  { to: '/employees',   label: 'Employees',  icon: '👥',  perm: 'employees.view' },
-  { to: '/payroll',     label: 'Payroll',    icon: '💰',  perm: 'payroll.view' },
-  { to: '/attendance',  label: 'Attendance', icon: '🕐',  perm: 'attendance.view' },
+  { to: '/payroll',      label: 'Payroll',    icon: '💰',  perm: 'payroll.view' },
+  { to: '/attendance',   label: 'Attendance', icon: '🕐',  perm: 'attendance.view' },
   { section: 'Finance' },
-  { to: '/reports',     label: 'Reports',    icon: '📈',  perm: 'reports.view' },
+  { to: '/reports',      label: 'Reports',    icon: '📈',  perm: 'reports.view' },
   { section: 'System' },
-  { to: '/users',       label: 'Users',      icon: '🔑',  perm: 'users.view' },
-  { to: '/roles',       label: 'Roles',      icon: '🛡',  perm: 'roles.view' },
-  { to: '/audit',       label: 'Audit',      icon: '📋',  perm: 'system.audit.view' },
+  { to: '/users',        label: 'Users & Employees',      icon: '🔑',  perm: 'users.view' },
+  { to: '/roles',        label: 'Roles',      icon: '🛡',  perm: 'roles.view' },
+  { to: '/audit',        label: 'Audit',      icon: '📋',  perm: 'system.audit.view' },
+  // Added Account section for user settings
+  { section: 'Account' },
+  { to: '/change-password', label: 'Change Password', icon: '🔒', perm: null },
 ]
 
 export default function Sidebar() {

@@ -3,8 +3,8 @@ const router = express.Router()
 const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 
-// ─── List all inventory transactions ───
-router.get('/transactions', verifyToken, authorize('inventory.view'), async (req, res) => {
+// ─── List all inventory transactions (Allow products.view to see history) ───
+router.get('/transactions', verifyToken, authorize(['inventory.view', 'products.view']), async (req, res) => {
   try {
     const { type, product_id, from, to } = req.query
     let sql = `
@@ -36,7 +36,6 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
     const { product_id, quantity, cost, reference, supplier_id, date } = req.body
     if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
 
-    // Update product stock and cost
     const [prod] = await conn.query('SELECT stock_quantity, cost AS old_cost FROM products WHERE id = ? FOR UPDATE', [product_id])
     if (!prod.length) { await conn.rollback(); conn.release(); return res.status(404).json({ error: 'product not found' }) }
     const newQty = prod[0].stock_quantity + Number(quantity)
@@ -44,7 +43,6 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
     const costParams = cost !== undefined ? [cost] : []
     await conn.query(`UPDATE products SET stock_quantity = ?${updateCost} WHERE id = ?`, [newQty, ...costParams, product_id])
 
-    // Record transaction
     await conn.query(
       `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after, created_at)
        VALUES (?, 'IN', ?, ?, ?, ?, ?, ?)`,
@@ -74,7 +72,6 @@ router.post('/stock-in/receive-po', express.json(), verifyToken, authorize('inve
     if (po[0].status === 'RECEIVED') { await conn.rollback(); conn.release(); return res.status(400).json({ error: 'purchase order already received' }) }
     if (po[0].status === 'CANCELLED') { await conn.rollback(); conn.release(); return res.status(400).json({ error: 'purchase order is cancelled' }) }
 
-    // Get items
     const [items] = await conn.query('SELECT * FROM purchase_items WHERE purchase_order_id = ?', [purchase_order_id])
     for (const item of items) {
       const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [item.product_id])
@@ -100,7 +97,7 @@ router.post('/stock-in/receive-po', express.json(), verifyToken, authorize('inve
   }
 })
 
-// ─── Stock Out: Net Adjustments (shrinkage, lost items, manual corrections) ───
+// ─── Stock Out: Adjustments ───
 router.post('/stock-out/adjust', express.json(), verifyToken, authorize('inventory.adjust'), async (req, res) => {
   const conn = await db.pool.getConnection()
   try {
@@ -143,14 +140,12 @@ router.post('/stock-out/damage', express.json(), verifyToken, authorize('invento
     const newQty = Math.max(0, prod[0].stock_quantity - Number(quantity))
     await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, product_id])
 
-    // Record in damaged_inventory with employee_id in reason
     const damageReason = employee_id ? `(Employee #${employee_id}) ${reason || 'Damaged/defective'}` : (reason || 'Damaged/defective')
     await conn.query(
       'INSERT INTO damaged_inventory (product_id, quantity, reason, reported_by) VALUES (?, ?, ?, ?)',
       [product_id, quantity, damageReason, req.auth.id]
     )
 
-    // Record transaction
     const fullReason = employee_id ? `Damaged: ${reason || 'defective stock'} (Employee #${employee_id})` : `Damaged: ${reason || 'defective stock'}`
     await conn.query(
       `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after)
@@ -168,22 +163,19 @@ router.post('/stock-out/damage', express.json(), verifyToken, authorize('invento
   }
 })
 
-// ─── Returns: Customer Return or Supplier Return ───
+// ─── Returns ───
 router.post('/returns', express.json(), verifyToken, authorize('inventory.adjust'), async (req, res) => {
   const conn = await db.pool.getConnection()
   try {
     await conn.beginTransaction()
     const { product_id, quantity, return_type, reason, sale_id } = req.body
-    // return_type: 'customer' | 'supplier'
     if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
 
     if (return_type === 'customer') {
-      // Customer returns item → add back to inventory
       const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [product_id])
       if (!prod.length) { await conn.rollback(); conn.release(); return res.status(404).json({ error: 'product not found' }) }
       const newQty = prod[0].stock_quantity + Number(quantity)
       await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, product_id])
-
       await conn.query(
         `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after, reference)
          VALUES (?, 'RETURN', ?, ?, ?, ?, ?)`,
@@ -193,12 +185,10 @@ router.post('/returns', express.json(), verifyToken, authorize('inventory.adjust
       conn.release()
       return res.json({ success: true, new_quantity: newQty })
     } else if (return_type === 'supplier') {
-      // Return to supplier → remove from inventory
       const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [product_id])
       if (!prod.length) { await conn.rollback(); conn.release(); return res.status(404).json({ error: 'product not found' }) }
       const newQty = Math.max(0, prod[0].stock_quantity - Number(quantity))
       await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, product_id])
-
       await conn.query(
         `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after)
          VALUES (?, 'RETURN', ?, ?, ?, ?)`,
@@ -219,8 +209,8 @@ router.post('/returns', express.json(), verifyToken, authorize('inventory.adjust
   }
 })
 
-// ─── Damaged inventory list ───
-router.get('/damaged', verifyToken, authorize('inventory.view'), async (req, res) => {
+// ─── Damaged inventory list (Allow products.view to access) ───
+router.get('/damaged', verifyToken, authorize(['inventory.view', 'products.view']), async (req, res) => {
   try {
     const [rows] = await db.pool.query(`
       SELECT d.*, p.name AS product_name, p.sku, u.username AS reported_by_name
@@ -236,8 +226,8 @@ router.get('/damaged', verifyToken, authorize('inventory.view'), async (req, res
   }
 })
 
-// ─── Low stock alerts ───
-router.get('/alerts/low-stock', verifyToken, authorize('inventory.view'), async (req, res) => {
+// ─── Low stock alerts (Allow products.view to access) ───
+router.get('/alerts/low-stock', verifyToken, authorize('products.view'), async (req, res) => {
   try {
     const [rows] = await db.pool.query(`
       SELECT p.id, p.sku, p.name, p.stock_quantity, p.low_stock_threshold, c.name AS category
@@ -272,8 +262,8 @@ router.get('/reports/shrinkage', verifyToken, authorize('inventory.view'), async
   }
 })
 
-// ─── Inventory summary report ───
-router.get('/reports/summary', verifyToken, authorize('inventory.view'), async (req, res) => {
+// ─── Inventory summary report (Allow products.view to access) ───
+router.get('/reports/summary', verifyToken, authorize(['inventory.view', 'products.view']), async (req, res) => {
   try {
     const [products] = await db.pool.query(`
       SELECT p.id, p.sku, p.name, p.stock_quantity, p.cost, p.price, p.low_stock_threshold,
