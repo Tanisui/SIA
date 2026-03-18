@@ -15,7 +15,7 @@ const initTable = async () => {
         debit DECIMAL(12,2) DEFAULT 0.00,
         credit DECIMAL(12,2) DEFAULT 0.00,
         reference VARCHAR(255),
-        created_by INT UNSIGNED,
+        created_by BIGINT UNSIGNED,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4

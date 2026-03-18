@@ -234,13 +234,22 @@ export default function Inventory() {
     setPoForm(prev => ({ ...prev, items: [...prev.items, { product_id: '', quantity: '', unit_cost: '' }] }))
   }
 
-  const updatePoItem = (idx, field, val) => {
-    setPoForm(prev => {
-      const items = [...prev.items]
-      items[idx] = { ...items[idx], [field]: val }
-      return { ...prev, items }
-    })
-  }
+ const updatePoItem = (idx, field, val) => {
+  setPoForm(prev => {
+    const items = [...prev.items]
+    items[idx] = { ...items[idx], [field]: val }
+    
+    // Auto-fill unit cost when product is selected
+    if (field === 'product_id' && val) {
+      const selectedProduct = products.find(p => p.id === Number(val))
+      if (selectedProduct && selectedProduct.cost) {
+        items[idx].unit_cost = selectedProduct.cost
+      }
+    }
+    
+    return { ...prev, items }
+  })
+}
 
   const removePoItem = (idx) => {
     setPoForm(prev => ({ ...prev, items: prev.items.filter((_, i) => i !== idx) }))
@@ -568,8 +577,7 @@ export default function Inventory() {
             ),
             React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Expected Delivery Date'),
-              React.createElement('input', { className: 'form-input', type: 'date', value: poForm.expected_date, onChange: e => setPoForm(f => ({ ...f, expected_date: e.target.value })) })
-            )
+React.createElement('input', { className: 'form-input', type: 'date', value: poForm.expected_date, onChange: e => setPoForm(f => ({ ...f, expected_date: e.target.value })), required: true })            )
           ),
           React.createElement('h4', { style: { marginTop: 12, marginBottom: 8, fontSize: 14 } }, 'Items'),
           poForm.items.map((item, idx) =>

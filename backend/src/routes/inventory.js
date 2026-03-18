@@ -84,7 +84,7 @@ router.post('/stock-in/receive-po', express.json(), verifyToken, authorize('inve
       await conn.query(
         `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after)
          VALUES (?, 'IN', ?, ?, ?, ?, ?)`,
-        [item.product_id, item.quantity, reference || `PO-${po[0].po_number}`, req.auth.id, `Received from PO #${po[0].po_number}`, newQty]
+        [item.product_id, item.quantity, reference || po[0].po_number, req.auth.id, `Received from PO #${po[0].po_number}`, newQty]
       )
     }
 

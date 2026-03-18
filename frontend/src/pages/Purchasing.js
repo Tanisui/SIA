@@ -10,7 +10,7 @@ const schema = [
     { value: 'RECEIVED', label: 'Received' },
     { value: 'CANCELLED', label: 'Cancelled' }
   ] },
-  { name: 'expected_date', label: 'Expected Date' },
+  { name: 'expected_date', label: 'Expected Date', type: 'date', required: true },
   { name: 'total', label: 'Total', type: 'number' }
 ]
 
