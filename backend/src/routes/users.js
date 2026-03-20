@@ -5,6 +5,22 @@ const crypto = require('crypto')
 const bcrypt = require('bcrypt')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 
+let hasUsersRoleIdColumnCache = null
+
+async function hasUsersRoleIdColumn(conn = db.pool) {
+  if (hasUsersRoleIdColumnCache !== null) return hasUsersRoleIdColumnCache
+  const [rows] = await conn.query(
+    `SELECT 1 AS found
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'role_id'
+     LIMIT 1`
+  )
+  hasUsersRoleIdColumnCache = rows.length > 0
+  return hasUsersRoleIdColumnCache
+}
+
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex')
   const derived = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex')
@@ -13,13 +29,19 @@ function hashPassword(password) {
 
 router.get('/', verifyToken, authorize('users.view'), async (req, res) => {
   try {
-    const [rows] = await db.pool.query('SELECT id, username, email, full_name, is_active, created_at, updated_at, role_id FROM users ORDER BY id DESC')
+    const includeDirectRole = await hasUsersRoleIdColumn()
+    const userSql = includeDirectRole
+      ? 'SELECT id, username, email, full_name, is_active, created_at, updated_at, role_id FROM users ORDER BY id DESC'
+      : 'SELECT id, username, email, full_name, is_active, created_at, updated_at FROM users ORDER BY id DESC'
+
+    const [rows] = await db.pool.query(userSql)
     const result = []
     for (const u of rows) {
-      const [rrows] = await db.pool.query(
-        `SELECT name FROM roles WHERE id IN (SELECT role_id FROM user_roles WHERE user_id = ?) OR id = ?`, 
-        [u.id, u.role_id]
-      )
+      const roleSql = includeDirectRole
+        ? `SELECT name FROM roles WHERE id IN (SELECT role_id FROM user_roles WHERE user_id = ?) OR id = ?`
+        : `SELECT name FROM roles WHERE id IN (SELECT role_id FROM user_roles WHERE user_id = ?)`
+      const roleParams = includeDirectRole ? [u.id, u.role_id || null] : [u.id]
+      const [rrows] = await db.pool.query(roleSql, roleParams)
       // Get employee data if it exists
       const [empRows] = await db.pool.query(
         'SELECT id, name, role, contact_type, contact, hire_date, pay_rate, employment_status, bank_details FROM employees WHERE email = ? OR id IN (SELECT employee_id FROM users WHERE id = ?)',
@@ -41,13 +63,18 @@ router.get('/', verifyToken, authorize('users.view'), async (req, res) => {
 router.get('/:id', verifyToken, authorize('users.view'), async (req, res) => {
   try {
     const id = Number(req.params.id)
-    const [rows] = await db.pool.query('SELECT id, username, email, full_name, is_active, created_at, updated_at, role_id FROM users WHERE id = ? LIMIT 1', [id])
+    const includeDirectRole = await hasUsersRoleIdColumn()
+    const userSql = includeDirectRole
+      ? 'SELECT id, username, email, full_name, is_active, created_at, updated_at, role_id FROM users WHERE id = ? LIMIT 1'
+      : 'SELECT id, username, email, full_name, is_active, created_at, updated_at FROM users WHERE id = ? LIMIT 1'
+    const [rows] = await db.pool.query(userSql, [id])
     if (!rows.length) return res.status(404).json({ error: 'user not found' })
     const user = rows[0]
-    const [rrows] = await db.pool.query(
-      `SELECT id, name FROM roles WHERE id IN (SELECT role_id FROM user_roles WHERE user_id = ?) OR id = ?`, 
-      [id, user.role_id]
-    )
+    const roleSql = includeDirectRole
+      ? `SELECT id, name FROM roles WHERE id IN (SELECT role_id FROM user_roles WHERE user_id = ?) OR id = ?`
+      : `SELECT id, name FROM roles WHERE id IN (SELECT role_id FROM user_roles WHERE user_id = ?)`
+    const roleParams = includeDirectRole ? [id, user.role_id || null] : [id]
+    const [rrows] = await db.pool.query(roleSql, roleParams)
     // Get employee data if it exists
     const [empRows] = await db.pool.query(
       'SELECT id, name, role, contact_type, contact, hire_date, pay_rate, employment_status, bank_details FROM employees WHERE email = ? LIMIT 1',

@@ -1,12 +1,34 @@
 const jwt = require('jsonwebtoken')
 const db = require('../database')
 
-async function getUserPermissions(userId){
-  // Check both user_roles table AND the direct role_id column in users table
-  const [roleRows] = await db.pool.query(
-    `SELECT id, name FROM roles WHERE id IN (SELECT role_id FROM user_roles WHERE user_id = ?) OR id = (SELECT role_id FROM users WHERE id = ?)`,
-    [userId, userId]
+let hasUsersRoleIdColumnCache = null
+
+async function hasUsersRoleIdColumn() {
+  if (hasUsersRoleIdColumnCache !== null) return hasUsersRoleIdColumnCache
+  const [rows] = await db.pool.query(
+    `SELECT 1 AS found
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'role_id'
+     LIMIT 1`
   )
+  hasUsersRoleIdColumnCache = rows.length > 0
+  return hasUsersRoleIdColumnCache
+}
+
+async function getUserPermissions(userId){
+  // Support both schemas: with or without users.role_id
+  const includeDirectRole = await hasUsersRoleIdColumn()
+  const roleSql = includeDirectRole
+    ? `SELECT id, name FROM roles
+       WHERE id IN (SELECT role_id FROM user_roles WHERE user_id = ?)
+          OR id = (SELECT role_id FROM users WHERE id = ?)`
+    : `SELECT id, name FROM roles
+       WHERE id IN (SELECT role_id FROM user_roles WHERE user_id = ?)`
+
+  const roleParams = includeDirectRole ? [userId, userId] : [userId]
+  const [roleRows] = await db.pool.query(roleSql, roleParams)
   
   const perms = new Set()
   for (const r of roleRows) {
@@ -56,15 +78,20 @@ function authorize(permission) {
       req.auth.permissions = info.permissions
       req.auth.roles = info.roles
 
-      // 1. Check for exact match
-      if (info.permissions.includes(permission)) return next()
+      const requiredPermissions = Array.isArray(permission) ? permission : [permission]
+      const normalizedRequired = requiredPermissions.filter(Boolean)
+      if (!normalizedRequired.length) return next()
 
-      // 2. Check for Wildcard match
+      // 1. Check for exact match (any-of)
+      const hasExact = normalizedRequired.some((required) => info.permissions.includes(required))
+      if (hasExact) return next()
+
+      // 2. Check for wildcard match (any-of)
       const hasWildcard = info.permissions.some(p => {
         if (p === 'admin.*') return true
         if (p.endsWith('.*')) {
           const prefix = p.split('.')[0]
-          return permission.startsWith(prefix + '.')
+          return normalizedRequired.some((required) => String(required).startsWith(prefix + '.'))
         }
         return false
       })

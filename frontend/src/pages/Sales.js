@@ -27,6 +27,7 @@ export default function Sales() {
   const [lastReceipt, setLastReceipt] = useState(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [productDropdownOpen, setProductDropdownOpen] = useState(false)
+  const [isFinalizing, setIsFinalizing] = useState(false)
   const receiptRef = useRef(null)
 
   // Report filters
@@ -178,12 +179,14 @@ export default function Sales() {
   const total = subtotal - discountAmt + taxAmt
   const cartHasStockError = cart.some(item => getCartQtyForProduct(item.product_id) > getAvailableStock(item.product_id))
   const disableAddToCart = !selectedProduct || !!qtyValidationError
-  const disableFinalize = cart.length === 0 || cartHasStockError || !!qtyValidationError
+  const disableFinalize = cart.length === 0 || cartHasStockError || !!qtyValidationError || isFinalizing
 
   // ── POS: Finalize order ──
   const finalizeOrder = async () => {
     clearMessages()
+    if (isFinalizing) return
     if (cart.length === 0) return setError('Add items to cart first')
+    if (total <= 0) return setError('Total must be greater than 0 to finalize')
 
     for (const item of cart) {
       const availableStock = getAvailableStock(item.product_id)
@@ -193,7 +196,14 @@ export default function Sales() {
       }
     }
 
+    const itemCount = cart.reduce((sum, c) => sum + Number(c.quantity || 0), 0)
+    const confirmed = window.confirm(
+      `Finalize this order?\n\nItems: ${itemCount}\nTotal: ${fmt(total)}\nPayment: ${paymentMethod}`
+    )
+    if (!confirmed) return
+
     try {
+      setIsFinalizing(true)
       const res = await api.post('/sales', {
         items: cart.map(c => ({ product_id: c.product_id, quantity: c.quantity, unit_price: c.unit_price })),
         payment_method: paymentMethod,
@@ -212,7 +222,11 @@ export default function Sales() {
       setSearchTerm('')
       showMsg(`Sale ${res.data.sale_number} completed! Receipt: ${res.data.receipt_no}`)
       fetchProducts()
-    } catch (err) { setError(err?.response?.data?.error || 'Sale failed') }
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Sale failed')
+    } finally {
+      setIsFinalizing(false)
+    }
   }
 
   // ── Print receipt ──
@@ -509,7 +523,14 @@ export default function Sales() {
             style: { width: '100%', marginTop: 16, padding: '14px', fontSize: 15, fontWeight: 600 },
             onClick: finalizeOrder,
             disabled: disableFinalize
-          }, 'Finalize Order'),
+          }, isFinalizing ? 'Finalizing...' : 'Finalize Order'),
+
+          React.createElement('p', {
+            style: { marginTop: 8, fontSize: 12, color: 'var(--text-light)' }
+          },
+          disableFinalize && cart.length > 0
+            ? 'Resolve quantity or stock issues before finalizing.'
+            : 'This will save the sale and deduct stock from inventory.'),
 
           // Last receipt
           lastReceipt && React.createElement('div', { style: { marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 12 } },

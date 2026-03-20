@@ -5,6 +5,22 @@ const crypto = require('crypto')
 const jwt = require('jsonwebtoken')
 const bcrypt = require('bcrypt')
 
+let hasUsersRoleIdColumnCache = null
+
+async function hasUsersRoleIdColumn() {
+  if (hasUsersRoleIdColumnCache !== null) return hasUsersRoleIdColumnCache
+  const [rows] = await db.pool.query(
+    `SELECT 1 AS found
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'role_id'
+     LIMIT 1`
+  )
+  hasUsersRoleIdColumnCache = rows.length > 0
+  return hasUsersRoleIdColumnCache
+}
+
 /**
  * Helper to verify passwords supporting both legacy PBKDF2 (Django style) 
  * and modern BCrypt hashes.
@@ -30,13 +46,17 @@ async function verifyPassword(storedHash, password) {
  * Checks both the user_roles table and the users.role_id column.
  */
 async function getUserPermissions(userId) {
-  // 1. Get Roles from both mapping table and direct user column
-  const [roleRows] = await db.pool.query(
-    `SELECT id, name FROM roles 
-     WHERE id IN (SELECT role_id FROM user_roles WHERE user_id = ?) 
-     OR id = (SELECT role_id FROM users WHERE id = ?)`,
-    [userId, userId]
-  )
+  // 1. Get roles from mapping table, and optionally users.role_id when present
+  const includeDirectRole = await hasUsersRoleIdColumn()
+  const roleSql = includeDirectRole
+    ? `SELECT id, name FROM roles
+       WHERE id IN (SELECT role_id FROM user_roles WHERE user_id = ?)
+          OR id = (SELECT role_id FROM users WHERE id = ?)`
+    : `SELECT id, name FROM roles
+       WHERE id IN (SELECT role_id FROM user_roles WHERE user_id = ?)`
+
+  const roleParams = includeDirectRole ? [userId, userId] : [userId]
+  const [roleRows] = await db.pool.query(roleSql, roleParams)
   
   const perms = new Set()
   

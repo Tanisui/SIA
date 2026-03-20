@@ -4,7 +4,7 @@ const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 
 // List suppliers
-router.get('/', verifyToken, authorize('suppliers.view'), async (req, res) => {
+router.get('/', verifyToken, authorize(['suppliers.view', 'purchase.create', 'inventory.receive']), async (req, res) => {
   try {
     const [rows] = await db.pool.query('SELECT * FROM suppliers ORDER BY name ASC')
     res.json(rows)

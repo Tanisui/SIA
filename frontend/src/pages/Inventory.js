@@ -44,7 +44,7 @@ export default function Inventory() {
   const [success, setSuccess] = useState(null)
 
   // forms
-  const [stockInForm, setStockInForm] = useState({ product_id: '', quantity: '', reference: '', supplier_id: '', date: '' })
+  const [stockInForm, setStockInForm] = useState({ product_id: '', quantity: '', reference: '', date: '' })
   const [adjustForm, setAdjustForm] = useState({ product_id: '', quantity: '', reason: '', reference: '', employee_id: '' })
   const [damageForm, setDamageForm] = useState({ product_id: '', quantity: '', reason: '', reference: '', employee_id: '' })
   const [returnForm, setReturnForm] = useState({ product_id: '', quantity: '', return_type: 'customer', reason: '', sale_id: '' })
@@ -60,9 +60,6 @@ export default function Inventory() {
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const permissions = JSON.parse(localStorage.getItem('permissions') || '[]')
-      const hasSupplierView = permissions.includes('suppliers.view')
-      
       const [prodRes, catRes, empRes] = await Promise.all([
         api.get('/products'),
         api.get('/categories'),
@@ -71,13 +68,11 @@ export default function Inventory() {
       setProducts(prodRes.data || [])
       setCategories(catRes.data || [])
       setEmployees(empRes.data || [])
-      
-      if (hasSupplierView) {
-        try {
-          const supRes = await api.get('/suppliers')
-          setSuppliers(supRes.data || [])
-        } catch (e) { /* ignore suppliers fetch error */ }
-      }
+
+      try {
+        const supRes = await api.get('/suppliers')
+        setSuppliers(supRes.data || [])
+      } catch (e) { /* ignore suppliers fetch error */ }
     } catch (e) { /* ignore */ }
     setLoading(false)
   }, [])
@@ -111,6 +106,13 @@ export default function Inventory() {
     try { const res = await api.get('/purchase-orders'); setPurchaseOrders(res.data || []) } catch (e) { /* ignore */ }
   }, [])
 
+  const fetchSuppliers = useCallback(async () => {
+    try {
+      const supRes = await api.get('/suppliers')
+      setSuppliers(supRes.data || [])
+    } catch (e) { /* ignore */ }
+  }, [])
+
   useEffect(() => { fetchAll() }, [fetchAll])
   useEffect(() => {
     if (tab === 'transactions') fetchTransactions()
@@ -118,9 +120,9 @@ export default function Inventory() {
     if (tab === 'low-stock') fetchLowStock()
     if (tab === 'shrinkage') fetchShrinkage()
     if (tab === 'reports') fetchSummary()
-    if (tab === 'purchase-orders') fetchPOs()
+    if (tab === 'purchase-orders') { fetchPOs(); fetchSuppliers() }
     if (tab === 'overview') { fetchSummary(); fetchLowStock() }
-  }, [tab, fetchTransactions, fetchDamaged, fetchLowStock, fetchShrinkage, fetchSummary, fetchPOs])
+  }, [tab, fetchTransactions, fetchDamaged, fetchLowStock, fetchShrinkage, fetchSummary, fetchPOs, fetchSuppliers])
 
   const clearMessages = () => { setError(null); setSuccess(null) }
   const showMsg = (msg) => { setSuccess(msg); setTimeout(() => setSuccess(null), 4000) }
@@ -149,10 +151,9 @@ export default function Inventory() {
         product_id: Number(stockInForm.product_id),
         quantity: Number(stockInForm.quantity),
         reference: stockInForm.reference,
-        supplier_id: stockInForm.supplier_id ? Number(stockInForm.supplier_id) : undefined,
         date: stockInForm.date || undefined
       })
-      setStockInForm({ product_id: '', quantity: '', reference: '', supplier_id: '', date: '' })
+      setStockInForm({ product_id: '', quantity: '', reference: '', date: '' })
       showMsg('Stock in recorded successfully')
       fetchAll()
     } catch (err) { setError(err?.response?.data?.error || 'Stock in failed') }
@@ -444,20 +445,16 @@ export default function Inventory() {
               React.createElement('input', { className: 'form-input', type: 'number', min: 1, value: stockInForm.quantity, onChange: e => setStockInForm(f => ({ ...f, quantity: e.target.value })), required: true })
             ),
             React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'OR/Invoice Reference'),
-              React.createElement('input', { className: 'form-input', value: stockInForm.reference, onChange: e => setStockInForm(f => ({ ...f, reference: e.target.value })), placeholder: 'OR/Invoice #' })
-            ),
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Supplier'),
-              React.createElement('select', { className: 'form-input', value: stockInForm.supplier_id, onChange: e => setStockInForm(f => ({ ...f, supplier_id: e.target.value })) },
-                React.createElement('option', { value: '' }, '— None —'),
-                ...supplierOptions
-              )
+              React.createElement('label', { className: 'form-label' }, 'Reference'),
+              React.createElement('input', { className: 'form-input', value: stockInForm.reference, onChange: e => setStockInForm(f => ({ ...f, reference: e.target.value })), placeholder: 'Optional note / receipt no.' })
             ),
             React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Date'),
               React.createElement('input', { className: 'form-input', type: 'date', value: stockInForm.date, onChange: e => setStockInForm(f => ({ ...f, date: e.target.value })) })
             )
+          ),
+          React.createElement('p', { style: { marginTop: 6, fontSize: 12, color: 'var(--text-light)' } },
+            'Direct purchase is for stock-in without supplier. If supplier is involved, create a Purchase Order below.'
           ),
           React.createElement('button', { type: 'submit', className: 'btn btn-primary', style: { marginTop: 12 } }, 'Record Stock In')
         )
@@ -485,7 +482,7 @@ export default function Inventory() {
             React.createElement('input', { className: 'form-input', value: adjustForm.reason, onChange: e => setAdjustForm(f => ({ ...f, reason: e.target.value })), placeholder: 'Lost, shrinkage, manual correction...' })
           ),
           React.createElement('div', { className: 'form-group' },
-            React.createElement('label', { className: 'form-label' }, 'Reference (OR/Invoice)'),
+            React.createElement('label', { className: 'form-label' }, 'Reference (optional)'),
             React.createElement('input', { className: 'form-input', value: adjustForm.reference, onChange: e => setAdjustForm(f => ({ ...f, reference: e.target.value })), placeholder: 'Optional reference number' })
           ),
           React.createElement('div', { className: 'form-group' },
@@ -517,7 +514,7 @@ export default function Inventory() {
             React.createElement('input', { className: 'form-input', value: damageForm.reason, onChange: e => setDamageForm(f => ({ ...f, reason: e.target.value })), placeholder: 'Defective, broken, unsellable...' })
           ),
           React.createElement('div', { className: 'form-group' },
-            React.createElement('label', { className: 'form-label' }, 'Reference (OR/Invoice)'),
+            React.createElement('label', { className: 'form-label' }, 'Reference (optional)'),
             React.createElement('input', { className: 'form-input', value: damageForm.reference, onChange: e => setDamageForm(f => ({ ...f, reference: e.target.value })), placeholder: 'Optional reference number' })
           ),
           React.createElement('div', { className: 'form-group' },
@@ -574,6 +571,7 @@ export default function Inventory() {
     tab === 'purchase-orders' && React.createElement('div', null,
       React.createElement('div', { className: 'card', style: { marginBottom: 20 } },
         React.createElement('h3', { style: { marginBottom: 16 } }, 'Create New Purchase Order'),
+        React.createElement('button', { type: 'button', className: 'btn btn-secondary', style: { marginBottom: 12 }, onClick: fetchSuppliers }, 'Refresh Supplier List'),
         React.createElement('form', { onSubmit: handleCreatePO },
           React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 } },
             React.createElement('div', { className: 'form-group' },

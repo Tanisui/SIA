@@ -4,6 +4,22 @@ const db = require('../database')
 const bcrypt = require('bcrypt') // Needed for secure password hashing
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 
+let hasUsersRoleIdColumnCache = null
+
+async function hasUsersRoleIdColumn(conn) {
+  if (hasUsersRoleIdColumnCache !== null) return hasUsersRoleIdColumnCache
+  const [rows] = await conn.query(
+    `SELECT 1 AS found
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'role_id'
+     LIMIT 1`
+  )
+  hasUsersRoleIdColumnCache = rows.length > 0
+  return hasUsersRoleIdColumnCache
+}
+
 // List all employees
 router.get('/', verifyToken, authorize('employees.view'), async (req, res) => {
   try {
@@ -67,12 +83,21 @@ router.post('/', express.json(), verifyToken, authorize('employees.create'), asy
     const defaultPassword = 'Nstyle2026!' // Default password for new employees
     const passwordHash = await bcrypt.hash(defaultPassword, 10)
 
-    // 5. Insert into users table
-    await conn.query(
-      `INSERT INTO users (username, email, password_hash, full_name, is_active, employee_id, role_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [email, email, passwordHash, name, 1, employeeId, roleId]
-    )
+    // 5. Insert into users table (schema-compatible)
+    const includeRoleId = await hasUsersRoleIdColumn(conn)
+    if (includeRoleId) {
+      await conn.query(
+        `INSERT INTO users (username, email, password_hash, full_name, is_active, employee_id, role_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [email, email, passwordHash, name, 1, employeeId, roleId]
+      )
+    } else {
+      await conn.query(
+        `INSERT INTO users (username, email, password_hash, full_name, is_active, employee_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [email, email, passwordHash, name, 1, employeeId]
+      )
+    }
 
     await conn.commit() // Save everything to the database
     res.json({ id: employeeId, message: 'Employee and Login Credentials generated successfully' })
@@ -128,7 +153,7 @@ router.put('/:id', express.json(), verifyToken, authorize('employees.update'), a
     }
     if (role !== undefined) {
       const [roleRows] = await conn.query('SELECT id FROM roles WHERE name = ? LIMIT 1', [role])
-      if (roleRows.length > 0) {
+      if (roleRows.length > 0 && await hasUsersRoleIdColumn(conn)) {
         userUpdates.push('role_id = ?'); userParams.push(roleRows[0].id)
       }
     }

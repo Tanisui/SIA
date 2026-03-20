@@ -35,6 +35,10 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
     await conn.beginTransaction()
     const { product_id, quantity, cost, reference, supplier_id, date } = req.body
     if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
+    if (supplier_id) {
+      await conn.rollback(); conn.release()
+      return res.status(400).json({ error: 'Direct purchase must not include supplier. Use Purchase Order flow when supplier is selected.' })
+    }
 
     const [prod] = await conn.query('SELECT stock_quantity, cost AS old_cost FROM products WHERE id = ? FOR UPDATE', [product_id])
     if (!prod.length) { await conn.rollback(); conn.release(); return res.status(404).json({ error: 'product not found' }) }
@@ -46,7 +50,7 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
     await conn.query(
       `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after, created_at)
        VALUES (?, 'IN', ?, ?, ?, ?, ?, ?)`,
-      [product_id, quantity, reference || null, req.auth.id, `Direct purchase${supplier_id ? ' from supplier #' + supplier_id : ''}`, newQty, date || new Date()]
+      [product_id, quantity, reference || null, req.auth.id, 'Direct purchase (no supplier)', newQty, date || new Date()]
     )
     await conn.commit()
     conn.release()
@@ -110,10 +114,12 @@ router.post('/stock-out/adjust', express.json(), verifyToken, authorize('invento
     const newQty = Math.max(0, prod[0].stock_quantity - Number(quantity))
     await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, product_id])
 
-    const fullReason = employee_id ? `${reason || 'Net adjustment'} (Employee #${employee_id})` : (reason || 'Net adjustment')
+    const fullReason = employee_id
+      ? `STOCK_OUT:SHRINKAGE | ${reason || 'Shrinkage/manual adjustment'} (Employee #${employee_id})`
+      : `STOCK_OUT:SHRINKAGE | ${reason || 'Shrinkage/manual adjustment'}`
     await conn.query(
       `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after)
-       VALUES (?, 'ADJUST', ?, ?, ?, ?, ?)`,
+       VALUES (?, 'OUT', ?, ?, ?, ?, ?)`,
       [product_id, -quantity, reference || null, req.auth.id, fullReason, newQty]
     )
     await conn.commit()
@@ -140,13 +146,9 @@ router.post('/stock-out/damage', express.json(), verifyToken, authorize('invento
     const newQty = Math.max(0, prod[0].stock_quantity - Number(quantity))
     await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, product_id])
 
-    const damageReason = employee_id ? `(Employee #${employee_id}) ${reason || 'Damaged/defective'}` : (reason || 'Damaged/defective')
-    await conn.query(
-      'INSERT INTO damaged_inventory (product_id, quantity, reason, reported_by) VALUES (?, ?, ?, ?)',
-      [product_id, quantity, damageReason, req.auth.id]
-    )
-
-    const fullReason = employee_id ? `Damaged: ${reason || 'defective stock'} (Employee #${employee_id})` : `Damaged: ${reason || 'defective stock'}`
+    const fullReason = employee_id
+      ? `STOCK_OUT:DAMAGE | ${reason || 'Damaged/defective stock'} (Employee #${employee_id})`
+      : `STOCK_OUT:DAMAGE | ${reason || 'Damaged/defective stock'}`
     await conn.query(
       `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after)
        VALUES (?, 'OUT', ?, ?, ?, ?, ?)`,
@@ -209,15 +211,20 @@ router.post('/returns', express.json(), verifyToken, authorize('inventory.adjust
   }
 })
 
-// ─── Damaged inventory list (Allow products.view to access) ───
+// ─── Damaged inventory list from unified inventory_transactions table ───
 router.get('/damaged', verifyToken, authorize(['inventory.view', 'products.view']), async (req, res) => {
   try {
     const [rows] = await db.pool.query(`
-      SELECT d.*, p.name AS product_name, p.sku, u.username AS reported_by_name
-      FROM damaged_inventory d
-      LEFT JOIN products p ON p.id = d.product_id
-      LEFT JOIN users u ON u.id = d.reported_by
-      ORDER BY d.created_at DESC
+      SELECT it.id, it.created_at, it.product_id, ABS(it.quantity) AS quantity,
+             it.reason, it.reference,
+             p.name AS product_name, p.sku,
+             u.username AS reported_by_name
+      FROM inventory_transactions it
+      LEFT JOIN products p ON p.id = it.product_id
+      LEFT JOIN users u ON u.id = it.user_id
+      WHERE it.transaction_type = 'OUT'
+        AND it.reason LIKE 'STOCK_OUT:DAMAGE%'
+      ORDER BY it.created_at DESC
     `)
     res.json(rows)
   } catch (err) {
@@ -243,7 +250,7 @@ router.get('/alerts/low-stock', verifyToken, authorize('products.view'), async (
   }
 })
 
-// ─── Shrinkage report ───
+// ─── Shrinkage report (unified source) ───
 router.get('/reports/shrinkage', verifyToken, authorize('inventory.view'), async (req, res) => {
   try {
     const [rows] = await db.pool.query(`
@@ -251,7 +258,9 @@ router.get('/reports/shrinkage', verifyToken, authorize('inventory.view'), async
              SUM(ABS(it.quantity)) AS total_shrinkage, COUNT(*) AS incidents
       FROM inventory_transactions it
       LEFT JOIN products p ON p.id = it.product_id
-      WHERE it.transaction_type = 'ADJUST' AND it.quantity < 0
+      WHERE it.transaction_type = 'OUT'
+        AND it.quantity < 0
+        AND it.reason LIKE 'STOCK_OUT:SHRINKAGE%'
       GROUP BY it.product_id
       ORDER BY total_shrinkage DESC
     `)
@@ -259,6 +268,42 @@ router.get('/reports/shrinkage', verifyToken, authorize('inventory.view'), async
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'failed to fetch shrinkage report' })
+  }
+})
+
+// ─── Unified stock-out report (Shrinkage + Damage) ───
+router.get('/reports/stock-out', verifyToken, authorize(['inventory.view', 'products.view']), async (req, res) => {
+  try {
+    const [rows] = await db.pool.query(`
+      SELECT
+        it.id,
+        it.created_at,
+        it.product_id,
+        p.name AS product_name,
+        p.sku,
+        ABS(it.quantity) AS quantity,
+        CASE
+          WHEN it.reason LIKE 'STOCK_OUT:DAMAGE%' THEN 'DAMAGE'
+          WHEN it.reason LIKE 'STOCK_OUT:SHRINKAGE%' THEN 'SHRINKAGE'
+          ELSE 'OTHER'
+        END AS stock_out_type,
+        it.reference,
+        it.reason,
+        u.username AS user_name
+      FROM inventory_transactions it
+      LEFT JOIN products p ON p.id = it.product_id
+      LEFT JOIN users u ON u.id = it.user_id
+      WHERE it.transaction_type = 'OUT'
+        AND (
+          it.reason LIKE 'STOCK_OUT:DAMAGE%'
+          OR it.reason LIKE 'STOCK_OUT:SHRINKAGE%'
+        )
+      ORDER BY it.created_at DESC
+    `)
+    res.json(rows)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'failed to fetch stock out report' })
   }
 })
 

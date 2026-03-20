@@ -122,6 +122,12 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     if (!items || !items.length) return res.status(400).json({ error: 'at least one item required' })
     if (!payment_method) return res.status(400).json({ error: 'payment_method required (cash, card, e-wallet)' })
 
+    const allowedPaymentMethods = new Set(['cash', 'card', 'e-wallet'])
+    if (!allowedPaymentMethods.has(String(payment_method))) {
+      await conn.rollback(); conn.release()
+      return res.status(400).json({ error: 'invalid payment_method' })
+    }
+
     // Generate sale number and receipt
     const [countRows] = await conn.query('SELECT COUNT(*) AS cnt FROM sales')
     const saleNum = `SAL-${String(countRows[0].cnt + 1).padStart(6, '0')}`
@@ -130,8 +136,13 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     let subtotal = 0
     const processedItems = []
 
+    // Validate and price items first under lock
     for (const item of items) {
       if (!item.product_id || !item.quantity || item.quantity <= 0) continue
+      if (item.unit_price !== undefined && Number(item.unit_price) < 0) {
+        await conn.rollback(); conn.release()
+        return res.status(400).json({ error: 'unit_price cannot be negative' })
+      }
       // Get product price
       const [prod] = await conn.query('SELECT id, name, price, stock_quantity FROM products WHERE id = ? FOR UPDATE', [item.product_id])
       if (!prod.length) { await conn.rollback(); conn.release(); return res.status(400).json({ error: `product ${item.product_id} not found` }) }
@@ -146,6 +157,31 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
 
       subtotal += lineTotal
       processedItems.push({ ...item, unitPrice, lineTotal, productName: prod[0].name })
+    }
+
+    const discountAmt = Number(discount) || 0
+    const taxAmt = Number(tax) || 0
+    if (discountAmt < 0 || taxAmt < 0) {
+      await conn.rollback(); conn.release()
+      return res.status(400).json({ error: 'discount and tax must be non-negative' })
+    }
+    const total = subtotal - discountAmt + taxAmt
+    if (total < 0) {
+      await conn.rollback(); conn.release()
+      return res.status(400).json({ error: 'total cannot be negative' })
+    }
+
+    const [saleResult] = await conn.query(
+      `INSERT INTO sales (sale_number, clerk_id, customer_id, subtotal, tax, discount, total, payment_method, receipt_no)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [saleNum, req.auth.id, customer_id || null, subtotal, taxAmt, discountAmt, total, payment_method, receiptNo]
+    )
+    const saleId = saleResult.insertId
+
+    // Apply inventory movement and persist sale items with sale linkage
+    for (const item of processedItems) {
+      const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [item.product_id])
+      if (!prod.length) { await conn.rollback(); conn.release(); return res.status(400).json({ error: `product ${item.product_id} not found` }) }
 
       // Decrease stock
       const newQty = prod[0].stock_quantity - item.quantity
@@ -155,22 +191,9 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
       await conn.query(
         `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after)
          VALUES (?, 'OUT', ?, ?, ?, ?)`,
-        [item.product_id, -item.quantity, req.auth.id, `Sale ${saleNum}`, newQty]
+        [item.product_id, -item.quantity, req.auth.id, `SALE_LINK:sale_id=${saleId}|sale_no=${saleNum}|receipt=${receiptNo}`, newQty]
       )
-    }
 
-    const discountAmt = Number(discount) || 0
-    const taxAmt = Number(tax) || 0
-    const total = subtotal - discountAmt + taxAmt
-
-    const [saleResult] = await conn.query(
-      `INSERT INTO sales (sale_number, clerk_id, customer_id, subtotal, tax, discount, total, payment_method, receipt_no)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [saleNum, req.auth.id, customer_id || null, subtotal, taxAmt, discountAmt, total, payment_method, receiptNo]
-    )
-    const saleId = saleResult.insertId
-
-    for (const item of processedItems) {
       await conn.query(
         'INSERT INTO sale_items (sale_id, product_id, qty, unit_price, line_total) VALUES (?, ?, ?, ?, ?)',
         [saleId, item.product_id, item.quantity, item.unitPrice, item.lineTotal]
