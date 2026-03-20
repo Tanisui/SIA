@@ -109,9 +109,25 @@ router.post('/stock-out/adjust', express.json(), verifyToken, authorize('invento
     const { product_id, quantity, reason, reference, employee_id } = req.body
     if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
 
+    const qtyToRemove = Number(quantity)
+    if (!Number.isFinite(qtyToRemove) || qtyToRemove <= 0) {
+      await conn.rollback(); conn.release()
+      return res.status(400).json({ error: 'quantity must be a positive number' })
+    }
+
     const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [product_id])
     if (!prod.length) { await conn.rollback(); conn.release(); return res.status(404).json({ error: 'product not found' }) }
-    const newQty = Math.max(0, prod[0].stock_quantity - Number(quantity))
+    const currentQty = Number(prod[0].stock_quantity) || 0
+    if (currentQty <= 0) {
+      await conn.rollback(); conn.release()
+      return res.status(400).json({ error: 'No stock available for this product' })
+    }
+    if (qtyToRemove > currentQty) {
+      await conn.rollback(); conn.release()
+      return res.status(400).json({ error: `Insufficient stock. Available: ${currentQty}` })
+    }
+
+    const newQty = currentQty - qtyToRemove
     await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, product_id])
 
     const fullReason = employee_id
@@ -120,7 +136,7 @@ router.post('/stock-out/adjust', express.json(), verifyToken, authorize('invento
     await conn.query(
       `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after)
        VALUES (?, 'OUT', ?, ?, ?, ?, ?)`,
-      [product_id, -quantity, reference || null, req.auth.id, fullReason, newQty]
+      [product_id, -qtyToRemove, reference || null, req.auth.id, fullReason, newQty]
     )
     await conn.commit()
     conn.release()
@@ -141,9 +157,25 @@ router.post('/stock-out/damage', express.json(), verifyToken, authorize('invento
     const { product_id, quantity, reason, reference, employee_id } = req.body
     if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
 
+    const qtyToRemove = Number(quantity)
+    if (!Number.isFinite(qtyToRemove) || qtyToRemove <= 0) {
+      await conn.rollback(); conn.release()
+      return res.status(400).json({ error: 'quantity must be a positive number' })
+    }
+
     const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [product_id])
     if (!prod.length) { await conn.rollback(); conn.release(); return res.status(404).json({ error: 'product not found' }) }
-    const newQty = Math.max(0, prod[0].stock_quantity - Number(quantity))
+    const currentQty = Number(prod[0].stock_quantity) || 0
+    if (currentQty <= 0) {
+      await conn.rollback(); conn.release()
+      return res.status(400).json({ error: 'No stock available for this product' })
+    }
+    if (qtyToRemove > currentQty) {
+      await conn.rollback(); conn.release()
+      return res.status(400).json({ error: `Insufficient stock. Available: ${currentQty}` })
+    }
+
+    const newQty = currentQty - qtyToRemove
     await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, product_id])
 
     const fullReason = employee_id
@@ -152,7 +184,7 @@ router.post('/stock-out/damage', express.json(), verifyToken, authorize('invento
     await conn.query(
       `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after)
        VALUES (?, 'OUT', ?, ?, ?, ?, ?)`,
-      [product_id, -quantity, reference || null, req.auth.id, fullReason, newQty]
+      [product_id, -qtyToRemove, reference || null, req.auth.id, fullReason, newQty]
     )
     await conn.commit()
     conn.release()
