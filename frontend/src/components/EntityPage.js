@@ -30,7 +30,7 @@ function PasswordInput({ value, onChange, name, placeholder, inputProps }) {
 /**
  * Enhanced Checkbox Group with Select All functionality
  */
-function CheckboxGroup({ options, value, onChange, name }) {
+function CheckboxGroup({ options, value, onChange, name, showSelectAll = true }) {
   const allValues = options ? options.map(o => String(o.value || o)) : [];
   const currentValues = Array.isArray(value) ? value.map(String) : [];
   const isAllSelected = allValues.length > 0 && allValues.every(v => currentValues.includes(v));
@@ -44,7 +44,7 @@ function CheckboxGroup({ options, value, onChange, name }) {
   };
 
   return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-    options && options.length > 1 && React.createElement('button', {
+    showSelectAll && options && options.length > 1 && React.createElement('button', {
       type: 'button',
       onClick: toggleAll,
       style: {
@@ -85,7 +85,7 @@ function CheckboxGroup({ options, value, onChange, name }) {
   );
 }
 
-function FieldInput({ field, value, onChange }) {
+function FieldInput({ field, value, onChange, formData }) {
   const { name, type, options, placeholder, inputProps } = field
   const baseStyle = { width: '100%', padding: 8 }
 
@@ -129,7 +129,10 @@ function FieldInput({ field, value, onChange }) {
   }
 
   if (type === 'checkboxes') {
-    return React.createElement(CheckboxGroup, { options, value, onChange, name });
+    const allowSelectAll = typeof field.showSelectAll === 'function'
+      ? !!field.showSelectAll(formData || {})
+      : true
+    return React.createElement(CheckboxGroup, { options, value, onChange, name, showSelectAll: allowSelectAll });
   }
 
   if (type === 'date') {
@@ -517,7 +520,7 @@ export default function EntityPage({
               ),
               f.labelBubble && React.createElement(LabelHoverTip, { text: f.labelBubble })
             ),
-            React.createElement(FieldInput, { field: f, value: form[f.name], onChange }),
+            React.createElement(FieldInput, { field: f, value: form[f.name], onChange, formData: form }),
             fieldErrors[f.name] && React.createElement('div', { style: { marginTop: 5, color: 'var(--error)', fontSize: 12.5 } }, fieldErrors[f.name]),
             helperText && React.createElement('div', { style: { marginTop: 5, color: 'var(--text-light)', fontSize: 12 } }, helperText)
               )

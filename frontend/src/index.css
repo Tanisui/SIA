@@ -555,6 +555,58 @@ input:disabled, select:disabled, textarea:disabled {
   margin: 0;
 }
 
+/* User create/edit page layout */
+.user-form-shell {
+  max-width: 980px;
+  width: 100%;
+}
+
+.user-form-card {
+  max-width: 980px;
+  width: 100%;
+  position: sticky;
+  top: 82px;
+  max-height: calc(100vh - 110px);
+  overflow: auto;
+}
+
+.user-form-actions {
+  position: sticky;
+  bottom: -1px;
+  background: var(--white);
+  padding-top: 12px;
+  padding-bottom: 4px;
+  border-top: 1px solid var(--border-light);
+}
+
+@media (max-width: 1024px) {
+  .user-form-card {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .user-form-actions {
+    position: static;
+    border-top: 0;
+    padding-top: 8px;
+  }
+}
+
+@media (max-width: 640px) {
+  .user-form-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .user-form-actions {
+    flex-wrap: wrap;
+  }
+
+  .user-form-actions .btn {
+    width: 100%;
+  }
+}
+
 /* ── Dashboard Grid ── */
 .dashboard-grid {
   display: grid;

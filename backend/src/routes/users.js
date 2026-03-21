@@ -73,6 +73,16 @@ function hashPassword(password) {
   return `pbkdf2_sha512$100000$${salt}$${derived}`
 }
 
+async function resolvePrimaryRoleLabel(roles, conn) {
+  if (!Array.isArray(roles) || !roles.length) return null
+  const first = roles[0]
+  if (Number(first)) {
+    const [rows] = await conn.query('SELECT name FROM roles WHERE id = ? LIMIT 1', [Number(first)])
+    return rows.length ? rows[0].name : null
+  }
+  return String(first || '').trim() || null
+}
+
 router.get('/', verifyToken, authorize('users.view'), async (req, res) => {
   try {
     const includeDirectRole = await hasUsersRoleIdColumn()
@@ -164,7 +174,10 @@ router.post('/', express.json(), verifyToken, authorize('users.create'), async (
   let conn
   try {
     const { username, email, full_name, roles, contact_type, contact, hire_date, pay_rate, bank_details } = req.body || {}
-    if (!username || !email) return res.status(400).json({ error: 'username and email required' })
+    const normalizedEmail = String(email || '').trim().toLowerCase()
+    const normalizedUsername = String(username || normalizedEmail).trim().toLowerCase()
+    if (!normalizedEmail) return res.status(400).json({ error: 'email required' })
+    if (!normalizedUsername) return res.status(400).json({ error: 'unable to derive username from email' })
     
     // Use configured default password, or a generated fallback if not set.
     const defaultPassword = getDefaultNewUserPassword()
@@ -176,7 +189,7 @@ router.post('/', express.json(), verifyToken, authorize('users.create'), async (
 
     // Create user
     const [result] = await conn.query('INSERT INTO users (username, email, password_hash, full_name, is_active) VALUES (?, ?, ?, ?, ?)', 
-      [username, email, password_hash, full_name || null, isActive])
+      [normalizedUsername, normalizedEmail, password_hash, full_name || null, isActive])
     const userId = result.insertId
 
     // Assign roles if provided
@@ -191,6 +204,8 @@ router.post('/', express.json(), verifyToken, authorize('users.create'), async (
       }
     }
 
+    const primaryRoleLabel = await resolvePrimaryRoleLabel(roles, conn)
+
     const includeEmployeesEmail = await hasEmployeesEmailColumn(conn)
     const includeEmployeesUserId = await hasEmployeesUserIdColumn(conn)
 
@@ -198,8 +213,8 @@ router.post('/', express.json(), verifyToken, authorize('users.create'), async (
     if (contact_type || contact || hire_date || pay_rate) {
       const cols = ['name', 'role', 'contact_type', 'contact', 'hire_date', 'pay_rate', 'employment_status', 'bank_details']
       const vals = [
-        full_name || username,
-        roles && roles.length ? roles[0] : null,
+        full_name || normalizedUsername,
+        primaryRoleLabel,
         contact_type || null,
         contact || null,
         hire_date || null,
@@ -209,7 +224,7 @@ router.post('/', express.json(), verifyToken, authorize('users.create'), async (
       ]
       if (includeEmployeesEmail) {
         cols.splice(1, 0, 'email')
-        vals.splice(1, 0, email)
+        vals.splice(1, 0, normalizedEmail)
       }
       if (includeEmployeesUserId) {
         cols.push('user_id')
@@ -285,6 +300,8 @@ router.put('/:id', express.json(), verifyToken, authorize('users.update'), async
       }
     }
 
+    const primaryRoleLabel = await resolvePrimaryRoleLabel(roles, conn)
+
     // Update or create employee record
     const includeEmployeeLink = await hasUsersEmployeeIdColumn(conn)
     const includeEmployeesEmail = await hasEmployeesEmailColumn(conn)
@@ -323,7 +340,7 @@ router.put('/:id', express.json(), verifyToken, authorize('users.update'), async
         const cols = ['name', 'role', 'contact_type', 'contact', 'hire_date', 'pay_rate', 'employment_status', 'bank_details']
         const vals = [
           full_name || username,
-          roles && roles.length ? roles[0] : null,
+          primaryRoleLabel,
           contact_type || null,
           contact || null,
           hire_date || null,

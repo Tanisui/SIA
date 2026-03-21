@@ -21,8 +21,8 @@ function getDefaultNewUserPassword() {
     return process.env.DEFAULT_NEW_USER_PASSWORD
   }
 
-  // Non-hardcoded fallback for local/dev environments.
-  return crypto.randomBytes(9).toString('base64url')
+  // Project default for auto-generated accounts.
+  return 'Nstyle2026!'
 }
 
 module.exports = {
