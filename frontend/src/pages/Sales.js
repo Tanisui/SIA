@@ -56,6 +56,8 @@ export default function Sales() {
   const [lastReceipt, setLastReceipt] = useState(null)
 
   const [viewSale, setViewSale] = useState(null)
+  const [selectedSaleId, setSelectedSaleId] = useState(null)
+  const [openSaleMenuId, setOpenSaleMenuId] = useState(null)
   const [transactionType, setTransactionType] = useState('')
   const [transactionReceipt, setTransactionReceipt] = useState('')
   const [reportFrom, setReportFrom] = useState('')
@@ -125,6 +127,11 @@ export default function Sales() {
     if (tab === 'history') fetchSales()
     if (tab === 'transactions') fetchTransactions()
     if (tab === 'report') fetchReport()
+  }, [tab])
+
+  useEffect(() => {
+    setSelectedSaleId(null)
+    setOpenSaleMenuId(null)
   }, [tab])
 
   const filteredProducts = products.filter((product) => {
@@ -486,6 +493,41 @@ export default function Sales() {
     popup.document.close()
   }
 
+  async function selectSaleRow(saleId) {
+    if (selectedSaleId === saleId && viewSale?.id === saleId) {
+      setSelectedSaleId(null)
+      setOpenSaleMenuId(null)
+      setViewSale(null)
+      return
+    }
+
+    setSelectedSaleId(saleId)
+    setOpenSaleMenuId(null)
+    await showSale(saleId)
+  }
+
+  function openSaleDetails(saleId) {
+    setSelectedSaleId(saleId)
+    setOpenSaleMenuId(null)
+    showSale(saleId)
+  }
+
+  function toggleSaleMenu(saleId) {
+    setOpenSaleMenuId((current) => current === saleId ? null : saleId)
+  }
+
+  function useSaleReceipt(receiptNo) {
+    setOpenSaleMenuId(null)
+    setReturnReceiptNo(receiptNo)
+    setTab('returns')
+    setTimeout(() => lookupReceipt(receiptNo), 0)
+  }
+
+  function fullRefundSale(saleId) {
+    setOpenSaleMenuId(null)
+    refundSale(saleId)
+  }
+
   function renderPos() {
     const cartItemCount = cart.reduce((sum, item) => sum + num(item.quantity), 0)
     const dropdownContent = filteredProducts.length === 0
@@ -707,7 +749,7 @@ export default function Sales() {
   function renderHistory() {
     return h('div', null,
       viewSale && h('div', { className: 'card', style: { marginBottom: 16 } },
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } }, h('h3', null, `Sale Details - ${viewSale.sale_number}`), h('button', { className: 'btn btn-secondary', onClick: () => setViewSale(null) }, 'Close')),
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } }, h('h3', null, `Sale Details - ${viewSale.sale_number}`), h('button', { className: 'btn btn-secondary', onClick: () => { setViewSale(null); setSelectedSaleId(null); setOpenSaleMenuId(null) } }, 'Close')),
         h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 12, marginBottom: 12 } },
           h('div', null, h('strong', null, 'Receipt: '), viewSale.receipt_no),
           h('div', null, h('strong', null, 'Payment: '), viewSale.payment_method),
@@ -723,19 +765,49 @@ export default function Sales() {
       ),
       h('div', { className: 'table-wrap' }, h('table', null,
         h('thead', null, h('tr', null, h('th', null, 'Sale ID'), h('th', null, 'Receipt ID'), h('th', null, 'Date'), h('th', null, 'Total'), h('th', null, 'Payment'), h('th', null, 'Return'), h('th', null, 'Actions'))),
-        h('tbody', null, sales.map((sale) => h('tr', { key: sale.id },
-          h('td', { style: { fontWeight: 600 } }, sale.sale_number),
+        h('tbody', null, sales.map((sale) => {
+          const canRefundSale = can(permissions, 'sales.refund')
+          const showMoreMenu = canRefundSale
+
+          return h('tr', {
+            key: sale.id,
+            className: `sales-history-row${selectedSaleId === sale.id ? ' is-active' : ''}`,
+            tabIndex: 0,
+            onClick: () => selectSaleRow(sale.id),
+            onKeyDown: (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                selectSaleRow(sale.id)
+              }
+            }
+          },
+          h('td', { style: { fontWeight: 600 } }, h('span', { className: `sales-history-id-label${selectedSaleId === sale.id ? ' is-active' : ''}` }, sale.sale_number)),
           h('td', null, sale.receipt_no),
           h('td', null, fmtDate(sale.date)),
           h('td', { style: { fontWeight: 600 } }, fmt(sale.total)),
           h('td', null, sale.payment_method),
           h('td', null, sale.return_status),
-          h('td', null, h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
-            h('button', { className: 'btn btn-secondary', onClick: () => showSale(sale.id), style: { padding: '4px 10px', fontSize: 12 } }, 'View'),
-            can(permissions, 'sales.refund') && h('button', { className: 'btn btn-secondary', onClick: () => { setReturnReceiptNo(sale.receipt_no); setTab('returns'); setTimeout(() => lookupReceipt(sale.receipt_no), 0) }, style: { padding: '4px 10px', fontSize: 12 } }, 'Use Receipt'),
-            can(permissions, 'sales.refund') && sale.return_status !== 'FULL' && h('button', { className: 'btn btn-danger', onClick: () => refundSale(sale.id), style: { padding: '4px 10px', fontSize: 12 } }, 'Full Refund')
-          ))
-        )))
+          h('td', { className: 'sales-history-actions-cell' }, h('div', { className: 'sales-history-actions', onClick: (e) => e.stopPropagation() },
+            canRefundSale
+              ? h('button', { className: 'btn btn-secondary sales-history-primary-action', type: 'button', onClick: (e) => { e.stopPropagation(); useSaleReceipt(sale.receipt_no) } }, 'Use Receipt')
+              : h('button', { className: 'btn btn-secondary sales-history-primary-action', type: 'button', onClick: (e) => { e.stopPropagation(); openSaleDetails(sale.id) } }, 'View Sale'),
+            showMoreMenu && h('div', { className: 'sales-history-menu-wrap' },
+              h('button', {
+                className: `btn btn-secondary sales-history-menu-toggle${openSaleMenuId === sale.id ? ' is-open' : ''}`,
+                type: 'button',
+                onClick: (e) => {
+                  e.stopPropagation()
+                  toggleSaleMenu(sale.id)
+                },
+                'aria-expanded': openSaleMenuId === sale.id
+              }, 'More'),
+              openSaleMenuId === sale.id && h('div', { className: 'sales-history-action-popover' },
+                h('button', { className: 'btn btn-secondary sales-history-actions-item', type: 'button', onClick: (e) => { e.stopPropagation(); openSaleDetails(sale.id) } }, 'View Sale'),
+                sale.return_status !== 'FULL' && h('button', { className: 'btn btn-danger sales-history-actions-item', type: 'button', onClick: (e) => { e.stopPropagation(); fullRefundSale(sale.id) } }, 'Full Refund')
+              )
+            )
+          )))
+        }))
       ))
     )
   }

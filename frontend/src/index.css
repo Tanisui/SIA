@@ -657,6 +657,89 @@ tbody td.text-muted { color: var(--text-light); }
   padding: 6px 12px;
 }
 
+.sales-history-row {
+  cursor: pointer;
+}
+
+.sales-history-row:focus-visible {
+  outline: 2px solid rgba(184, 134, 11, 0.22);
+  outline-offset: -2px;
+}
+
+.sales-history-row.is-active {
+  background: rgba(232, 217, 195, 0.42);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.sales-history-id-label {
+  color: var(--text-dark);
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 0.2em;
+  transition: var(--transition);
+}
+
+.sales-history-row:hover .sales-history-id-label,
+.sales-history-row:focus-visible .sales-history-id-label,
+.sales-history-id-label.is-active {
+  color: var(--gold);
+  text-decoration-color: currentColor;
+}
+
+.sales-history-actions-cell {
+  width: 180px;
+  white-space: nowrap;
+}
+
+.sales-history-actions {
+  position: relative;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  min-width: 160px;
+}
+
+.sales-history-primary-action {
+  min-width: 118px;
+  justify-content: center;
+}
+
+.sales-history-menu-wrap {
+  position: relative;
+}
+
+.sales-history-menu-toggle {
+  min-width: 70px;
+  justify-content: center;
+}
+
+.sales-history-menu-toggle.is-open {
+  background: var(--gold-light);
+  border-color: var(--gold);
+}
+
+.sales-history-action-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  gap: 8px;
+  min-width: 148px;
+  padding: 10px;
+  background: var(--white);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  z-index: 5;
+}
+
+.sales-history-actions-item {
+  width: 100%;
+  justify-content: center;
+}
+
 /* Responsive table */
 @media (max-width: 768px) {
   .table-wrap.responsive {
