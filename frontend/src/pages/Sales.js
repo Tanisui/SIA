@@ -35,7 +35,7 @@ export default function Sales() {
   const [sales, setSales] = useState([])
   const [transactions, setTransactions] = useState([])
   const [report, setReport] = useState(null)
-  const [config, setConfig] = useState({ tax_rate: 0.12, tax_rate_percentage: 12, payment_methods: ['cash', 'card', 'e-wallet'] })
+  const [config, setConfig] = useState({ payment_methods: ['cash', 'card', 'e-wallet'] })
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -96,7 +96,7 @@ export default function Sales() {
         if (configRes.status === 'fulfilled') {
           setConfig(configRes.value?.data || config)
         } else {
-          issues.push('Sales settings could not be loaded. Using default tax and payment settings.')
+          issues.push('Sales settings could not be loaded. Using default payment settings.')
         }
 
         if (productsRes.status === 'fulfilled') {
@@ -146,8 +146,7 @@ export default function Sales() {
   const discountPct = pct(discountPercentage)
   const discountAmount = round(subtotal * (discountPct / 100))
   const taxableBase = Math.max(subtotal - discountAmount, 0)
-  const taxAmount = round(taxableBase * num(config.tax_rate, 0))
-  const total = round(taxableBase + taxAmount)
+  const total = round(taxableBase)
   const tendered = num(paymentAmount)
   const change = pendingOrder ? round(Math.max(tendered - num(pendingOrder.total), 0)) : 0
   const selectedProductData = products.find((item) => String(item.id) === String(selectedProduct)) || null
@@ -377,8 +376,6 @@ export default function Sales() {
       discount_percentage: discountPct,
       subtotal,
       discount_amount: discountAmount,
-      tax_amount: taxAmount,
-      tax_rate_percentage: num(config.tax_rate_percentage),
       total
     })
     setPaymentAmount(String(total.toFixed(2)))
@@ -681,12 +678,11 @@ export default function Sales() {
           h('div', { className: 'form-group' },
             h('label', { className: 'form-label' }, 'Discount (%)'),
             h('input', { className: 'form-input', type: 'number', min: '0', max: '100', step: '0.01', value: discountPercentage, onChange: (e) => setDiscountPercentage(e.target.value) }),
-            h('div', { style: { fontSize: 11, color: 'var(--text-light)', marginTop: 4 } }, 'Discount is percentage-based. Tax is auto-computed.')
+            h('div', { style: { fontSize: 11, color: 'var(--text-light)', marginTop: 4 } }, 'Discount is percentage-based. Product prices stay fixed with no added tax.')
           ),
           h('div', { style: { borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 12 } },
             h('div', { style: { display: 'flex', justifyContent: 'space-between' } }, h('span', null, 'Subtotal'), h('span', null, fmt(subtotal))),
             h('div', { style: { display: 'flex', justifyContent: 'space-between', color: discountAmount > 0 ? 'var(--error)' : 'inherit' } }, h('span', null, `Discount (${discountPct.toFixed(2)}%)`), h('span', null, `-${fmt(discountAmount)}`)),
-            h('div', { style: { display: 'flex', justifyContent: 'space-between' } }, h('span', null, `Tax (${num(config.tax_rate_percentage).toFixed(2)}%)`), h('span', null, `+${fmt(taxAmount)}`)),
             h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 20, fontWeight: 700, color: 'var(--gold-dark)', marginTop: 8 } }, h('span', null, 'Total'), h('span', null, fmt(total)))
           ),
           h('button', { className: 'btn btn-primary', onClick: startPayment, disabled: !cart.length || loading, style: { width: '100%', marginTop: 16, padding: 14 } }, 'Proceed To Accept Payment')

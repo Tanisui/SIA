@@ -7,7 +7,6 @@ const {
   roundMoney,
   normalizeDiscountPercentage,
   ensureSalesSchema,
-  getSalesTaxRate,
   buildDateFilter,
   enrichSaleRecord,
   generateDocumentNumber,
@@ -45,11 +44,10 @@ async function getLockedSale(conn, { saleId, receiptNo }) {
 router.get('/config', verifyToken, authorize(['sales.view', 'sales.create']), async (req, res) => {
   try {
     await ensureSalesSchema()
-    const taxRate = await getSalesTaxRate()
     res.json({
       discount_type: 'percentage',
-      tax_rate: taxRate,
-      tax_rate_percentage: roundMoney(taxRate * 100),
+      tax_rate: 0,
+      tax_rate_percentage: 0,
       payment_methods: PAYMENT_METHODS
     })
   } catch (err) {
@@ -390,10 +388,9 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     const { processedItems, subtotal, productRows } = await prepareSaleItems(conn, items)
     const discountPct = normalizeDiscountPercentage(discount_percentage)
     const discountAmt = roundMoney(subtotal * (discountPct / 100))
-    const taxRate = await getSalesTaxRate(conn)
     const taxableBase = Math.max(subtotal - discountAmt, 0)
-    const taxAmt = roundMoney(taxableBase * taxRate)
-    const total = roundMoney(taxableBase + taxAmt)
+    const taxAmt = 0
+    const total = roundMoney(taxableBase)
 
     if (total <= 0) {
       throw createHttpError(400, 'total must be greater than 0')
@@ -444,7 +441,7 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     res.json({
       ...sale,
       discount_percentage: discountPct,
-      tax_rate: roundMoney(taxRate * 100)
+      tax_rate: 0
     })
   } catch (err) {
     await conn.rollback()
