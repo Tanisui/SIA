@@ -40,7 +40,7 @@ router.post('/', express.json(), verifyToken, async (req, res) => {
   try {
     const { path: filePath, original_name, type, size } = req.body
     if (!filePath) return res.status(400).json({ error: 'path is required' })
-    const uploaded_by = req.user.id
+    const uploaded_by = req.auth.id
     const [result] = await db.pool.query(
       `INSERT INTO files (path, original_name, type, size, uploaded_by) VALUES (?, ?, ?, ?, ?)`,
       [filePath, original_name || null, type || null, size || null, uploaded_by]

@@ -4,53 +4,51 @@ import { useSelector } from 'react-redux'
 
 const NAV_ITEMS = [
   { section: 'Main' },
-  { to: '/',             label: 'Dashboard',  end: true,  icon: '⊞',  perm: null },
+  { to: '/', label: 'Dashboard', end: true, icon: '\u229e', perm: null },
   { section: 'Store' },
-  { to: '/categories',   label: 'Categories', icon: '🏷',  perm: 'products.view' },
-  { to: '/inventory',    label: 'Inventory',  icon: '📦',  perm: 'inventory.view' },
-  { to: '/sales',        label: 'Sales',      icon: '🧾',  perm: 'sales.view' },
-  { to: '/customers',    label: 'Customers',  icon: '👤',  perm: 'customers.view' },
-  { to: '/purchasing',   label: 'Purchasing', icon: '🛒',  perm: 'purchasing.view' },
+  { to: '/categories', label: 'Categories', icon: '\ud83c\udff7', perm: 'products.view' },
+  { to: '/inventory', label: 'Inventory', icon: '\ud83d\udce6', perm: 'inventory.view' },
+  { to: '/sales', label: 'Sales', icon: '\ud83e\uddfe', perm: ['sales.view', 'sales.create'] },
+  { to: '/customers', label: 'Customers', icon: '\ud83d\udc64', perm: 'customers.view' },
+  { to: '/purchasing', label: 'Purchasing', icon: '\ud83d\uded2', perm: 'purchase.view' },
   { section: 'People' },
-  { to: '/payroll',      label: 'Payroll',    icon: '💰',  perm: 'payroll.view' },
-  { to: '/attendance',   label: 'Attendance', icon: '🕐',  perm: 'attendance.view' },
+  { to: '/payroll', label: 'Payroll', icon: '\ud83d\udcb0', perm: 'payroll.view' },
+  { to: '/attendance', label: 'Attendance', icon: '\ud83d\udd50', perm: 'attendance.view' },
   { section: 'Finance' },
-  { to: '/reports',      label: 'Reports',    icon: '📈',  perm: 'reports.view' },
+  { to: '/reports', label: 'Reports', icon: '\ud83d\udcc8', perm: ['reports.view', 'finance.reports.view'] },
   { section: 'System' },
-  { to: '/users',        label: 'Users & Employees',      icon: '🔑',  perm: 'users.view' },
-  { to: '/roles',        label: 'Roles',      icon: '🛡',  perm: 'roles.view' },
-  { to: '/audit',        label: 'Audit',      icon: '📋',  perm: 'system.audit.view' },
-  // Added Account section for user settings
+  { to: '/users', label: 'Users & Employees', icon: '\ud83d\udd11', perm: 'users.view' },
+  { to: '/roles', label: 'Roles', icon: '\ud83d\udee1', perm: 'roles.view' },
+  { to: '/audit', label: 'Audit', icon: '\ud83d\udccb', perm: 'system.audit.view' },
   { section: 'Account' },
-  { to: '/change-password', label: 'Change Password', icon: '🔒', perm: null },
+  { to: '/change-password', label: 'Change Password', icon: '\ud83d\udd12', perm: null }
 ]
 
 export default function Sidebar() {
-  const permissions = useSelector(s =>
-    s.auth && s.auth.permissions
-      ? s.auth.permissions
+  const permissions = useSelector((state) =>
+    state.auth && state.auth.permissions
+      ? state.auth.permissions
       : JSON.parse(localStorage.getItem('permissions') || '[]')
   )
 
   const can = (perm) => {
     if (!perm) return true
     if (!permissions) return false
+    if (Array.isArray(perm)) return perm.some((entry) => can(entry))
     if (permissions.includes('admin.*')) return true
     return permissions.includes(perm)
   }
 
   return React.createElement('aside', { className: 'sidebar' },
-    // Logo
     React.createElement('div', { className: 'sidebar-logo' },
       React.createElement('span', null, "Cecille's N'Style"),
       React.createElement('small', null, 'POS System')
     ),
-    // Nav
     React.createElement('nav', null,
       React.createElement('ul', null,
-        NAV_ITEMS.map((item, i) => {
+        NAV_ITEMS.map((item, index) => {
           if (item.section) {
-            return React.createElement('li', { key: `section-${i}` },
+            return React.createElement('li', { key: `section-${index}` },
               React.createElement('div', { className: 'sidebar-section' }, item.section)
             )
           }
@@ -61,9 +59,17 @@ export default function Sidebar() {
               end: item.end || false,
               className: ({ isActive }) => isActive ? 'active' : ''
             },
-              React.createElement('span', { style: { fontSize: 15, width: 20, textAlign: 'center' } }, item.icon),
-              item.label
-            )
+            React.createElement('span', {
+              style: {
+                fontSize: 15,
+                width: 20,
+                textAlign: 'center',
+                display: 'inline-flex',
+                justifyContent: 'center',
+                flexShrink: 0
+              }
+            }, item.icon),
+            item.label)
           )
         })
       )

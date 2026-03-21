@@ -61,7 +61,7 @@ router.post('/', express.json(), verifyToken, authorize('finance.reports.view'),
   try {
     const { account_code, entry_date, description, debit, credit, reference } = req.body
     if (!entry_date) return res.status(400).json({ error: 'entry_date is required' })
-    const created_by = req.user.id
+    const created_by = req.auth.id
     const [result] = await db.pool.query(
       `INSERT INTO ledger (account_code, entry_date, description, debit, credit, reference, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,

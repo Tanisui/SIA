@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "seed": "node src/migrations/seed.js"
+    "seed": "node src/migrations/seed.js",
+    "db:sync-team": "powershell -ExecutionPolicy Bypass -File scripts/sync-team-sql.ps1",
+    "db:sync-team:seed": "powershell -ExecutionPolicy Bypass -File scripts/sync-team-sql.ps1 -Seed"
   },
   "engines": {
     "node": ">=14"

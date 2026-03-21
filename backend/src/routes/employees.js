@@ -3,8 +3,10 @@ const router = express.Router()
 const db = require('../database')
 const bcrypt = require('bcrypt') // Needed for secure password hashing
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
+const { getDefaultNewUserPassword } = require('../config/security')
 
 let hasUsersRoleIdColumnCache = null
+let hasUsersEmployeeIdColumnCache = null
 
 async function hasUsersRoleIdColumn(conn) {
   if (hasUsersRoleIdColumnCache !== null) return hasUsersRoleIdColumnCache
@@ -18,6 +20,20 @@ async function hasUsersRoleIdColumn(conn) {
   )
   hasUsersRoleIdColumnCache = rows.length > 0
   return hasUsersRoleIdColumnCache
+}
+
+async function hasUsersEmployeeIdColumn(conn) {
+  if (hasUsersEmployeeIdColumnCache !== null) return hasUsersEmployeeIdColumnCache
+  const [rows] = await conn.query(
+    `SELECT 1 AS found
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'employee_id'
+     LIMIT 1`
+  )
+  hasUsersEmployeeIdColumnCache = rows.length > 0
+  return hasUsersEmployeeIdColumnCache
 }
 
 // List all employees
@@ -79,23 +95,37 @@ router.post('/', express.json(), verifyToken, authorize('employees.create'), asy
       if (roleRows.length > 0) roleId = roleRows[0].id;
     }
 
-    // 4. Generate & Hash Default Password
-    const defaultPassword = 'Nstyle2026!' // Default password for new employees
+    // 4. Generate & hash configured/default fallback password
+    const defaultPassword = getDefaultNewUserPassword()
     const passwordHash = await bcrypt.hash(defaultPassword, 10)
 
     // 5. Insert into users table (schema-compatible)
     const includeRoleId = await hasUsersRoleIdColumn(conn)
-    if (includeRoleId) {
+    const includeEmployeeId = await hasUsersEmployeeIdColumn(conn)
+
+    if (includeRoleId && includeEmployeeId) {
       await conn.query(
         `INSERT INTO users (username, email, password_hash, full_name, is_active, employee_id, role_id)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [email, email, passwordHash, name, 1, employeeId, roleId]
       )
-    } else {
+    } else if (includeRoleId) {
+      await conn.query(
+        `INSERT INTO users (username, email, password_hash, full_name, is_active, role_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [email, email, passwordHash, name, 1, roleId]
+      )
+    } else if (includeEmployeeId) {
       await conn.query(
         `INSERT INTO users (username, email, password_hash, full_name, is_active, employee_id)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [email, email, passwordHash, name, 1, employeeId]
+      )
+    } else {
+      await conn.query(
+        `INSERT INTO users (username, email, password_hash, full_name, is_active)
+         VALUES (?, ?, ?, ?, ?)`,
+        [email, email, passwordHash, name, 1]
       )
     }
 
@@ -159,8 +189,13 @@ router.put('/:id', express.json(), verifyToken, authorize('employees.update'), a
     }
 
     if (userUpdates.length > 0) {
-      userParams.push(id) // Link via employee_id
-      await conn.query(`UPDATE users SET ${userUpdates.join(', ')} WHERE employee_id = ?`, userParams)
+      if (await hasUsersEmployeeIdColumn(conn)) {
+        userParams.push(id) // Link via employee_id
+        await conn.query(`UPDATE users SET ${userUpdates.join(', ')} WHERE employee_id = ?`, userParams)
+      } else if (email !== undefined) {
+        userParams.push(email)
+        await conn.query(`UPDATE users SET ${userUpdates.join(', ')} WHERE email = ?`, userParams)
+      }
     }
 
     await conn.commit()
@@ -177,8 +212,19 @@ router.put('/:id', express.json(), verifyToken, authorize('employees.update'), a
 // Delete employee (Also deletes linked user)
 router.delete('/:id', verifyToken, authorize('employees.delete'), async (req, res) => {
   try {
+    const conn = await db.pool.getConnection()
+    const includeEmployeeId = await hasUsersEmployeeIdColumn(conn)
+    conn.release()
+
     // Because of foreign keys, we must delete the user first
-    await db.pool.query('DELETE FROM users WHERE employee_id = ?', [req.params.id])
+    if (includeEmployeeId) {
+      await db.pool.query('DELETE FROM users WHERE employee_id = ?', [req.params.id])
+    } else {
+      const [empRows] = await db.pool.query('SELECT email FROM employees WHERE id = ? LIMIT 1', [req.params.id])
+      if (empRows.length && empRows[0].email) {
+        await db.pool.query('DELETE FROM users WHERE email = ?', [empRows[0].email])
+      }
+    }
     await db.pool.query('DELETE FROM employees WHERE id = ?', [req.params.id])
     res.json({ success: true })
   } catch (err) {

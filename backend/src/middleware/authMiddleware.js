@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken')
 const db = require('../database')
+const { getJwtSecret } = require('../config/security')
 
 let hasUsersRoleIdColumnCache = null
 
@@ -54,7 +55,7 @@ async function verifyToken(req, res, next){
   if (parts.length !== 2 || parts[0] !== 'Bearer') return res.status(401).json({ error: 'missing token' })
   const token = parts[1]
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET || 'dev_secret')
+    const payload = jwt.verify(token, getJwtSecret())
     req.auth = { id: payload.id, username: payload.username }
     
     const [rows] = await db.pool.query('SELECT is_active FROM users WHERE id = ? LIMIT 1', [req.auth.id])

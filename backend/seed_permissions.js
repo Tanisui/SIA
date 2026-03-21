@@ -77,8 +77,8 @@ async function run() {
       { name: 'expenses.create', desc: 'Create expenses' },
       
       // Purchasing
-      { name: 'purchasing.view', desc: 'View purchase orders' },
-      { name: 'purchasing.create', desc: 'Create purchase orders' },
+      { name: 'purchase.view', desc: 'View purchase orders' },
+      { name: 'purchase.create', desc: 'Create purchase orders' },
       
       // Categories
       { name: 'categories.view', desc: 'View categories' },
@@ -155,7 +155,7 @@ async function run() {
       'attendance.view', 'attendance.create',
       'payroll.view',
       'finance.reports.view', 'expenses.view', 'expenses.create',
-      'purchasing.view', 'purchasing.create',
+      'purchase.view', 'purchase.create',
       'categories.view',
       'reports.view'
     ]

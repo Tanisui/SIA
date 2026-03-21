@@ -154,7 +154,7 @@ router.put('/:id', express.json(), verifyToken, authorize('payroll.adjust'), asy
 // Process payroll (mark as PROCESSED)
 router.post('/:id/process', express.json(), verifyToken, authorize('payroll.process'), async (req, res) => {
   try {
-    const userId = req.user.id
+    const userId = req.auth.id
     await db.pool.query(
       `UPDATE payrolls SET status = 'PROCESSED', processed_by = ?, processed_at = NOW() WHERE id = ? AND status = 'PENDING'`,
       [userId, req.params.id]

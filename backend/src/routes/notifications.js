@@ -2,12 +2,14 @@ const express = require('express')
 const router = express.Router()
 const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
+const { getUserPermissions } = require('../middleware/authMiddleware')
 
 // List notifications (for current user or all if admin)
 router.get('/', verifyToken, async (req, res) => {
   try {
-    const userId = req.user.id
-    const perms = req.user.permissions || []
+    const userId = req.auth.id
+    const info = await getUserPermissions(userId)
+    const perms = info.permissions || []
     const isAdmin = perms.includes('admin.*')
     let sql, params
 

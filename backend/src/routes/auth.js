@@ -4,6 +4,7 @@ const db = require('../database')
 const crypto = require('crypto')
 const jwt = require('jsonwebtoken')
 const bcrypt = require('bcrypt')
+const { getJwtSecret } = require('../config/security')
 
 let hasUsersRoleIdColumnCache = null
 
@@ -122,7 +123,7 @@ router.post('/login', async (req, res) => {
       username: user.username 
     }
     
-    const token = jwt.sign(payload, process.env.JWT_SECRET || 'dev_secret', { expiresIn: '8h' })
+    const token = jwt.sign(payload, getJwtSecret(), { expiresIn: '8h' })
 
     // Return full user object including permissions for frontend LocalStorage
     res.json({ 
@@ -153,7 +154,7 @@ router.get('/me', async (req, res) => {
     const token = parts[1]
     let payload
     try { 
-      payload = jwt.verify(token, process.env.JWT_SECRET || 'dev_secret') 
+      payload = jwt.verify(token, getJwtSecret()) 
     } catch(e) { 
       return res.status(401).json({ error: 'invalid token' }) 
     }
@@ -180,7 +181,7 @@ router.post('/change-password', async (req, res) => {
     const token = parts[1]
     let payload
     try { 
-      payload = jwt.verify(token, process.env.JWT_SECRET || 'dev_secret') 
+      payload = jwt.verify(token, getJwtSecret()) 
     } catch(e) { 
       return res.status(401).json({ error: 'Session expired. Please log in again.' }) 
     }

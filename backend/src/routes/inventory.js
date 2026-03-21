@@ -206,18 +206,11 @@ router.post('/returns', express.json(), verifyToken, authorize('inventory.adjust
     if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
 
     if (return_type === 'customer') {
-      const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [product_id])
-      if (!prod.length) { await conn.rollback(); conn.release(); return res.status(404).json({ error: 'product not found' }) }
-      const newQty = prod[0].stock_quantity + Number(quantity)
-      await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, product_id])
-      await conn.query(
-        `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after, reference)
-         VALUES (?, 'RETURN', ?, ?, ?, ?, ?)`,
-        [product_id, quantity, req.auth.id, `Customer return: ${reason || ''}`, newQty, sale_id ? `Sale #${sale_id}` : null]
-      )
-      await conn.commit()
+      await conn.rollback()
       conn.release()
-      return res.json({ success: true, new_quantity: newQty })
+      return res.status(400).json({
+        error: 'Customer returns must be processed through the sales receipt return flow.'
+      })
     } else if (return_type === 'supplier') {
       const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [product_id])
       if (!prod.length) { await conn.rollback(); conn.release(); return res.status(404).json({ error: 'product not found' }) }

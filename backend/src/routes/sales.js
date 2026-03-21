@@ -2,48 +2,181 @@ const express = require('express')
 const router = express.Router()
 const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
+const {
+  PAYMENT_METHODS,
+  roundMoney,
+  normalizeDiscountPercentage,
+  ensureSalesSchema,
+  getSalesTaxRate,
+  buildDateFilter,
+  enrichSaleRecord,
+  generateDocumentNumber,
+  prepareSaleItems,
+  applySaleInventoryChanges,
+  getSaleItems,
+  getSaleById,
+  getSaleByReceipt,
+  processSaleReturn
+} = require('../utils/salesSupport')
 
-// ─── Sales report ─── (MUST be before /:id)
-router.get('/reports/summary', verifyToken, authorize('sales.view'), async (req, res) => {
+function createHttpError(statusCode, message) {
+  const err = new Error(message)
+  err.statusCode = statusCode
+  return err
+}
+
+function getErrorStatus(err) {
+  return err?.statusCode || 500
+}
+
+function getErrorMessage(err, fallback) {
+  return err?.message || fallback
+}
+
+async function getLockedSale(conn, { saleId, receiptNo }) {
+  const [rows] = saleId
+    ? await conn.query('SELECT id FROM sales WHERE id = ? FOR UPDATE', [saleId])
+    : await conn.query('SELECT id FROM sales WHERE receipt_no = ? FOR UPDATE', [String(receiptNo || '').trim()])
+
+  if (!rows.length) return null
+  return getSaleById(conn, rows[0].id)
+}
+
+router.get('/config', verifyToken, authorize(['sales.view', 'sales.create']), async (req, res) => {
   try {
+    await ensureSalesSchema()
+    const taxRate = await getSalesTaxRate()
+    res.json({
+      discount_type: 'percentage',
+      tax_rate: taxRate,
+      tax_rate_percentage: roundMoney(taxRate * 100),
+      payment_methods: PAYMENT_METHODS
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'failed to load sales configuration' })
+  }
+})
+
+router.get('/products', verifyToken, authorize(['sales.view', 'sales.create', 'products.view']), async (req, res) => {
+  try {
+    const [rows] = await db.pool.query(`
+      SELECT p.*, c.name AS category
+      FROM products p
+      LEFT JOIN categories c ON c.id = p.category_id
+      ORDER BY p.name ASC, p.id DESC
+    `)
+    res.json(rows)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'failed to load POS products' })
+  }
+})
+
+router.get('/reports/summary', verifyToken, authorize(['sales.view', 'reports.view', 'finance.reports.view']), async (req, res) => {
+  try {
+    await ensureSalesSchema()
     const { from, to } = req.query
-    let dateFilter = ''
-    const params = []
-    if (from) { dateFilter += ' AND s.date >= ?'; params.push(from) }
-    if (to) { dateFilter += ' AND s.date <= ?'; params.push(to) }
 
-    const [totals] = await db.pool.query(`
+    const totalsParams = []
+    const totalsDateFilter = buildDateFilter('s', 'date', from, to, totalsParams)
+
+    const [totalsRows] = await db.pool.query(`
       SELECT
-        COUNT(*) AS total_transactions,
-        COALESCE(SUM(s.total), 0) AS total_revenue,
+        COUNT(*) AS total_sales,
+        COALESCE(SUM(s.subtotal), 0) AS gross_sales,
         COALESCE(SUM(s.discount), 0) AS total_discounts,
-        COALESCE(SUM(s.tax), 0) AS total_tax
+        COALESCE(SUM(s.tax), 0) AS total_tax,
+        COALESCE(SUM(s.total), 0) AS total_revenue,
+        SUM(CASE WHEN s.status = 'REFUNDED' THEN 1 ELSE 0 END) AS refunded_sales
       FROM sales s
-      WHERE s.status = 'COMPLETED'${dateFilter}
-    `, params)
+      WHERE 1=1${totalsDateFilter}
+    `, totalsParams)
 
+    const returnsParams = []
+    const returnsDateFilter = buildDateFilter('sri', 'created_at', from, to, returnsParams)
+    const [returnsRows] = await db.pool.query(`
+      SELECT
+        COUNT(*) AS total_return_transactions,
+        COALESCE(SUM(sri.quantity), 0) AS total_returned_qty,
+        COALESCE(SUM(sri.quantity * sri.unit_price), 0) AS total_returns
+      FROM sale_return_items sri
+      JOIN sales s ON s.id = sri.sale_id
+      WHERE 1=1${returnsDateFilter}
+    `, returnsParams)
+
+    const paymentParams = []
+    const paymentDateFilter = buildDateFilter('s', 'date', from, to, paymentParams)
     const [byPayment] = await db.pool.query(`
-      SELECT s.payment_method, COUNT(*) AS count, COALESCE(SUM(s.total), 0) AS total
+      SELECT
+        s.payment_method,
+        COUNT(*) AS count,
+        COALESCE(SUM(s.total), 0) AS total,
+        COALESCE(SUM(sp.amount_received), 0) AS amount_received,
+        COALESCE(SUM(sp.change_amount), 0) AS change_given
       FROM sales s
-      WHERE s.status = 'COMPLETED'${dateFilter}
+      LEFT JOIN sales_payments sp ON sp.sale_id = s.id
+      WHERE 1=1${paymentDateFilter}
       GROUP BY s.payment_method
-    `, params)
+      ORDER BY total DESC
+    `, paymentParams)
 
+    const topProductParams = []
+    const topProductDateFilter = buildDateFilter('s', 'date', from, to, topProductParams)
     const [topProducts] = await db.pool.query(`
-      SELECT p.name, p.sku, SUM(si.qty) AS total_qty, SUM(si.line_total) AS total_sales
+      SELECT
+        p.name,
+        p.sku,
+        SUM(si.qty) AS total_qty,
+        COALESCE(SUM(ret.returned_qty), 0) AS returned_qty,
+        SUM(si.qty) - COALESCE(SUM(ret.returned_qty), 0) AS net_qty,
+        SUM(si.line_total) AS gross_sales,
+        SUM(si.line_total) - COALESCE(SUM(ret.returned_amount), 0) AS net_sales
       FROM sale_items si
       JOIN sales s ON s.id = si.sale_id
-      JOIN products p ON p.id = si.product_id
-      WHERE s.status = 'COMPLETED'${dateFilter}
-      GROUP BY si.product_id
-      ORDER BY total_sales DESC
+      LEFT JOIN products p ON p.id = si.product_id
+      LEFT JOIN (
+        SELECT sale_item_id, SUM(quantity) AS returned_qty, SUM(quantity * unit_price) AS returned_amount
+        FROM sale_return_items
+        GROUP BY sale_item_id
+      ) ret ON ret.sale_item_id = si.id
+      WHERE 1=1${topProductDateFilter}
+      GROUP BY si.product_id, p.name, p.sku
+      ORDER BY net_sales DESC
       LIMIT 10
-    `, params)
+    `, topProductParams)
+
+    const totals = totalsRows[0] || {}
+    const returns = returnsRows[0] || {}
+    const totalRevenue = roundMoney(totals.total_revenue)
+    const totalReturns = roundMoney(returns.total_returns)
 
     res.json({
-      ...totals[0],
-      by_payment_method: byPayment,
-      top_products: topProducts
+      total_sales: Number(totals.total_sales) || 0,
+      total_transactions: Number(totals.total_sales) || 0,
+      gross_sales: roundMoney(totals.gross_sales),
+      total_discounts: roundMoney(totals.total_discounts),
+      total_tax: roundMoney(totals.total_tax),
+      total_revenue: totalRevenue,
+      total_returns: totalReturns,
+      refunded_sales: Number(totals.refunded_sales) || 0,
+      total_return_transactions: Number(returns.total_return_transactions) || 0,
+      total_returned_qty: Number(returns.total_returned_qty) || 0,
+      net_revenue: roundMoney(totalRevenue - totalReturns),
+      by_payment_method: byPayment.map((row) => ({
+        ...row,
+        total: roundMoney(row.total),
+        amount_received: roundMoney(row.amount_received),
+        change_given: roundMoney(row.change_given)
+      })),
+      top_products: topProducts.map((row) => ({
+        ...row,
+        gross_sales: roundMoney(row.gross_sales),
+        net_sales: roundMoney(row.net_sales),
+        total_qty: Number(row.total_qty) || 0,
+        returned_qty: Number(row.returned_qty) || 0,
+        net_qty: Number(row.net_qty) || 0
+      }))
     })
   } catch (err) {
     console.error(err)
@@ -51,61 +184,177 @@ router.get('/reports/summary', verifyToken, authorize('sales.view'), async (req,
   }
 })
 
-// ─── List all sales ───
+router.get('/transactions', verifyToken, authorize('sales.view'), async (req, res) => {
+  try {
+    await ensureSalesSchema()
+    const { from, to, type, receipt_no } = req.query
+
+    const paymentParams = []
+    let paymentFilter = buildDateFilter('sp', 'received_at', from, to, paymentParams)
+    if (receipt_no) {
+      paymentFilter += ' AND s.receipt_no = ?'
+      paymentParams.push(String(receipt_no).trim())
+    }
+    const [payments] = await db.pool.query(`
+      SELECT
+        CONCAT('PAY-', sp.id) AS transaction_id,
+        'SALE_PAYMENT' AS type,
+        sp.received_at AS created_at,
+        s.id AS sale_id,
+        s.sale_number,
+        s.receipt_no,
+        s.payment_method,
+        s.total AS amount,
+        sp.amount_received,
+        sp.change_amount,
+        sp.reference_number,
+        u.username AS user_name,
+        c.name AS customer_name
+      FROM sales_payments sp
+      JOIN sales s ON s.id = sp.sale_id
+      LEFT JOIN users u ON u.id = sp.received_by
+      LEFT JOIN customers c ON c.id = s.customer_id
+      WHERE 1=1${paymentFilter}
+      ORDER BY sp.received_at DESC
+    `, paymentParams)
+
+    const returnParams = []
+    let returnFilter = buildDateFilter('sri', 'created_at', from, to, returnParams)
+    if (receipt_no) {
+      returnFilter += ' AND s.receipt_no = ?'
+      returnParams.push(String(receipt_no).trim())
+    }
+    const [returns] = await db.pool.query(`
+      SELECT
+        CONCAT('RET-', sri.id) AS transaction_id,
+        'SALE_RETURN' AS type,
+        sri.created_at,
+        s.id AS sale_id,
+        s.sale_number,
+        s.receipt_no,
+        s.payment_method,
+        (sri.quantity * sri.unit_price) AS amount,
+        sri.quantity,
+        sri.unit_price,
+        sri.reason,
+        p.name AS product_name,
+        p.sku,
+        u.username AS user_name
+      FROM sale_return_items sri
+      JOIN sales s ON s.id = sri.sale_id
+      LEFT JOIN products p ON p.id = sri.product_id
+      LEFT JOIN users u ON u.id = sri.processed_by
+      WHERE 1=1${returnFilter}
+      ORDER BY sri.created_at DESC
+    `, returnParams)
+
+    let transactions = [
+      ...payments.map((row) => ({
+        ...row,
+        amount: roundMoney(row.amount),
+        amount_received: roundMoney(row.amount_received),
+        change_amount: roundMoney(row.change_amount)
+      })),
+      ...returns.map((row) => ({
+        ...row,
+        amount: roundMoney(row.amount),
+        unit_price: roundMoney(row.unit_price)
+      }))
+    ]
+
+    if (type === 'SALE_PAYMENT' || type === 'SALE_RETURN') {
+      transactions = transactions.filter((row) => row.type === type)
+    }
+
+    transactions.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    res.json(transactions)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'failed to fetch sales transactions' })
+  }
+})
+
+router.get('/receipt/:receiptNo', verifyToken, authorize(['sales.view', 'sales.refund']), async (req, res) => {
+  try {
+    await ensureSalesSchema()
+    const sale = await getSaleByReceipt(db.pool, req.params.receiptNo)
+    if (!sale) return res.status(404).json({ error: 'receipt not found' })
+    res.json(sale)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'failed to fetch receipt' })
+  }
+})
+
 router.get('/', verifyToken, authorize('sales.view'), async (req, res) => {
   try {
-    const { status, from, to, payment_method } = req.query
+    await ensureSalesSchema()
+    const { status, from, to, payment_method, receipt_no } = req.query
+
     let sql = `
-      SELECT s.*, u.username AS clerk_name, c.name AS customer_name
+      SELECT
+        s.*,
+        u.username AS clerk_name,
+        c.name AS customer_name,
+        sp.amount_received,
+        sp.change_amount,
+        sp.reference_number AS payment_reference,
+        sp.received_at AS payment_received_at,
+        COALESCE(sold.sold_qty, 0) AS sold_qty,
+        COALESCE(ret.returned_qty, 0) AS returned_qty,
+        COALESCE(ret.returned_amount, 0) AS returned_amount
       FROM sales s
       LEFT JOIN users u ON u.id = s.clerk_id
       LEFT JOIN customers c ON c.id = s.customer_id
+      LEFT JOIN sales_payments sp ON sp.sale_id = s.id
+      LEFT JOIN (
+        SELECT sale_id, SUM(qty) AS sold_qty
+        FROM sale_items
+        GROUP BY sale_id
+      ) sold ON sold.sale_id = s.id
+      LEFT JOIN (
+        SELECT sale_id, SUM(quantity) AS returned_qty, SUM(quantity * unit_price) AS returned_amount
+        FROM sale_return_items
+        GROUP BY sale_id
+      ) ret ON ret.sale_id = s.id
       WHERE 1=1
     `
     const params = []
-    if (status) { sql += ' AND s.status = ?'; params.push(status) }
-    if (payment_method) { sql += ' AND s.payment_method = ?'; params.push(payment_method) }
-    if (from) { sql += ' AND s.date >= ?'; params.push(from) }
-    if (to) { sql += ' AND s.date <= ?'; params.push(to) }
-    sql += ' ORDER BY s.date DESC'
-    const [rows] = await db.pool.query(sql, params)
-
-    // Attach items
-    for (const sale of rows) {
-      const [items] = await db.pool.query(`
-        SELECT si.*, p.name AS product_name, p.sku
-        FROM sale_items si
-        LEFT JOIN products p ON p.id = si.product_id
-        WHERE si.sale_id = ?
-      `, [sale.id])
-      sale.items = items
+    if (status) {
+      sql += ' AND s.status = ?'
+      params.push(status)
     }
-    res.json(rows)
+    if (payment_method) {
+      sql += ' AND s.payment_method = ?'
+      params.push(payment_method)
+    }
+    if (receipt_no) {
+      sql += ' AND s.receipt_no = ?'
+      params.push(String(receipt_no).trim())
+    }
+    sql += buildDateFilter('s', 'date', from, to, params)
+    sql += ' ORDER BY s.date DESC, s.id DESC'
+
+    const [rows] = await db.pool.query(sql, params)
+    const sales = []
+    for (const row of rows) {
+      const sale = enrichSaleRecord(row)
+      sale.items = await getSaleItems(db.pool, sale.id)
+      sales.push(sale)
+    }
+
+    res.json(sales)
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'failed to fetch sales' })
   }
 })
 
-// ─── Get single sale / receipt ───
 router.get('/:id', verifyToken, authorize('sales.view'), async (req, res) => {
   try {
-    const [rows] = await db.pool.query(`
-      SELECT s.*, u.username AS clerk_name, c.name AS customer_name
-      FROM sales s
-      LEFT JOIN users u ON u.id = s.clerk_id
-      LEFT JOIN customers c ON c.id = s.customer_id
-      WHERE s.id = ? LIMIT 1
-    `, [req.params.id])
-    if (!rows.length) return res.status(404).json({ error: 'sale not found' })
-    const sale = rows[0]
-    const [items] = await db.pool.query(`
-      SELECT si.*, p.name AS product_name, p.sku
-      FROM sale_items si
-      LEFT JOIN products p ON p.id = si.product_id
-      WHERE si.sale_id = ?
-    `, [sale.id])
-    sale.items = items
+    await ensureSalesSchema()
+    const sale = await getSaleById(db.pool, Number(req.params.id))
+    if (!sale) return res.status(404).json({ error: 'sale not found' })
     res.json(sale)
   } catch (err) {
     console.error(err)
@@ -113,148 +362,168 @@ router.get('/:id', verifyToken, authorize('sales.view'), async (req, res) => {
   }
 })
 
-// ─── Create / finalize a sale ───
 router.post('/', express.json(), verifyToken, authorize('sales.create'), async (req, res) => {
+  await ensureSalesSchema()
   const conn = await db.pool.getConnection()
+
   try {
     await conn.beginTransaction()
-    const { customer_id, items, payment_method, discount, tax } = req.body
-    if (!items || !items.length) return res.status(400).json({ error: 'at least one item required' })
-    if (!payment_method) return res.status(400).json({ error: 'payment_method required (cash, card, e-wallet)' })
 
-    const allowedPaymentMethods = new Set(['cash', 'card', 'e-wallet'])
-    if (!allowedPaymentMethods.has(String(payment_method))) {
-      await conn.rollback(); conn.release()
-      return res.status(400).json({ error: 'invalid payment_method' })
+    const {
+      customer_id,
+      items,
+      payment_method,
+      payment_amount,
+      discount_percentage,
+      payment_reference
+    } = req.body || {}
+
+    if (!PAYMENT_METHODS.includes(String(payment_method))) {
+      throw createHttpError(400, 'invalid payment_method')
     }
 
-    // Generate sale number and receipt
-    const [countRows] = await conn.query('SELECT COUNT(*) AS cnt FROM sales')
-    const saleNum = `SAL-${String(countRows[0].cnt + 1).padStart(6, '0')}`
-    const receiptNo = `RCT-${String(countRows[0].cnt + 1).padStart(6, '0')}`
-
-    let subtotal = 0
-    const processedItems = []
-
-    // Validate and price items first under lock
-    for (const item of items) {
-      if (!item.product_id || !item.quantity || item.quantity <= 0) continue
-      if (item.unit_price !== undefined && Number(item.unit_price) < 0) {
-        await conn.rollback(); conn.release()
-        return res.status(400).json({ error: 'unit_price cannot be negative' })
-      }
-      // Get product price
-      const [prod] = await conn.query('SELECT id, name, price, stock_quantity FROM products WHERE id = ? FOR UPDATE', [item.product_id])
-      if (!prod.length) { await conn.rollback(); conn.release(); return res.status(400).json({ error: `product ${item.product_id} not found` }) }
-      const unitPrice = item.unit_price !== undefined ? Number(item.unit_price) : Number(prod[0].price)
-      const lineTotal = unitPrice * item.quantity
-
-      // Check stock
-      if (prod[0].stock_quantity < item.quantity) {
-        await conn.rollback(); conn.release()
-        return res.status(400).json({ error: `Insufficient stock for ${prod[0].name}. Available: ${prod[0].stock_quantity}` })
-      }
-
-      subtotal += lineTotal
-      processedItems.push({ ...item, unitPrice, lineTotal, productName: prod[0].name })
+    const tenderedAmount = Number(payment_amount)
+    if (!Number.isFinite(tenderedAmount) || tenderedAmount <= 0) {
+      throw createHttpError(400, 'payment_amount must be greater than 0')
     }
 
-    const discountAmt = Number(discount) || 0
-    const taxAmt = Number(tax) || 0
-    if (discountAmt < 0 || taxAmt < 0) {
-      await conn.rollback(); conn.release()
-      return res.status(400).json({ error: 'discount and tax must be non-negative' })
+    const { processedItems, subtotal, productRows } = await prepareSaleItems(conn, items)
+    const discountPct = normalizeDiscountPercentage(discount_percentage)
+    const discountAmt = roundMoney(subtotal * (discountPct / 100))
+    const taxRate = await getSalesTaxRate(conn)
+    const taxableBase = Math.max(subtotal - discountAmt, 0)
+    const taxAmt = roundMoney(taxableBase * taxRate)
+    const total = roundMoney(taxableBase + taxAmt)
+
+    if (total <= 0) {
+      throw createHttpError(400, 'total must be greater than 0')
     }
-    const total = subtotal - discountAmt + taxAmt
-    if (total < 0) {
-      await conn.rollback(); conn.release()
-      return res.status(400).json({ error: 'total cannot be negative' })
+
+    const amountReceived = roundMoney(tenderedAmount)
+    if (amountReceived < total) {
+      throw createHttpError(400, 'payment must be greater than or equal to total amount')
     }
+
+    const changeAmount = roundMoney(amountReceived - total)
+    const saleNumber = await generateDocumentNumber(conn, 'sales', 'sale_number', 'SAL')
+    const receiptNo = await generateDocumentNumber(conn, 'sales', 'receipt_no', 'RCT')
 
     const [saleResult] = await conn.query(
-      `INSERT INTO sales (sale_number, clerk_id, customer_id, subtotal, tax, discount, total, payment_method, receipt_no)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [saleNum, req.auth.id, customer_id || null, subtotal, taxAmt, discountAmt, total, payment_method, receiptNo]
+      `INSERT INTO sales (sale_number, clerk_id, customer_id, subtotal, tax, discount, total, payment_method, receipt_no, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED')`,
+      [
+        saleNumber,
+        req.auth.id,
+        customer_id ? Number(customer_id) : null,
+        subtotal,
+        taxAmt,
+        discountAmt,
+        total,
+        payment_method,
+        receiptNo
+      ]
     )
+
     const saleId = saleResult.insertId
 
-    // Apply inventory movement and persist sale items with sale linkage
-    for (const item of processedItems) {
-      const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [item.product_id])
-      if (!prod.length) { await conn.rollback(); conn.release(); return res.status(400).json({ error: `product ${item.product_id} not found` }) }
+    await conn.query(
+      `INSERT INTO sales_payments (sale_id, amount_received, change_amount, payment_method, reference_number, received_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [saleId, amountReceived, changeAmount, payment_method, payment_reference || null, req.auth.id]
+    )
 
-      // Decrease stock
-      const newQty = prod[0].stock_quantity - item.quantity
-      await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, item.product_id])
-
-      // Record inventory transaction
-      await conn.query(
-        `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after)
-         VALUES (?, 'OUT', ?, ?, ?, ?)`,
-        [item.product_id, -item.quantity, req.auth.id, `SALE_LINK:sale_id=${saleId}|sale_no=${saleNum}|receipt=${receiptNo}`, newQty]
-      )
-
-      await conn.query(
-        'INSERT INTO sale_items (sale_id, product_id, qty, unit_price, line_total) VALUES (?, ?, ?, ?, ?)',
-        [saleId, item.product_id, item.quantity, item.unitPrice, item.lineTotal]
-      )
-    }
+    await applySaleInventoryChanges(conn, processedItems, productRows, req.auth.id, {
+      saleId,
+      saleNumber,
+      receiptNo
+    })
 
     await conn.commit()
-    conn.release()
 
+    const sale = await getSaleById(conn, saleId)
     res.json({
-      id: saleId,
-      sale_number: saleNum,
-      receipt_no: receiptNo,
-      subtotal,
-      tax: taxAmt,
-      discount: discountAmt,
-      total,
-      payment_method,
-      items: processedItems
+      ...sale,
+      discount_percentage: discountPct,
+      tax_rate: roundMoney(taxRate * 100)
     })
   } catch (err) {
     await conn.rollback()
-    conn.release()
     console.error(err)
-    res.status(500).json({ error: 'sale creation failed' })
+    res.status(getErrorStatus(err)).json({ error: getErrorMessage(err, 'sale creation failed') })
+  } finally {
+    conn.release()
   }
 })
 
-// ─── Refund / cancel sale ───
-router.post('/:id/refund', express.json(), verifyToken, authorize('sales.refund'), async (req, res) => {
+router.post('/returns', express.json(), verifyToken, authorize('sales.refund'), async (req, res) => {
+  await ensureSalesSchema()
   const conn = await db.pool.getConnection()
+
   try {
     await conn.beginTransaction()
-    const saleId = req.params.id
-    const [saleRows] = await conn.query('SELECT * FROM sales WHERE id = ? FOR UPDATE', [saleId])
-    if (!saleRows.length) { await conn.rollback(); conn.release(); return res.status(404).json({ error: 'sale not found' }) }
-    if (saleRows[0].status === 'REFUNDED') { await conn.rollback(); conn.release(); return res.status(400).json({ error: 'sale already refunded' }) }
 
-    // Return items to inventory
-    const [items] = await conn.query('SELECT * FROM sale_items WHERE sale_id = ?', [saleId])
-    for (const item of items) {
-      const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [item.product_id])
-      if (!prod.length) continue
-      const newQty = prod[0].stock_quantity + item.qty
-      await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, item.product_id])
-      await conn.query(
-        `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after)
-         VALUES (?, 'RETURN', ?, ?, ?, ?)`,
-        [item.product_id, item.qty, req.auth.id, `Refund for sale #${saleRows[0].sale_number}`, newQty]
-      )
+    const { receipt_no, sale_id, items, reason } = req.body || {}
+    if (!receipt_no && !sale_id) {
+      throw createHttpError(400, 'receipt_no or sale_id is required')
     }
 
-    await conn.query("UPDATE sales SET status = 'REFUNDED' WHERE id = ?", [saleId])
+    const sale = await getLockedSale(conn, { saleId: sale_id ? Number(sale_id) : null, receiptNo: receipt_no })
+    if (!sale) throw createHttpError(404, 'sale not found')
+
+    const returnedItems = await processSaleReturn(conn, sale, items, req.auth.id, reason)
+    const updatedSale = await getSaleById(conn, sale.id)
+
     await conn.commit()
-    conn.release()
-    res.json({ success: true })
+    res.json({
+      success: true,
+      returned_items: returnedItems,
+      sale: updatedSale
+    })
   } catch (err) {
     await conn.rollback()
-    conn.release()
     console.error(err)
-    res.status(500).json({ error: 'refund failed' })
+    res.status(getErrorStatus(err)).json({ error: getErrorMessage(err, 'return failed') })
+  } finally {
+    conn.release()
+  }
+})
+
+router.post('/:id/refund', express.json(), verifyToken, authorize('sales.refund'), async (req, res) => {
+  await ensureSalesSchema()
+  const conn = await db.pool.getConnection()
+
+  try {
+    await conn.beginTransaction()
+
+    const sale = await getLockedSale(conn, { saleId: Number(req.params.id) })
+    if (!sale) throw createHttpError(404, 'sale not found')
+
+    const remainingItems = (sale.items || [])
+      .filter((item) => Number(item.available_to_return) > 0)
+      .map((item) => ({
+        sale_item_id: item.id,
+        quantity: Number(item.available_to_return)
+      }))
+
+    if (!remainingItems.length) {
+      throw createHttpError(400, 'sale already fully refunded')
+    }
+
+    const returnedItems = await processSaleReturn(conn, sale, remainingItems, req.auth.id, 'full refund')
+    const updatedSale = await getSaleById(conn, sale.id)
+
+    await conn.commit()
+    res.json({
+      success: true,
+      returned_items: returnedItems,
+      sale: updatedSale
+    })
+  } catch (err) {
+    await conn.rollback()
+    console.error(err)
+    res.status(getErrorStatus(err)).json({ error: getErrorMessage(err, 'refund failed') })
+  } finally {
+    conn.release()
   }
 })
 
