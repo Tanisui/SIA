@@ -150,7 +150,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
 })
 
 // Update product
-router.put('/:id', express.json(), verifyToken, authorize('products.edit'), async (req, res) => {
+router.put('/:id', express.json(), verifyToken, authorize('products.update'), async (req, res) => {
   try {
     const id = req.params.id
     const { sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active } = req.body

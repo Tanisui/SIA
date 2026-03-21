@@ -1,4 +1,5 @@
 Step-by-step: How to use your barcode module
+
 1. One-time setup (required)
 Open terminal in project root.
 Go to backend:
@@ -16,6 +17,7 @@ If it says duplicate barcode found:
 
 Fix duplicates in products table first.
 Re-run npm run migrate:barcode.
+
 2. Start the system
 Start backend:
 cd backend
@@ -27,6 +29,7 @@ npm run dev
 Important:
 
 Frontend uses npm run dev, not npm run start.
+
 3. Create products with barcode
 Open Inventory page.
 Go to Products tab.
@@ -42,6 +45,7 @@ Result:
 
 Product is created with unique barcode.
 Duplicate barcode is blocked.
+
 4. Use barcode scanning in POS
 Open Sales page.
 Stay in Point of Sale tab.
@@ -55,6 +59,7 @@ Result:
 Product is auto-added by barcode lookup.
 Stock is validated before finalize.
 Sale is recorded and stock is deducted.
+
 5. Use barcode in cycle count
 Open Inventory page.
 Go to Cycle Count tab.
@@ -67,6 +72,7 @@ Result:
 
 Stock adjusts to counted quantity.
 Variance is logged as inventory adjustments.
+
 6. Import/export product catalog
 Open Inventory → Products.
 Click Export CSV to download current product list.
@@ -80,6 +86,7 @@ Array:
 ]
 Object:
 { "products": [ ... ] }
+
 7. Verify logs (recommended)
 Open Audit module/page.
 Filter by action.

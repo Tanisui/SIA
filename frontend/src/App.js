@@ -5,6 +5,7 @@ import ForgotPassword from './pages/ForgotPassword.js'
 import ForgotEmail from './pages/ForgotEmail.js'
 import Dashboard from './pages/Dashboard.js'
 import Users from './pages/Users.jsx'
+import UserFormPage from './pages/UserFormPage.jsx'
 import Roles from './pages/Roles.js'
 import Categories from './pages/Categories.js'
 import Inventory from './pages/Inventory.js'
@@ -33,7 +34,11 @@ export default function App() {
         React.createElement(React.Fragment, null,
           React.createElement(Route, { index: true, element: React.createElement(Dashboard, null) }),
           React.createElement(Route, { path: 'users', element: React.createElement(Users, null) }),
+          React.createElement(Route, { path: 'users/new', element: React.createElement(UserFormPage, { mode: 'create' }) }),
+          React.createElement(Route, { path: 'users/:id/edit', element: React.createElement(UserFormPage, { mode: 'edit' }) }),
           React.createElement(Route, { path: 'employees', element: React.createElement(Navigate, { to: '/users', replace: true }) }),
+          React.createElement(Route, { path: 'employees/new', element: React.createElement(UserFormPage, { mode: 'create' }) }),
+          React.createElement(Route, { path: 'employees/:id/edit', element: React.createElement(UserFormPage, { mode: 'edit' }) }),
           React.createElement(Route, { path: 'roles', element: React.createElement(Roles, null) }),
           React.createElement(Route, { path: 'categories', element: React.createElement(Categories, null) }),
           React.createElement(Route, { path: 'inventory', element: React.createElement(Inventory, null) }),

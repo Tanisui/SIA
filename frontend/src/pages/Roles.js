@@ -20,7 +20,17 @@ export default function Roles(){
     { name: 'id', label: 'ID', hidden: true },
     { name: 'name', label: 'Role name' },
     { name: 'description', label: 'Description' },
-    { name: 'permissions', label: 'Permissions', type: 'checkboxes', options: permOptions, hideInList: true }
+    {
+      name: 'permissions',
+      label: 'Permissions',
+      type: 'checkboxes',
+      options: permOptions,
+      hideInList: true,
+      showSelectAll: (form) => String(form.name || '').trim().toLowerCase() === 'admin',
+      helpText: (form) => String(form.name || '').trim().toLowerCase() === 'admin'
+        ? 'Admin roles can use Select All permissions.'
+        : 'Select individual permissions for this role.'
+    }
   ]
 
   return React.createElement(EntityPage, { title: 'Roles & Permissions', apiPath: '/roles', schema })

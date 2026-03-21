@@ -1,9 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react'
+import { useSelector } from 'react-redux'
 import api from '../api/api.js'
 
 const fmt = (n) => Number(n || 0).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })
 
 export default function Purchasing() {
+  const permissions = useSelector((state) =>
+    state.auth && state.auth.permissions
+      ? state.auth.permissions
+      : JSON.parse(localStorage.getItem('permissions') || '[]')
+  )
   const [suppliers, setSuppliers] = useState([])
   const [products, setProducts] = useState([])
   const [orders, setOrders] = useState([])
@@ -27,6 +33,10 @@ export default function Purchasing() {
     setTimeout(() => setSuccess(null), 4000)
   }
 
+  const canCreatePO = Array.isArray(permissions)
+    ? permissions.includes('admin.*') || permissions.includes('purchase.create')
+    : false
+
   const fetchPOs = useCallback(async () => {
     try {
       const res = await api.get('/purchase-orders')
@@ -39,12 +49,26 @@ export default function Purchasing() {
   const fetchLookups = useCallback(async () => {
     setLoading(true)
     try {
-      const [supplierRes, productRes] = await Promise.all([
+      const [supplierRes, productRes] = await Promise.allSettled([
         api.get('/suppliers'),
         api.get('/products')
       ])
-      setSuppliers(supplierRes.data || [])
-      setProducts(productRes.data || [])
+
+      if (supplierRes.status === 'fulfilled') {
+        setSuppliers(supplierRes.value.data || [])
+      } else {
+        setSuppliers([])
+      }
+
+      if (productRes.status === 'fulfilled') {
+        setProducts(productRes.value.data || [])
+      } else {
+        setProducts([])
+      }
+
+      if (supplierRes.status !== 'fulfilled') {
+        setError('Failed to load suppliers')
+      }
     } catch (e) {
       setError('Failed to load suppliers/products')
     }
@@ -128,7 +152,7 @@ export default function Purchasing() {
       style: { background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d', padding: '10px 14px', borderRadius: 6, marginBottom: 16, fontSize: '13.5px' }
     }, success),
 
-    React.createElement('div', { className: 'card', style: { marginBottom: 20 } },
+    canCreatePO && React.createElement('div', { className: 'card', style: { marginBottom: 20 } },
       React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
         React.createElement('h3', null, 'Create Purchase Order'),
         React.createElement('button', { className: 'btn btn-secondary', type: 'button', onClick: fetchLookups }, 'Refresh Suppliers')
@@ -201,6 +225,11 @@ export default function Purchasing() {
         )
       )
     ),
+
+    !canCreatePO && React.createElement('div', {
+      className: 'card',
+      style: { marginBottom: 20, color: 'var(--text-mid)', fontSize: '13.5px' }
+    }, 'Your account can view purchase orders but cannot create them.'),
 
     React.createElement('div', { className: 'card' },
       React.createElement('h3', { style: { marginBottom: 12 } }, loading ? 'Purchase Orders (loading...)' : 'Purchase Orders'),
