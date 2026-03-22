@@ -48,6 +48,9 @@ export default function Sales() {
   const [qty, setQty] = useState('1')
   const [qtyValidationError, setQtyValidationError] = useState('')
   const [customerId, setCustomerId] = useState('')
+  const [customerNameInput, setCustomerNameInput] = useState('')
+  const [customerPhoneInput, setCustomerPhoneInput] = useState('')
+  const [orderNote, setOrderNote] = useState('')
   const [paymentMethod, setPaymentMethod] = useState('cash')
   const [discountPercentage, setDiscountPercentage] = useState('')
   const [pendingOrder, setPendingOrder] = useState(null)
@@ -65,6 +68,7 @@ export default function Sales() {
   const [returnReceiptNo, setReturnReceiptNo] = useState('')
   const [returnLookup, setReturnLookup] = useState(null)
   const [returnReason, setReturnReason] = useState('')
+  const [returnAccountingReference, setReturnAccountingReference] = useState('')
   const [returnQuantities, setReturnQuantities] = useState({})
 
   const tabs = [
@@ -133,6 +137,14 @@ export default function Sales() {
     setSelectedSaleId(null)
     setOpenSaleMenuId(null)
   }, [tab])
+
+  useEffect(() => {
+    if (!customerId) return
+    const selected = customers.find((customer) => String(customer.id) === String(customerId))
+    if (!selected) return
+    if (!String(customerNameInput || '').trim()) setCustomerNameInput(String(selected.name || ''))
+    if (!String(customerPhoneInput || '').trim()) setCustomerPhoneInput(String(selected.phone || ''))
+  }, [customerId, customers])
 
   const filteredProducts = products.filter((product) => {
     const needle = search.trim().toLowerCase()
@@ -369,9 +381,15 @@ export default function Sales() {
     if (!cart.length) return setError('Add items to cart first')
     if (cart.some((item, index) => !!qtyError(item.quantity, item.product_id, index))) return setError('Resolve cart stock issues first')
     if (total <= 0) return setError('Total must be greater than 0')
+    if (!String(customerNameInput || '').trim()) return setError('Customer name is required before checkout')
     setPendingOrder({
       items: cart.map((item) => ({ ...item })),
       customer_id: customerId ? num(customerId) : null,
+      customer: {
+        name: String(customerNameInput || '').trim(),
+        phone: String(customerPhoneInput || '').trim() || undefined,
+        order_note: String(orderNote || '').trim() || undefined
+      },
       payment_method: paymentMethod,
       discount_percentage: discountPct,
       subtotal,
@@ -386,12 +404,14 @@ export default function Sales() {
   async function completeSale() {
     clearMsg()
     if (!pendingOrder) return setError('No pending order')
+    if (!String(pendingOrder?.customer?.name || '').trim()) return setError('Customer name is required before completing sale')
     if (tendered < num(pendingOrder.total)) return setError('Payment must be greater than or equal to the total amount')
     try {
       setLoading(true)
       const res = await api.post('/sales', {
         items: pendingOrder.items.map((item) => ({ product_id: item.product_id, quantity: item.quantity, unit_price: item.unit_price })),
         customer_id: pendingOrder.customer_id || undefined,
+        customer: pendingOrder.customer,
         payment_method: pendingOrder.payment_method,
         payment_amount: round(tendered),
         payment_reference: paymentReference || undefined,
@@ -401,6 +421,9 @@ export default function Sales() {
       setPendingOrder(null)
       setCart([])
       setCustomerId('')
+      setCustomerNameInput('')
+      setCustomerPhoneInput('')
+      setOrderNote('')
       setDiscountPercentage('')
       setPaymentAmount('')
       setPaymentReference('')
@@ -426,10 +449,12 @@ export default function Sales() {
 
   async function refundSale(id) {
     if (!window.confirm('Process a full refund for this sale?')) return
+    const accountingReference = String(window.prompt('Enter accounting reference for this refund (required):') || '').trim()
+    if (!accountingReference) return setError('Accounting reference is required to process refund')
     clearMsg()
     try {
       setLoading(true)
-      await api.post(`/sales/${id}/refund`)
+      await api.post(`/sales/${id}/refund`, { accounting_reference: accountingReference })
       await Promise.all([fetchSales(), fetchTransactions(), fetchReport()])
       await refreshProducts()
       flash('Full refund processed successfully')
@@ -462,15 +487,23 @@ export default function Sales() {
   async function submitReturn() {
     clearMsg()
     if (!returnLookup) return setError('Look up a receipt first')
+    const accountingReference = String(returnAccountingReference || '').trim()
+    if (!accountingReference) return setError('Accounting reference is required before processing a return')
     const items = (returnLookup.items || [])
       .map((item) => ({ sale_item_id: item.id, quantity: num(returnQuantities[item.id]) }))
       .filter((item) => item.quantity > 0)
     if (!items.length) return setError('Enter at least one return quantity')
     try {
       setLoading(true)
-      const res = await api.post('/sales/returns', { receipt_no: returnLookup.receipt_no, items, reason: returnReason || undefined })
+      const res = await api.post('/sales/returns', {
+        receipt_no: returnLookup.receipt_no,
+        items,
+        reason: returnReason || undefined,
+        accounting_reference: accountingReference
+      })
       setReturnLookup(res.data.sale)
       setReturnReason('')
+      setReturnAccountingReference('')
       setReturnQuantities(Object.fromEntries((res.data.sale?.items || []).map((item) => [item.id, ''])))
       await refreshProducts()
       await Promise.all([fetchSales(), fetchTransactions(), fetchReport()])
@@ -664,10 +697,50 @@ export default function Sales() {
           h('h3', { style: { marginBottom: 12 } }, 'POS Summary'),
           h('div', { className: 'form-group' },
             h('label', { className: 'form-label' }, 'Customer'),
-            h('select', { className: 'form-input', value: customerId, onChange: (e) => setCustomerId(e.target.value) },
+            h('select', {
+              className: 'form-input',
+              value: customerId,
+              onChange: (e) => {
+                const nextId = e.target.value
+                setCustomerId(nextId)
+                if (!nextId) return
+                const selected = customers.find((customer) => String(customer.id) === String(nextId))
+                if (!selected) return
+                setCustomerNameInput(String(selected.name || ''))
+                setCustomerPhoneInput(String(selected.phone || ''))
+              }
+            },
               h('option', { value: '' }, 'Walk-in'),
               ...customers.map((customer) => h('option', { key: customer.id, value: customer.id }, customer.name))
             )
+          ),
+          h('div', { className: 'form-group' },
+            h('label', { className: 'form-label' }, 'Customer Name *'),
+            h('input', {
+              className: 'form-input',
+              value: customerNameInput,
+              onChange: (e) => setCustomerNameInput(e.target.value),
+              placeholder: 'Required for every order'
+            })
+          ),
+          h('div', { className: 'form-group' },
+            h('label', { className: 'form-label' }, 'Customer Phone'),
+            h('input', {
+              className: 'form-input',
+              value: customerPhoneInput,
+              onChange: (e) => setCustomerPhoneInput(e.target.value),
+              placeholder: 'Optional'
+            })
+          ),
+          h('div', { className: 'form-group' },
+            h('label', { className: 'form-label' }, 'Order Note'),
+            h('textarea', {
+              className: 'form-input',
+              rows: 2,
+              value: orderNote,
+              onChange: (e) => setOrderNote(e.target.value),
+              placeholder: 'Optional note for this order'
+            })
           ),
           h('div', { className: 'form-group' },
             h('label', { className: 'form-label' }, 'Payment Method'),
@@ -685,7 +758,7 @@ export default function Sales() {
             h('div', { style: { display: 'flex', justifyContent: 'space-between', color: discountAmount > 0 ? 'var(--error)' : 'inherit' } }, h('span', null, `Discount (${discountPct.toFixed(2)}%)`), h('span', null, `-${fmt(discountAmount)}`)),
             h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 20, fontWeight: 700, color: 'var(--gold-dark)', marginTop: 8 } }, h('span', null, 'Total'), h('span', null, fmt(total)))
           ),
-          h('button', { className: 'btn btn-primary', onClick: startPayment, disabled: !cart.length || loading, style: { width: '100%', marginTop: 16, padding: 14 } }, 'Proceed To Accept Payment')
+          h('button', { className: 'btn btn-primary', onClick: startPayment, disabled: !cart.length || loading || !String(customerNameInput || '').trim(), style: { width: '100%', marginTop: 16, padding: 14 } }, 'Proceed To Accept Payment')
         )
       )
     )
@@ -702,6 +775,10 @@ export default function Sales() {
                   h('thead', null, h('tr', null, h('th', null, 'Item'), h('th', null, 'Qty'), h('th', null, 'Unit'), h('th', null, 'Subtotal'))),
                   h('tbody', null, pendingOrder.items.map((item, index) => h('tr', { key: `${item.product_id}-${index}` }, h('td', null, item.name), h('td', null, item.quantity), h('td', null, fmt(item.unit_price)), h('td', { style: { fontWeight: 600 } }, fmt(item.unit_price * item.quantity)))))
                 )),
+                h('div', { style: { marginBottom: 12, fontSize: 12, color: 'var(--text-mid)' } },
+                  `Customer: ${pendingOrder.customer?.name || '—'}${pendingOrder.customer?.phone ? ` • ${pendingOrder.customer.phone}` : ''}`,
+                  pendingOrder.customer?.order_note ? ` • Note: ${pendingOrder.customer.order_note}` : ''
+                ),
                 h('div', { className: 'form-group' }, h('label', { className: 'form-label' }, 'Amount Received'), h('input', { className: 'form-input', type: 'number', min: pendingOrder.total, step: '0.01', value: paymentAmount, onChange: (e) => setPaymentAmount(e.target.value) })),
                 pendingOrder.payment_method !== 'cash' && h('div', { className: 'form-group' }, h('label', { className: 'form-label' }, 'Payment Reference'), h('input', { className: 'form-input', value: paymentReference, onChange: (e) => setPaymentReference(e.target.value) })),
                 h('div', { style: { display: 'flex', gap: 8 } },
@@ -719,10 +796,16 @@ export default function Sales() {
               h('div', null, `Receipt: ${lastReceipt.receipt_no}`),
               h('div', null, `Sale ID: ${lastReceipt.sale_number}`),
               h('div', null, `Date: ${fmtDate(lastReceipt.date || new Date())}`),
+              h('div', null, `Customer: ${lastReceipt.customer_name || '—'}`),
+              h('div', null, `Phone: ${lastReceipt.customer_phone || '—'}`),
               h('div', null, `Payment: ${lastReceipt.payment_method}`),
+              h('div', null, `Payment Ref: ${lastReceipt.payment_reference || '—'}`),
               h('div', null, `Received: ${fmt(lastReceipt.amount_received)}`),
               h('div', null, `Change: ${fmt(lastReceipt.change_amount)}`),
-              ...(lastReceipt.items || []).map((item, index) => h('div', { key: `${item.id || index}` }, `${item.product_name || item.productName || 'Item'} x${item.quantity || item.qty} - ${fmt(item.line_total || item.lineTotal)}`)),
+              ...(lastReceipt.items || []).map((item, index) => {
+                const sizeColor = [item.size, item.color].filter(Boolean).join(' / ')
+                return h('div', { key: `${item.id || index}` }, `${item.product_name || item.productName || 'Item'}${sizeColor ? ` (${sizeColor})` : ''} x${item.quantity || item.qty} - ${fmt(item.line_total || item.lineTotal)}`)
+              }),
               h('div', { style: { marginTop: 8, fontWeight: 700 } }, `TOTAL: ${fmt(lastReceipt.total)}`)
             )
           )
@@ -748,15 +831,29 @@ export default function Sales() {
         h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } }, h('h3', null, `Sale Details - ${viewSale.sale_number}`), h('button', { className: 'btn btn-secondary', onClick: () => { setViewSale(null); setSelectedSaleId(null); setOpenSaleMenuId(null) } }, 'Close')),
         h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 12, marginBottom: 12 } },
           h('div', null, h('strong', null, 'Receipt: '), viewSale.receipt_no),
+          h('div', null, h('strong', null, 'Customer: '), viewSale.customer_name || '—'),
+          h('div', null, h('strong', null, 'Phone: '), viewSale.customer_phone || '—'),
           h('div', null, h('strong', null, 'Payment: '), viewSale.payment_method),
+          h('div', null, h('strong', null, 'Payment Ref: '), viewSale.payment_reference || '—'),
           h('div', null, h('strong', null, 'Return: '), viewSale.return_status),
           h('div', null, h('strong', null, 'Received: '), fmt(viewSale.amount_received)),
           h('div', null, h('strong', null, 'Change: '), fmt(viewSale.change_amount)),
           h('div', null, h('strong', null, 'Date: '), fmtDate(viewSale.date))
         ),
+        viewSale.order_note && h('div', { style: { marginBottom: 12, fontSize: 12, color: 'var(--text-mid)' } }, h('strong', null, 'Order Note: '), viewSale.order_note),
         h('div', { className: 'table-wrap' }, h('table', null,
-          h('thead', null, h('tr', null, h('th', null, 'Product'), h('th', null, 'Qty'), h('th', null, 'Returned'), h('th', null, 'Available'), h('th', null, 'Line Total'))),
-          h('tbody', null, (viewSale.items || []).map((item) => h('tr', { key: item.id }, h('td', null, item.product_name || '—'), h('td', null, item.qty), h('td', null, item.returned_qty || 0), h('td', null, item.available_to_return || 0), h('td', { style: { fontWeight: 600 } }, fmt(item.line_total)))))
+          h('thead', null, h('tr', null, h('th', null, 'Product'), h('th', null, 'Variant'), h('th', null, 'Qty'), h('th', null, 'Returned'), h('th', null, 'Available'), h('th', null, 'Line Total'))),
+          h('tbody', null, (viewSale.items || []).map((item) => h('tr', { key: item.id },
+            h('td', null,
+              h('div', { style: { fontWeight: 600 } }, item.product_name || '—'),
+              (item.sku || item.brand || item.barcode) && h('div', { style: { fontSize: 11, color: 'var(--text-light)' } }, [item.sku, item.brand, item.barcode].filter(Boolean).join(' • '))
+            ),
+            h('td', null, [item.size, item.color].filter(Boolean).join(' / ') || '—'),
+            h('td', null, item.qty),
+            h('td', null, item.returned_qty || 0),
+            h('td', null, item.available_to_return || 0),
+            h('td', { style: { fontWeight: 600 } }, fmt(item.line_total))
+          )))
         ))
       ),
       h('div', { className: 'table-wrap' }, h('table', null,
@@ -834,7 +931,9 @@ export default function Sales() {
           h('td', null, h('div', { style: { fontWeight: 600 } }, txn.receipt_no || '—'), txn.sale_number && h('div', { style: { fontSize: 11, color: 'var(--text-light)' } }, txn.sale_number)),
           h('td', null, fmtDate(txn.created_at)),
           h('td', { style: { fontWeight: 600 } }, fmt(txn.amount)),
-          h('td', null, txn.type === 'SALE_PAYMENT' ? `${txn.payment_method} • Received ${fmt(txn.amount_received)} • Change ${fmt(txn.change_amount)}` : `${txn.product_name || 'Returned item'} • Qty ${txn.quantity}`),
+          h('td', null, txn.type === 'SALE_PAYMENT'
+            ? `${txn.payment_method} • Received ${fmt(txn.amount_received)} • Change ${fmt(txn.change_amount)}`
+            : `${txn.product_name || 'Returned item'} • Qty ${txn.quantity}${txn.accounting_reference ? ` • Ref ${txn.accounting_reference}` : ''}`),
           h('td', null, txn.user_name || '—')
         )))
       ))
@@ -876,6 +975,15 @@ export default function Sales() {
             )))
           )),
           h('div', { className: 'form-group', style: { marginTop: 16 } }, h('label', { className: 'form-label' }, 'Reason'), h('textarea', { className: 'form-input', rows: 3, value: returnReason, onChange: (e) => setReturnReason(e.target.value) })),
+          h('div', { className: 'form-group', style: { marginTop: 12 } },
+            h('label', { className: 'form-label' }, 'Accounting Reference *'),
+            h('input', {
+              className: 'form-input',
+              value: returnAccountingReference,
+              onChange: (e) => setReturnAccountingReference(e.target.value),
+              placeholder: 'Journal entry / voucher / ticket number'
+            })
+          ),
           h('button', { className: 'btn btn-primary', onClick: submitReturn, disabled: loading }, loading ? 'Processing...' : 'Process Return')
         )
       ),
@@ -885,6 +993,7 @@ export default function Sales() {
           h('li', null, 'Returns require a valid receipt ID.'),
           h('li', null, 'Product details load automatically from the receipt.'),
           h('li', null, 'You cannot return more than the quantity still available to return.'),
+          h('li', null, 'Accounting reference is required before any sales return can be submitted.'),
           h('li', null, 'Successful returns update inventory and transaction logs automatically.')
         )
       ))

@@ -58,6 +58,7 @@ async function ensureSalesSchema() {
         quantity INT NOT NULL,
         unit_price DECIMAL(12,2) DEFAULT 0.00,
         reason TEXT,
+        accounting_reference VARCHAR(255),
         processed_by BIGINT UNSIGNED,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
@@ -71,6 +72,20 @@ async function ensureSalesSchema() {
       `INSERT IGNORE INTO configs (config_key, config_value) VALUES ('sales.tax_rate', ?)` ,
       [String(DEFAULT_TAX_RATE)]
     )
+
+    await db.pool.query('ALTER TABLE sales ADD COLUMN customer_name_snapshot VARCHAR(255) NULL').catch(() => {})
+    await db.pool.query('ALTER TABLE sales ADD COLUMN customer_phone_snapshot VARCHAR(64) NULL').catch(() => {})
+    await db.pool.query('ALTER TABLE sales ADD COLUMN order_note TEXT NULL').catch(() => {})
+    await db.pool.query('ALTER TABLE sale_items ADD COLUMN product_name_snapshot VARCHAR(255) NULL').catch(() => {})
+    await db.pool.query('ALTER TABLE sale_items ADD COLUMN sku_snapshot VARCHAR(100) NULL').catch(() => {})
+    await db.pool.query('ALTER TABLE sale_items ADD COLUMN brand_snapshot VARCHAR(255) NULL').catch(() => {})
+    await db.pool.query('ALTER TABLE sale_items ADD COLUMN barcode_snapshot VARCHAR(128) NULL').catch(() => {})
+    await db.pool.query('ALTER TABLE sale_items ADD COLUMN size_snapshot VARCHAR(64) NULL').catch(() => {})
+    await db.pool.query('ALTER TABLE sale_items ADD COLUMN color_snapshot VARCHAR(64) NULL').catch(() => {})
+
+    // Keep older databases compatible when this column was introduced after table creation.
+    await db.pool.query('ALTER TABLE sale_return_items ADD COLUMN accounting_reference VARCHAR(255) NULL')
+      .catch(() => {})
   })().catch((err) => {
     ensureSalesSchemaPromise = null
     throw err
@@ -172,7 +187,7 @@ async function loadProductsForSale(conn, productIds) {
   const products = new Map()
   for (const productId of uniqueProductIds) {
     const [rows] = await conn.query(
-      'SELECT id, name, sku, price, stock_quantity FROM products WHERE id = ? FOR UPDATE',
+      'SELECT id, name, sku, brand, barcode, size, color, price, stock_quantity FROM products WHERE id = ? FOR UPDATE',
       [productId]
     )
     if (rows.length) products.set(productId, rows[0])
@@ -246,6 +261,10 @@ async function prepareSaleItems(conn, items) {
       line_total: lineTotal,
       product_name: product.name,
       sku: product.sku,
+      brand: product.brand || null,
+      barcode: product.barcode || null,
+      size: product.size || null,
+      color: product.color || null,
       stock_quantity: Number(product.stock_quantity) || 0
     }
   })
@@ -277,8 +296,22 @@ async function applySaleInventoryChanges(conn, processedItems, productRows, user
       ]
     )
     await conn.query(
-      'INSERT INTO sale_items (sale_id, product_id, qty, unit_price, line_total) VALUES (?, ?, ?, ?, ?)',
-      [saleInfo.saleId, item.product_id, item.quantity, item.unit_price, item.line_total]
+      `INSERT INTO sale_items
+       (sale_id, product_id, qty, unit_price, line_total, product_name_snapshot, sku_snapshot, brand_snapshot, barcode_snapshot, size_snapshot, color_snapshot)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        saleInfo.saleId,
+        item.product_id,
+        item.quantity,
+        item.unit_price,
+        item.line_total,
+        item.product_name || null,
+        item.sku || null,
+        item.brand || null,
+        item.barcode || null,
+        item.size || null,
+        item.color || null
+      ]
     )
   }
 }
@@ -287,8 +320,12 @@ async function getSaleItems(conn, saleId) {
   const [items] = await conn.query(`
     SELECT
       si.*,
-      p.name AS product_name,
-      p.sku,
+      COALESCE(si.product_name_snapshot, p.name) AS product_name,
+      COALESCE(si.sku_snapshot, p.sku) AS sku,
+      COALESCE(si.brand_snapshot, p.brand) AS brand,
+      COALESCE(si.barcode_snapshot, p.barcode) AS barcode,
+      COALESCE(si.size_snapshot, p.size) AS size,
+      COALESCE(si.color_snapshot, p.color) AS color,
       COALESCE(ret.returned_qty, 0) AS returned_qty
     FROM sale_items si
     LEFT JOIN products p ON p.id = si.product_id
@@ -315,7 +352,8 @@ async function getSaleById(conn, saleId) {
     SELECT
       s.*,
       u.username AS clerk_name,
-      c.name AS customer_name,
+      COALESCE(s.customer_name_snapshot, c.name) AS customer_name,
+      COALESCE(s.customer_phone_snapshot, c.phone) AS customer_phone,
       sp.amount_received,
       sp.change_amount,
       sp.reference_number AS payment_reference,
@@ -354,7 +392,7 @@ async function getSaleByReceipt(conn, receiptNo) {
   return getSaleById(conn, rows[0].id)
 }
 
-async function processSaleReturn(conn, sale, requestedItems, userId, reason) {
+async function processSaleReturn(conn, sale, requestedItems, userId, reason, accountingReference) {
   if (!sale || !sale.id) {
     const err = new Error('sale not found')
     err.statusCode = 404
@@ -393,6 +431,13 @@ async function processSaleReturn(conn, sale, requestedItems, userId, reason) {
 
   if (!normalizedRequests.length) {
     const err = new Error('at least one return item is required')
+    err.statusCode = 400
+    throw err
+  }
+
+  const normalizedAccountingReference = String(accountingReference || '').trim()
+  if (!normalizedAccountingReference) {
+    const err = new Error('accounting_reference is required for return processing')
     err.statusCode = 400
     throw err
   }
@@ -458,15 +503,15 @@ async function processSaleReturn(conn, sale, requestedItems, userId, reason) {
         item.product_id,
         item.quantity,
         userId,
-        `SALE_RETURN:sale_id=${sale.id}|sale_item_id=${item.sale_item_id}|receipt=${sale.receipt_no}${reason ? `|reason=${reason}` : ''}`,
+        `SALE_RETURN:sale_id=${sale.id}|sale_item_id=${item.sale_item_id}|receipt=${sale.receipt_no}|acct_ref=${normalizedAccountingReference}${reason ? `|reason=${reason}` : ''}`,
         newQty,
         sale.receipt_no
       ]
     )
     await conn.query(
-      `INSERT INTO sale_return_items (sale_id, sale_item_id, product_id, quantity, unit_price, reason, processed_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [sale.id, item.sale_item_id, item.product_id, item.quantity, item.unit_price, reason || null, userId]
+      `INSERT INTO sale_return_items (sale_id, sale_item_id, product_id, quantity, unit_price, reason, accounting_reference, processed_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [sale.id, item.sale_item_id, item.product_id, item.quantity, item.unit_price, reason || null, normalizedAccountingReference, userId]
     )
   }
 
