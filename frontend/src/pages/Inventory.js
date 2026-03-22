@@ -5,6 +5,52 @@ import api from '../api/api.js'
 const fmt = (n) => Number(n || 0).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
 
+function parseReferenceMeta(rawValue) {
+  const value = String(rawValue || '').trim()
+  if (!value) return null
+  const normalized = value.replace(/^([A-Z_]+):/, '$1|')
+  const parts = normalized.split('|').filter(Boolean)
+  if (!parts.length) return null
+  const tag = parts[0]
+  const meta = {}
+  for (const part of parts.slice(1)) {
+    const idx = part.indexOf('=')
+    if (idx <= 0) continue
+    const key = part.slice(0, idx)
+    const val = part.slice(idx + 1)
+    if (key) meta[key] = val
+  }
+  return { tag, meta }
+}
+
+function formatTransactionReference(value) {
+  const parsed = parseReferenceMeta(value)
+  if (!parsed) return value || '—'
+  const { tag, meta } = parsed
+  if (tag === 'SALE_LINK') {
+    const sale = meta.sale_no || meta.sale_id || 'sale'
+    return `Sale ${sale}${meta.receipt ? ` • Receipt ${meta.receipt}` : ''}`
+  }
+  if (tag === 'SALE_RETURN') {
+    return `Sale return${meta.receipt ? ` • Receipt ${meta.receipt}` : ''}${meta.disposition ? ` • ${meta.disposition}` : ''}`
+  }
+  if (tag === 'STOCK_OUT') {
+    return `Stock out${meta.disposition ? ` • ${meta.disposition}` : ''}${meta.receipt ? ` • Receipt ${meta.receipt}` : ''}`
+  }
+  return value
+}
+
+function formatTransactionReason(reason, reference) {
+  const rawReason = String(reason || '').trim()
+  if (!rawReason) return '—'
+  if (/^SALE_LINK[:|]/.test(rawReason)) return 'POS sale deduction'
+  const parsedRef = parseReferenceMeta(reference)
+  if (parsedRef?.tag === 'SALE_LINK' && rawReason === 'POS sale deduction') return rawReason
+  if (rawReason.startsWith('STOCK_OUT:DAMAGE | ')) return rawReason.replace('STOCK_OUT:DAMAGE | ', '')
+  if (rawReason.startsWith('STOCK_OUT:SHRINKAGE | ')) return rawReason.replace('STOCK_OUT:SHRINKAGE | ', '')
+  return rawReason
+}
+
 const infoTip = (text) => React.createElement('span', {
   title: text,
   style: {
@@ -813,29 +859,43 @@ React.createElement('input', { className: 'form-input', type: 'date', value: poF
         React.createElement('table', null,
           React.createElement('thead', null,
             React.createElement('tr', null,
-              React.createElement('th', null, 'Date'),
               React.createElement('th', null, 'Type'),
-              React.createElement('th', null, 'Product'),
-              React.createElement('th', { style: { textAlign: 'center' } }, 'Qty'),
-              React.createElement('th', { style: { textAlign: 'center' } }, 'Balance After'),
               React.createElement('th', null, 'Reference'),
-              React.createElement('th', null, 'Reason'),
+              React.createElement('th', null, 'Date'),
+              React.createElement('th', null, 'Quantity'),
+              React.createElement('th', null, 'Details'),
               React.createElement('th', null, 'User')
             )
           ),
           React.createElement('tbody', null,
-            transactions.map(t => React.createElement('tr', { key: t.id },
-              React.createElement('td', null, fmtDate(t.created_at)),
-              React.createElement('td', null,
-                React.createElement('span', { className: `badge ${t.transaction_type === 'IN' ? 'badge-success' : t.transaction_type === 'RETURN' ? 'badge-warning' : 'badge-danger'}` }, t.transaction_type)
-              ),
-              React.createElement('td', null, `${t.sku ? t.sku + ' — ' : ''}${t.product_name || ''}`),
-              React.createElement('td', { style: { fontWeight: 600, color: t.quantity > 0 ? 'var(--success)' : 'var(--error)', textAlign: 'center' } }, t.quantity > 0 ? `+${t.quantity}` : t.quantity),
-              React.createElement('td', { style: { textAlign: 'center', fontWeight: 500 } }, t.balance_after),
-              React.createElement('td', null, t.reference || '—'),
-              React.createElement('td', null, t.reason || '—'),
-              React.createElement('td', null, t.user_name || '—')
-            ))
+            transactions.length === 0
+              ? React.createElement('tr', null,
+                  React.createElement('td', { colSpan: 6, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No transactions found.')
+                )
+              : transactions.map((t) => {
+              const legacySaleLinkInReason = !String(t.reference || '').trim() && /^SALE_LINK[:|]/.test(String(t.reason || '').trim())
+              const resolvedReference = legacySaleLinkInReason ? t.reason : t.reference
+              const resolvedReason = formatTransactionReason(t.reason, resolvedReference)
+              const qtyColor = t.quantity > 0 ? 'var(--success)' : 'var(--error)'
+              const qtyLabel = t.quantity > 0 ? `+${t.quantity}` : t.quantity
+
+              return React.createElement('tr', { key: t.id },
+                React.createElement('td', null,
+                  React.createElement('span', { className: `badge ${t.transaction_type === 'IN' ? 'badge-success' : t.transaction_type === 'RETURN' ? 'badge-warning' : 'badge-danger'}` }, t.transaction_type)
+                ),
+                React.createElement('td', null,
+                  React.createElement('div', { style: { fontWeight: 600 } }, formatTransactionReference(resolvedReference)),
+                  React.createElement('div', { style: { fontSize: 11, color: 'var(--text-light)' } }, `${t.sku ? t.sku + ' — ' : ''}${t.product_name || ''}`)
+                ),
+                React.createElement('td', null, fmtDate(t.created_at)),
+                React.createElement('td', { style: { fontWeight: 600, color: qtyColor } }, qtyLabel),
+                React.createElement('td', null,
+                  React.createElement('div', null, resolvedReason),
+                  React.createElement('div', { style: { fontSize: 11, color: 'var(--text-light)' } }, `Balance after: ${t.balance_after}`)
+                ),
+                React.createElement('td', null, t.user_name || '—')
+              )
+            })
           )
         )
       )
@@ -905,17 +965,19 @@ React.createElement('input', { className: 'form-input', type: 'date', value: poF
               React.createElement('th', null, 'SKU'),
               React.createElement('th', null, 'Product'),
               React.createElement('th', null, 'Total Shrinkage'),
-              React.createElement('th', null, 'Incidents')
+              React.createElement('th', null, 'Incidents'),
+              React.createElement('th', null, 'Reason')
             )
           ),
           React.createElement('tbody', null,
             shrinkage.length === 0
-              ? React.createElement('tr', null, React.createElement('td', { colSpan: 4, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No shrinkage recorded'))
+              ? React.createElement('tr', null, React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No shrinkage recorded'))
               : shrinkage.map(s => React.createElement('tr', { key: s.product_id },
                   React.createElement('td', null, s.sku || '—'),
                   React.createElement('td', null, s.product_name),
                   React.createElement('td', { style: { fontWeight: 600, color: 'var(--error)' } }, s.total_shrinkage),
-                  React.createElement('td', null, s.incidents)
+                  React.createElement('td', null, s.incidents),
+                  React.createElement('td', null, s.reasons || '—')
                 ))
           )
         )

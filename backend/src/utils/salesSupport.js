@@ -1,7 +1,23 @@
 const db = require('../database')
 
 const DEFAULT_TAX_RATE = 0.12
-const PAYMENT_METHODS = ['cash', 'card', 'e-wallet']
+const PAYMENT_METHODS = ['cash', 'mobile_bank_transfer']
+const MOBILE_BANK_APPS = [
+  'BDO Online',
+  'BPI Online',
+  'Landbank Mobile Banking',
+  'Metrobank App',
+  'RCBC Pulz',
+  'Security Bank App',
+  'UnionBank Online',
+  'PNB Digital',
+  'Chinabank Start',
+  'Maya',
+  'GoTyme',
+  'Tonik',
+  'Other Mobile Bank'
+]
+const RETURN_DISPOSITIONS = ['RESTOCK', 'DAMAGE', 'SHRINKAGE']
 
 let ensureSalesSchemaPromise = null
 
@@ -41,6 +57,7 @@ async function ensureSalesSchema() {
         amount_received DECIMAL(12,2) DEFAULT 0.00,
         change_amount DECIMAL(12,2) DEFAULT 0.00,
         payment_method VARCHAR(64),
+        bank_app_used VARCHAR(128),
         reference_number VARCHAR(255),
         received_by BIGINT UNSIGNED,
         received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -58,6 +75,7 @@ async function ensureSalesSchema() {
         quantity INT NOT NULL,
         unit_price DECIMAL(12,2) DEFAULT 0.00,
         reason TEXT,
+        return_disposition VARCHAR(32) DEFAULT 'RESTOCK',
         accounting_reference VARCHAR(255),
         processed_by BIGINT UNSIGNED,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -76,6 +94,7 @@ async function ensureSalesSchema() {
     await db.pool.query('ALTER TABLE sales ADD COLUMN customer_name_snapshot VARCHAR(255) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sales ADD COLUMN customer_phone_snapshot VARCHAR(64) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sales ADD COLUMN order_note TEXT NULL').catch(() => {})
+    await db.pool.query('ALTER TABLE sales_payments ADD COLUMN bank_app_used VARCHAR(128) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sale_items ADD COLUMN product_name_snapshot VARCHAR(255) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sale_items ADD COLUMN sku_snapshot VARCHAR(100) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sale_items ADD COLUMN brand_snapshot VARCHAR(255) NULL').catch(() => {})
@@ -85,6 +104,8 @@ async function ensureSalesSchema() {
 
     // Keep older databases compatible when this column was introduced after table creation.
     await db.pool.query('ALTER TABLE sale_return_items ADD COLUMN accounting_reference VARCHAR(255) NULL')
+      .catch(() => {})
+    await db.pool.query("ALTER TABLE sale_return_items ADD COLUMN return_disposition VARCHAR(32) NULL DEFAULT 'RESTOCK'")
       .catch(() => {})
   })().catch((err) => {
     ensureSalesSchemaPromise = null
@@ -285,14 +306,15 @@ async function applySaleInventoryChanges(conn, processedItems, productRows, user
 
     await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, item.product_id])
     await conn.query(
-      `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after)
-       VALUES (?, 'OUT', ?, ?, ?, ?)`,
+      `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after, reference)
+       VALUES (?, 'OUT', ?, ?, ?, ?, ?)`,
       [
         item.product_id,
         -item.quantity,
         userId,
-        `SALE_LINK:sale_id=${saleInfo.saleId}|sale_no=${saleInfo.saleNumber}|receipt=${saleInfo.receiptNo}`,
-        newQty
+        'POS sale deduction',
+        newQty,
+        `SALE_LINK|sale_id=${saleInfo.saleId}|sale_no=${saleInfo.saleNumber}|receipt=${saleInfo.receiptNo}`
       ]
     )
     await conn.query(
@@ -356,6 +378,8 @@ async function getSaleById(conn, saleId) {
       COALESCE(s.customer_phone_snapshot, c.phone) AS customer_phone,
       sp.amount_received,
       sp.change_amount,
+      sp.bank_app_used,
+      sp.reference_number,
       sp.reference_number AS payment_reference,
       sp.received_at AS payment_received_at,
       COALESCE(sold.sold_qty, 0) AS sold_qty,
@@ -392,7 +416,7 @@ async function getSaleByReceipt(conn, receiptNo) {
   return getSaleById(conn, rows[0].id)
 }
 
-async function processSaleReturn(conn, sale, requestedItems, userId, reason, accountingReference) {
+async function processSaleReturn(conn, sale, requestedItems, userId, reason, accountingReference, returnDisposition) {
   if (!sale || !sale.id) {
     const err = new Error('sale not found')
     err.statusCode = 404
@@ -436,8 +460,10 @@ async function processSaleReturn(conn, sale, requestedItems, userId, reason, acc
   }
 
   const normalizedAccountingReference = String(accountingReference || '').trim()
-  if (!normalizedAccountingReference) {
-    const err = new Error('accounting_reference is required for return processing')
+
+  const normalizedDisposition = String(returnDisposition || 'RESTOCK').trim().toUpperCase()
+  if (!RETURN_DISPOSITIONS.includes(normalizedDisposition)) {
+    const err = new Error(`return_disposition must be one of: ${RETURN_DISPOSITIONS.join(', ')}`)
     err.statusCode = 400
     throw err
   }
@@ -492,10 +518,14 @@ async function processSaleReturn(conn, sale, requestedItems, userId, reason, acc
 
   for (const item of processed) {
     const product = productLocks.get(item.product_id)
-    const newQty = (Number(product.stock_quantity) || 0) + item.quantity
-    product.stock_quantity = newQty
+    const qtyBefore = Number(product.stock_quantity) || 0
+    const qtyAfterReturn = qtyBefore + item.quantity
+    product.stock_quantity = qtyAfterReturn
 
-    await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, item.product_id])
+    const normalizedReason = String(reason || '').trim()
+    const returnReasonText = normalizedReason || `Sale return (${normalizedDisposition})`
+
+    await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [qtyAfterReturn, item.product_id])
     await conn.query(
       `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after, reference)
        VALUES (?, 'RETURN', ?, ?, ?, ?, ?)`,
@@ -503,15 +533,34 @@ async function processSaleReturn(conn, sale, requestedItems, userId, reason, acc
         item.product_id,
         item.quantity,
         userId,
-        `SALE_RETURN:sale_id=${sale.id}|sale_item_id=${item.sale_item_id}|receipt=${sale.receipt_no}|acct_ref=${normalizedAccountingReference}${reason ? `|reason=${reason}` : ''}`,
-        newQty,
-        sale.receipt_no
+        returnReasonText,
+        qtyAfterReturn,
+        `SALE_RETURN|receipt=${sale.receipt_no}|sale_id=${sale.id}|sale_item_id=${item.sale_item_id}${normalizedAccountingReference ? `|acct_ref=${normalizedAccountingReference}` : ''}|disposition=${normalizedDisposition}`
       ]
     )
+
+    if (normalizedDisposition !== 'RESTOCK') {
+      const qtyAfterStockOut = Math.max(qtyAfterReturn - item.quantity, 0)
+      product.stock_quantity = qtyAfterStockOut
+      await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [qtyAfterStockOut, item.product_id])
+      await conn.query(
+        `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after, reference)
+         VALUES (?, 'OUT', ?, ?, ?, ?, ?)`,
+        [
+          item.product_id,
+          -item.quantity,
+          userId,
+          `STOCK_OUT:${normalizedDisposition}${normalizedReason ? ` | ${normalizedReason}` : ''}`,
+          qtyAfterStockOut,
+          `STOCK_OUT|disposition=${normalizedDisposition}|receipt=${sale.receipt_no}|sale_id=${sale.id}|sale_item_id=${item.sale_item_id}${normalizedAccountingReference ? `|acct_ref=${normalizedAccountingReference}` : ''}`
+        ]
+      )
+    }
+
     await conn.query(
-      `INSERT INTO sale_return_items (sale_id, sale_item_id, product_id, quantity, unit_price, reason, accounting_reference, processed_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [sale.id, item.sale_item_id, item.product_id, item.quantity, item.unit_price, reason || null, normalizedAccountingReference, userId]
+      `INSERT INTO sale_return_items (sale_id, sale_item_id, product_id, quantity, unit_price, reason, return_disposition, accounting_reference, processed_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [sale.id, item.sale_item_id, item.product_id, item.quantity, item.unit_price, reason || null, normalizedDisposition, normalizedAccountingReference || null, userId]
     )
   }
 
@@ -533,6 +582,7 @@ async function processSaleReturn(conn, sale, requestedItems, userId, reason, acc
 module.exports = {
   DEFAULT_TAX_RATE,
   PAYMENT_METHODS,
+  MOBILE_BANK_APPS,
   roundMoney,
   normalizeDiscountPercentage,
   normalizeTaxRate,

@@ -65,22 +65,16 @@ router.get('/', verifyToken, authorize('customers.view'), async (req, res) => {
              AND ${MATCH_SALE_TO_CUSTOMER_SQL}
          ) AS last_purchase_at,
          COALESCE((
-           SELECT SUBSTRING_INDEX(
-             GROUP_CONCAT(ranked_items.product_name ORDER BY ranked_items.last_bought_at DESC SEPARATOR ' | '),
-             ' | ',
-             3
+           SELECT GROUP_CONCAT(
+             DISTINCT COALESCE(si.product_name_snapshot, p.name, 'Item')
+             ORDER BY s.date DESC
+             SEPARATOR ' | '
            )
-           FROM (
-             SELECT
-               COALESCE(si.product_name_snapshot, p.name, 'Item') AS product_name,
-               MAX(s.date) AS last_bought_at
-             FROM sales s
-             JOIN sale_items si ON si.sale_id = s.id
-             LEFT JOIN products p ON p.id = si.product_id
-             WHERE s.status IN (?, ?)
-               AND ${MATCH_SALE_TO_CUSTOMER_SQL}
-             GROUP BY COALESCE(si.product_name_snapshot, p.name, 'Item')
-           ) ranked_items
+           FROM sales s
+           JOIN sale_items si ON si.sale_id = s.id
+           LEFT JOIN products p ON p.id = si.product_id
+           WHERE s.status IN (?, ?)
+             AND ${MATCH_SALE_TO_CUSTOMER_SQL}
          ), '') AS recent_items_preview
        FROM customers c
        ORDER BY c.name ASC`,
@@ -141,22 +135,16 @@ router.get('/:id', verifyToken, authorize('customers.view'), async (req, res) =>
              AND ${MATCH_SALE_TO_CUSTOMER_SQL}
          ) AS last_purchase_at,
          COALESCE((
-           SELECT SUBSTRING_INDEX(
-             GROUP_CONCAT(ranked_items.product_name ORDER BY ranked_items.last_bought_at DESC SEPARATOR ' | '),
-             ' | ',
-             5
+           SELECT GROUP_CONCAT(
+             DISTINCT COALESCE(si.product_name_snapshot, p.name, 'Item')
+             ORDER BY s.date DESC
+             SEPARATOR ' | '
            )
-           FROM (
-             SELECT
-               COALESCE(si.product_name_snapshot, p.name, 'Item') AS product_name,
-               MAX(s.date) AS last_bought_at
-             FROM sales s
-             JOIN sale_items si ON si.sale_id = s.id
-             LEFT JOIN products p ON p.id = si.product_id
-             WHERE s.status IN (?, ?)
-               AND ${MATCH_SALE_TO_CUSTOMER_SQL}
-             GROUP BY COALESCE(si.product_name_snapshot, p.name, 'Item')
-           ) ranked_items
+           FROM sales s
+           JOIN sale_items si ON si.sale_id = s.id
+           LEFT JOIN products p ON p.id = si.product_id
+           WHERE s.status IN (?, ?)
+             AND ${MATCH_SALE_TO_CUSTOMER_SQL}
          ), '') AS recent_items_preview
        FROM customers c
        WHERE c.id = ?
