@@ -152,6 +152,9 @@ CREATE TABLE IF NOT EXISTS `sales` (
 	`date` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	`clerk_id` BIGINT UNSIGNED,
 	`customer_id` BIGINT UNSIGNED,
+	`customer_name_snapshot` VARCHAR(255),
+	`customer_phone_snapshot` VARCHAR(64),
+	`order_note` TEXT,
 	`subtotal` DECIMAL(12,2) DEFAULT 0.00,
 	`tax` DECIMAL(12,2) DEFAULT 0.00,
 	`discount` DECIMAL(12,2) DEFAULT 0.00,
@@ -170,6 +173,12 @@ CREATE TABLE IF NOT EXISTS `sale_items` (
 	`qty` INT NOT NULL,
 	`unit_price` DECIMAL(12,2) DEFAULT 0.00,
 	`line_total` DECIMAL(12,2) DEFAULT 0.00,
+	`product_name_snapshot` VARCHAR(255),
+	`sku_snapshot` VARCHAR(100),
+	`brand_snapshot` VARCHAR(255),
+	`barcode_snapshot` VARCHAR(128),
+	`size_snapshot` VARCHAR(64),
+	`color_snapshot` VARCHAR(64),
 	FOREIGN KEY (`sale_id`) REFERENCES `sales`(`id`) ON DELETE CASCADE,
 	FOREIGN KEY (`product_id`) REFERENCES `products`(`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -47,7 +47,7 @@ export default function Inventory() {
   const [stockInForm, setStockInForm] = useState({ product_id: '', quantity: '', reference: '', date: '' })
   const [adjustForm, setAdjustForm] = useState({ product_id: '', quantity: '', reason: '', employee_id: '' })
   const [damageForm, setDamageForm] = useState({ product_id: '', quantity: '', reason: '', employee_id: '' })
-  const [returnForm, setReturnForm] = useState({ product_id: '', quantity: '', return_type: 'customer', reason: '', sale_id: '' })
+  const [returnForm, setReturnForm] = useState({ product_id: '', quantity: '', return_type: 'supplier', reason: '' })
   const [poForm, setPoForm] = useState({ supplier_id: '', expected_date: '', items: [{ product_id: '', quantity: '', unit_cost: '' }] })
   const [productForm, setProductForm] = useState({ sku: '', name: '', brand: '', description: '', category_id: '', price: '', cost: '', stock_quantity: '', low_stock_threshold: '10', size: '', color: '', barcode: '' })
   const [editingProduct, setEditingProduct] = useState(null)
@@ -229,11 +229,10 @@ export default function Inventory() {
       await api.post('/inventory/returns', {
         product_id: Number(returnForm.product_id),
         quantity: Number(returnForm.quantity),
-        return_type: returnForm.return_type,
-        reason: returnForm.reason,
-        sale_id: returnForm.sale_id ? Number(returnForm.sale_id) : undefined
+        return_type: 'supplier',
+        reason: returnForm.reason
       })
-      setReturnForm({ product_id: '', quantity: '', return_type: 'customer', reason: '', sale_id: '' })
+      setReturnForm({ product_id: '', quantity: '', return_type: 'supplier', reason: '' })
       showMsg('Return processed')
       fetchAll()
     } catch (err) { setError(err?.response?.data?.error || 'Return failed') }
@@ -542,16 +541,9 @@ export default function Inventory() {
     // ═══════════════ RETURNS ═══════════════
     tab === 'returns' && React.createElement('div', null,
       React.createElement('div', { className: 'card' },
-        React.createElement('h3', { style: { marginBottom: 16 } }, 'Process Return'),
+        React.createElement('h3', { style: { marginBottom: 16 } }, 'Supplier Return (Inventory Out)'),
         React.createElement('form', { onSubmit: handleReturn },
           React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 } },
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Return Type *'),
-              React.createElement('select', { className: 'form-input', value: returnForm.return_type, onChange: e => setReturnForm(f => ({ ...f, return_type: e.target.value })) },
-                React.createElement('option', { value: 'customer' }, 'Customer Return (adds stock back)'),
-                React.createElement('option', { value: 'supplier' }, 'Supplier Return (removes stock)')
-              )
-            ),
             React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Product *'),
               React.createElement('select', { className: 'form-input', value: returnForm.product_id, onChange: e => setReturnForm(f => ({ ...f, product_id: e.target.value })), required: true },
@@ -566,11 +558,10 @@ export default function Inventory() {
             React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Reason'),
               React.createElement('input', { className: 'form-input', value: returnForm.reason, onChange: e => setReturnForm(f => ({ ...f, reason: e.target.value })), placeholder: 'Reason for return...' })
-            ),
-            returnForm.return_type === 'customer' && React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Sale ID (optional)'),
-              React.createElement('input', { className: 'form-input', value: returnForm.sale_id, onChange: e => setReturnForm(f => ({ ...f, sale_id: e.target.value })), placeholder: 'Reference sale #' })
             )
+          ),
+          React.createElement('p', { style: { marginTop: 6, marginBottom: 10, fontSize: 12, color: 'var(--text-light)' } },
+            'Customer returns are processed in Sales > Returns using receipt lookup. This form is only for supplier returns that reduce stock.'
           ),
           React.createElement('button', { type: 'submit', className: 'btn btn-primary', style: { marginTop: 12 } }, 'Process Return')
         )

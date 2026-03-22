@@ -207,7 +207,8 @@ router.get('/transactions', verifyToken, authorize('sales.view'), async (req, re
         sp.change_amount,
         sp.reference_number,
         u.username AS user_name,
-        c.name AS customer_name
+        COALESCE(s.customer_name_snapshot, c.name) AS customer_name,
+        COALESCE(s.customer_phone_snapshot, c.phone) AS customer_phone
       FROM sales_payments sp
       JOIN sales s ON s.id = sp.sale_id
       LEFT JOIN users u ON u.id = sp.received_by
@@ -235,6 +236,7 @@ router.get('/transactions', verifyToken, authorize('sales.view'), async (req, re
         sri.quantity,
         sri.unit_price,
         sri.reason,
+        sri.accounting_reference,
         p.name AS product_name,
         p.sku,
         u.username AS user_name
@@ -293,7 +295,8 @@ router.get('/', verifyToken, authorize('sales.view'), async (req, res) => {
       SELECT
         s.*,
         u.username AS clerk_name,
-        c.name AS customer_name,
+        COALESCE(s.customer_name_snapshot, c.name) AS customer_name,
+        COALESCE(s.customer_phone_snapshot, c.phone) AS customer_phone,
         sp.amount_received,
         sp.change_amount,
         sp.reference_number AS payment_reference,
@@ -369,6 +372,7 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
 
     const {
       customer_id,
+      customer,
       items,
       payment_method,
       payment_amount,
@@ -405,13 +409,58 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     const saleNumber = await generateDocumentNumber(conn, 'sales', 'sale_number', 'SAL')
     const receiptNo = await generateDocumentNumber(conn, 'sales', 'receipt_no', 'RCT')
 
+    let customerNameSnapshot = String(customer?.name || '').trim()
+    let customerPhoneSnapshot = String(customer?.phone || '').trim() || null
+    const orderNote = String(customer?.order_note || '').trim() || null
+
+    if (!customerNameSnapshot && customer_id) {
+      const [customerRows] = await conn.query('SELECT name, phone FROM customers WHERE id = ? LIMIT 1', [Number(customer_id)])
+      if (customerRows.length) {
+        customerNameSnapshot = String(customerRows[0].name || '').trim()
+        if (!customerPhoneSnapshot) customerPhoneSnapshot = String(customerRows[0].phone || '').trim() || null
+      }
+    }
+
+    if (!customerNameSnapshot) {
+      throw createHttpError(400, 'customer.name is required')
+    }
+
+    let resolvedCustomerId = customer_id ? Number(customer_id) : null
+    if (!resolvedCustomerId) {
+      const [existingCustomers] = await conn.query(
+        `SELECT id
+         FROM customers
+         WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
+           AND COALESCE(TRIM(phone), '') = COALESCE(TRIM(?), '')
+         ORDER BY id ASC
+         LIMIT 1`,
+        [customerNameSnapshot, customerPhoneSnapshot]
+      )
+
+      if (existingCustomers.length) {
+        resolvedCustomerId = Number(existingCustomers[0].id)
+      } else {
+        const [customerInsert] = await conn.query(
+          'INSERT INTO customers (name, phone, notes) VALUES (?, ?, ?)',
+          [customerNameSnapshot, customerPhoneSnapshot, orderNote || null]
+        )
+        resolvedCustomerId = Number(customerInsert.insertId)
+      }
+    }
+
     const [saleResult] = await conn.query(
-      `INSERT INTO sales (sale_number, clerk_id, customer_id, subtotal, tax, discount, total, payment_method, receipt_no, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED')`,
+      `INSERT INTO sales (
+        sale_number, clerk_id, customer_id, customer_name_snapshot, customer_phone_snapshot, order_note,
+        subtotal, tax, discount, total, payment_method, receipt_no, status
+      )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED')`,
       [
         saleNumber,
         req.auth.id,
-        customer_id ? Number(customer_id) : null,
+        resolvedCustomerId,
+        customerNameSnapshot,
+        customerPhoneSnapshot,
+        orderNote,
         subtotal,
         taxAmt,
         discountAmt,
@@ -459,15 +508,18 @@ router.post('/returns', express.json(), verifyToken, authorize('sales.refund'), 
   try {
     await conn.beginTransaction()
 
-    const { receipt_no, sale_id, items, reason } = req.body || {}
+    const { receipt_no, sale_id, items, reason, accounting_reference } = req.body || {}
     if (!receipt_no && !sale_id) {
       throw createHttpError(400, 'receipt_no or sale_id is required')
+    }
+    if (!String(accounting_reference || '').trim()) {
+      throw createHttpError(400, 'accounting_reference is required')
     }
 
     const sale = await getLockedSale(conn, { saleId: sale_id ? Number(sale_id) : null, receiptNo: receipt_no })
     if (!sale) throw createHttpError(404, 'sale not found')
 
-    const returnedItems = await processSaleReturn(conn, sale, items, req.auth.id, reason)
+    const returnedItems = await processSaleReturn(conn, sale, items, req.auth.id, reason, accounting_reference)
     const updatedSale = await getSaleById(conn, sale.id)
 
     await conn.commit()
@@ -492,6 +544,11 @@ router.post('/:id/refund', express.json(), verifyToken, authorize('sales.refund'
   try {
     await conn.beginTransaction()
 
+    const { accounting_reference } = req.body || {}
+    if (!String(accounting_reference || '').trim()) {
+      throw createHttpError(400, 'accounting_reference is required')
+    }
+
     const sale = await getLockedSale(conn, { saleId: Number(req.params.id) })
     if (!sale) throw createHttpError(404, 'sale not found')
 
@@ -506,7 +563,7 @@ router.post('/:id/refund', express.json(), verifyToken, authorize('sales.refund'
       throw createHttpError(400, 'sale already fully refunded')
     }
 
-    const returnedItems = await processSaleReturn(conn, sale, remainingItems, req.auth.id, 'full refund')
+    const returnedItems = await processSaleReturn(conn, sale, remainingItems, req.auth.id, 'full refund', accounting_reference)
     const updatedSale = await getSaleById(conn, sale.id)
 
     await conn.commit()
