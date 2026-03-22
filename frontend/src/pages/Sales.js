@@ -9,6 +9,21 @@ const round = (n) => Math.round((Number(n) || 0) * 100) / 100
 const num = (v, fallback = 0) => Number.isFinite(Number(v)) ? Number(v) : fallback
 const pct = (v) => Math.min(Math.max(num(v), 0), 100)
 const productLabel = (product) => `${product?.sku ? `${product.sku} - ` : ''}${product?.name || 'Unnamed product'}`
+const MOBILE_BANK_APPS = [
+  'BDO Online',
+  'BPI Online',
+  'Landbank Mobile Banking',
+  'Metrobank App',
+  'RCBC Pulz',
+  'Security Bank App',
+  'UnionBank Online',
+  'PNB Digital',
+  'Chinabank Start',
+  'Maya',
+  'GoTyme',
+  'Tonik',
+  'Other Mobile Bank'
+]
 
 function can(perms, required) {
   if (!required) return true
@@ -35,7 +50,7 @@ export default function Sales() {
   const [sales, setSales] = useState([])
   const [transactions, setTransactions] = useState([])
   const [report, setReport] = useState(null)
-  const [config, setConfig] = useState({ payment_methods: ['cash', 'card', 'e-wallet'] })
+  const [config, setConfig] = useState({ payment_methods: ['mobile_bank_transfer'] })
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -55,7 +70,8 @@ export default function Sales() {
   const [discountPercentage, setDiscountPercentage] = useState('')
   const [pendingOrder, setPendingOrder] = useState(null)
   const [paymentAmount, setPaymentAmount] = useState('')
-  const [paymentReference, setPaymentReference] = useState('')
+  const [bankAppUsed, setBankAppUsed] = useState('')
+  const [referenceNumber, setReferenceNumber] = useState('')
   const [lastReceipt, setLastReceipt] = useState(null)
 
   const [viewSale, setViewSale] = useState(null)
@@ -68,7 +84,7 @@ export default function Sales() {
   const [returnReceiptNo, setReturnReceiptNo] = useState('')
   const [returnLookup, setReturnLookup] = useState(null)
   const [returnReason, setReturnReason] = useState('')
-  const [returnAccountingReference, setReturnAccountingReference] = useState('')
+  const [returnDisposition, setReturnDisposition] = useState('RESTOCK')
   const [returnQuantities, setReturnQuantities] = useState({})
 
   const tabs = [
@@ -161,6 +177,11 @@ export default function Sales() {
   const total = round(taxableBase)
   const tendered = num(paymentAmount)
   const change = pendingOrder ? round(Math.max(tendered - num(pendingOrder.total), 0)) : 0
+  const requiresBankTransferFields = String(pendingOrder?.payment_method || '') === 'mobile_bank_transfer'
+  const isAmountValid = pendingOrder ? tendered >= num(pendingOrder.total) : false
+  const isBankAppValid = String(bankAppUsed || '').trim().length > 0
+  const isReferenceValid = String(referenceNumber || '').trim().length > 0
+  const canConfirmPayment = Boolean(pendingOrder) && isAmountValid && (!requiresBankTransferFields || (isBankAppValid && isReferenceValid)) && !loading
   const selectedProductData = products.find((item) => String(item.id) === String(selectedProduct)) || null
 
   function clearMsg() {
@@ -397,7 +418,8 @@ export default function Sales() {
       total
     })
     setPaymentAmount(String(total.toFixed(2)))
-    setPaymentReference('')
+    setBankAppUsed('')
+    setReferenceNumber('')
     setTab('payment')
   }
 
@@ -405,6 +427,8 @@ export default function Sales() {
     clearMsg()
     if (!pendingOrder) return setError('No pending order')
     if (!String(pendingOrder?.customer?.name || '').trim()) return setError('Customer name is required before completing sale')
+    if (requiresBankTransferFields && !isBankAppValid) return setError('Bank App Used is required')
+    if (requiresBankTransferFields && !isReferenceValid) return setError('Reference Number is required')
     if (tendered < num(pendingOrder.total)) return setError('Payment must be greater than or equal to the total amount')
     try {
       setLoading(true)
@@ -413,8 +437,9 @@ export default function Sales() {
         customer_id: pendingOrder.customer_id || undefined,
         customer: pendingOrder.customer,
         payment_method: pendingOrder.payment_method,
+        bank_app_used: requiresBankTransferFields ? bankAppUsed : undefined,
+        reference_number: requiresBankTransferFields ? String(referenceNumber || '').trim() : undefined,
         payment_amount: round(tendered),
-        payment_reference: paymentReference || undefined,
         discount_percentage: pendingOrder.discount_percentage
       })
       setLastReceipt(res.data)
@@ -426,7 +451,8 @@ export default function Sales() {
       setOrderNote('')
       setDiscountPercentage('')
       setPaymentAmount('')
-      setPaymentReference('')
+      setBankAppUsed('')
+      setReferenceNumber('')
       await refreshProducts()
       flash(`Sale ${res.data.sale_number} completed. Receipt ${res.data.receipt_no} generated.`)
     } catch (err) {
@@ -449,12 +475,10 @@ export default function Sales() {
 
   async function refundSale(id) {
     if (!window.confirm('Process a full refund for this sale?')) return
-    const accountingReference = String(window.prompt('Enter accounting reference for this refund (required):') || '').trim()
-    if (!accountingReference) return setError('Accounting reference is required to process refund')
     clearMsg()
     try {
       setLoading(true)
-      await api.post(`/sales/${id}/refund`, { accounting_reference: accountingReference })
+      await api.post(`/sales/${id}/refund`, {})
       await Promise.all([fetchSales(), fetchTransactions(), fetchReport()])
       await refreshProducts()
       flash('Full refund processed successfully')
@@ -487,8 +511,6 @@ export default function Sales() {
   async function submitReturn() {
     clearMsg()
     if (!returnLookup) return setError('Look up a receipt first')
-    const accountingReference = String(returnAccountingReference || '').trim()
-    if (!accountingReference) return setError('Accounting reference is required before processing a return')
     const items = (returnLookup.items || [])
       .map((item) => ({ sale_item_id: item.id, quantity: num(returnQuantities[item.id]) }))
       .filter((item) => item.quantity > 0)
@@ -499,11 +521,11 @@ export default function Sales() {
         receipt_no: returnLookup.receipt_no,
         items,
         reason: returnReason || undefined,
-        accounting_reference: accountingReference
+        return_disposition: returnDisposition
       })
       setReturnLookup(res.data.sale)
       setReturnReason('')
-      setReturnAccountingReference('')
+      setReturnDisposition('RESTOCK')
       setReturnQuantities(Object.fromEntries((res.data.sale?.items || []).map((item) => [item.id, ''])))
       await refreshProducts()
       await Promise.all([fetchSales(), fetchTransactions(), fetchReport()])
@@ -745,7 +767,11 @@ export default function Sales() {
           h('div', { className: 'form-group' },
             h('label', { className: 'form-label' }, 'Payment Method'),
             h('select', { className: 'form-input', value: paymentMethod, onChange: (e) => setPaymentMethod(e.target.value) },
-              ...(config.payment_methods || ['cash']).map((method) => h('option', { key: method, value: method }, method))
+              ...(config.payment_methods || ['cash', 'mobile_bank_transfer']).map((method) => h(
+                'option',
+                { key: method, value: method },
+                method === 'mobile_bank_transfer' ? 'Bank Transfer' : 'Cash'
+              ))
             )
           ),
           h('div', { className: 'form-group' },
@@ -780,10 +806,29 @@ export default function Sales() {
                   pendingOrder.customer?.order_note ? ` • Note: ${pendingOrder.customer.order_note}` : ''
                 ),
                 h('div', { className: 'form-group' }, h('label', { className: 'form-label' }, 'Amount Received'), h('input', { className: 'form-input', type: 'number', min: pendingOrder.total, step: '0.01', value: paymentAmount, onChange: (e) => setPaymentAmount(e.target.value) })),
-                pendingOrder.payment_method !== 'cash' && h('div', { className: 'form-group' }, h('label', { className: 'form-label' }, 'Payment Reference'), h('input', { className: 'form-input', value: paymentReference, onChange: (e) => setPaymentReference(e.target.value) })),
+                requiresBankTransferFields && h('div', { className: 'form-group' },
+                  h('label', { className: 'form-label' }, 'Bank App Used *'),
+                  h('select', {
+                    className: 'form-input',
+                    value: bankAppUsed,
+                    onChange: (e) => setBankAppUsed(e.target.value)
+                  },
+                    h('option', { value: '' }, 'Select mobile banking app'),
+                    ...MOBILE_BANK_APPS.map((name) => h('option', { key: name, value: name }, name))
+                  )
+                ),
+                requiresBankTransferFields && h('div', { className: 'form-group' },
+                  h('label', { className: 'form-label' }, 'Reference Number *'),
+                  h('input', {
+                    className: 'form-input',
+                    value: referenceNumber,
+                    onChange: (e) => setReferenceNumber(e.target.value),
+                    placeholder: 'Enter transfer reference number'
+                  })
+                ),
                 h('div', { style: { display: 'flex', gap: 8 } },
                   h('button', { className: 'btn btn-secondary', onClick: () => setTab('pos') }, 'Back To POS'),
-                  h('button', { className: 'btn btn-primary', onClick: completeSale, disabled: tendered < num(pendingOrder.total) || loading, style: { flex: 1 } }, loading ? 'Processing...' : 'Confirm Payment & Complete Sale')
+                  h('button', { className: 'btn btn-primary', onClick: completeSale, disabled: !canConfirmPayment, style: { flex: 1 } }, loading ? 'Processing...' : 'Confirm Payment & Complete Sale')
                 )
               )
             : h('p', { style: { color: 'var(--text-light)' } }, 'No pending order. Build one in POS first.')
@@ -799,7 +844,8 @@ export default function Sales() {
               h('div', null, `Customer: ${lastReceipt.customer_name || '—'}`),
               h('div', null, `Phone: ${lastReceipt.customer_phone || '—'}`),
               h('div', null, `Payment: ${lastReceipt.payment_method}`),
-              h('div', null, `Payment Ref: ${lastReceipt.payment_reference || '—'}`),
+              h('div', null, `Bank App Used: ${lastReceipt.bank_app_used || '—'}`),
+              h('div', null, `Reference Number: ${lastReceipt.reference_number || lastReceipt.payment_reference || '—'}`),
               h('div', null, `Received: ${fmt(lastReceipt.amount_received)}`),
               h('div', null, `Change: ${fmt(lastReceipt.change_amount)}`),
               ...(lastReceipt.items || []).map((item, index) => {
@@ -817,8 +863,10 @@ export default function Sales() {
           ? h(React.Fragment, null,
               h('div', { style: { display: 'flex', justifyContent: 'space-between' } }, h('span', null, 'Total Due'), h('strong', null, fmt(pendingOrder.total))),
               h('div', { style: { display: 'flex', justifyContent: 'space-between' } }, h('span', null, 'Amount Received'), h('strong', null, fmt(tendered))),
-              h('div', { style: { display: 'flex', justifyContent: 'space-between', color: tendered >= num(pendingOrder.total) ? '#15803d' : '#b42318', marginBottom: 8 } }, h('span', null, 'Change'), h('strong', null, fmt(change))),
-              h('p', { style: { fontSize: 12, color: tendered >= num(pendingOrder.total) ? '#15803d' : '#b42318' } }, tendered >= num(pendingOrder.total) ? 'Payment is valid. Completing the sale will generate the receipt and sales record.' : 'Payment must cover the total before the sale can be completed.')
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', color: isAmountValid ? '#15803d' : '#b42318', marginBottom: 8 } }, h('span', null, 'Change'), h('strong', null, fmt(change))),
+              requiresBankTransferFields && !isBankAppValid && h('p', { style: { fontSize: 12, color: '#b42318', marginBottom: 4 } }, 'Select a mobile banking app.'),
+              requiresBankTransferFields && !isReferenceValid && h('p', { style: { fontSize: 12, color: '#b42318', marginBottom: 4 } }, 'Reference number is required.'),
+              h('p', { style: { fontSize: 12, color: canConfirmPayment ? '#15803d' : '#b42318' } }, canConfirmPayment ? 'Payment is valid. Completing the sale will generate the receipt and sales record.' : 'Complete all required payment fields and ensure amount covers total due.')
             )
           : h('p', { style: { color: 'var(--text-light)' } }, 'Payment summary appears here after you proceed from POS.')
       ))
@@ -834,7 +882,8 @@ export default function Sales() {
           h('div', null, h('strong', null, 'Customer: '), viewSale.customer_name || '—'),
           h('div', null, h('strong', null, 'Phone: '), viewSale.customer_phone || '—'),
           h('div', null, h('strong', null, 'Payment: '), viewSale.payment_method),
-          h('div', null, h('strong', null, 'Payment Ref: '), viewSale.payment_reference || '—'),
+          h('div', null, h('strong', null, 'Bank App Used: '), viewSale.bank_app_used || '—'),
+          h('div', null, h('strong', null, 'Reference Number: '), viewSale.reference_number || viewSale.payment_reference || '—'),
           h('div', null, h('strong', null, 'Return: '), viewSale.return_status),
           h('div', null, h('strong', null, 'Received: '), fmt(viewSale.amount_received)),
           h('div', null, h('strong', null, 'Change: '), fmt(viewSale.change_amount)),
@@ -932,8 +981,8 @@ export default function Sales() {
           h('td', null, fmtDate(txn.created_at)),
           h('td', { style: { fontWeight: 600 } }, fmt(txn.amount)),
           h('td', null, txn.type === 'SALE_PAYMENT'
-            ? `${txn.payment_method} • Received ${fmt(txn.amount_received)} • Change ${fmt(txn.change_amount)}`
-            : `${txn.product_name || 'Returned item'} • Qty ${txn.quantity}${txn.accounting_reference ? ` • Ref ${txn.accounting_reference}` : ''}`),
+            ? `${txn.payment_method} • ${txn.bank_app_used || 'No app'} • Ref ${txn.reference_number || '—'} • Received ${fmt(txn.amount_received)} • Change ${fmt(txn.change_amount)}`
+            : `${txn.product_name || 'Returned item'} • Qty ${txn.quantity}${txn.return_disposition ? ` • ${txn.return_disposition}` : ''}`),
           h('td', null, txn.user_name || '—')
         )))
       ))
@@ -976,13 +1025,16 @@ export default function Sales() {
           )),
           h('div', { className: 'form-group', style: { marginTop: 16 } }, h('label', { className: 'form-label' }, 'Reason'), h('textarea', { className: 'form-input', rows: 3, value: returnReason, onChange: (e) => setReturnReason(e.target.value) })),
           h('div', { className: 'form-group', style: { marginTop: 12 } },
-            h('label', { className: 'form-label' }, 'Accounting Reference *'),
-            h('input', {
+            h('label', { className: 'form-label' }, 'Return Handling *'),
+            h('select', {
               className: 'form-input',
-              value: returnAccountingReference,
-              onChange: (e) => setReturnAccountingReference(e.target.value),
-              placeholder: 'Journal entry / voucher / ticket number'
-            })
+              value: returnDisposition,
+              onChange: (e) => setReturnDisposition(e.target.value)
+            },
+            h('option', { value: 'RESTOCK' }, 'Restock (saleable item)'),
+            h('option', { value: 'DAMAGE' }, 'Damage (record in damaged stock)'),
+            h('option', { value: 'SHRINKAGE' }, 'Shrinkage (record in shrinkage)')
+            )
           ),
           h('button', { className: 'btn btn-primary', onClick: submitReturn, disabled: loading }, loading ? 'Processing...' : 'Process Return')
         )
@@ -993,7 +1045,7 @@ export default function Sales() {
           h('li', null, 'Returns require a valid receipt ID.'),
           h('li', null, 'Product details load automatically from the receipt.'),
           h('li', null, 'You cannot return more than the quantity still available to return.'),
-          h('li', null, 'Accounting reference is required before any sales return can be submitted.'),
+          h('li', null, 'Choose Return Handling to route returned items to restock, damage, or shrinkage.'),
           h('li', null, 'Successful returns update inventory and transaction logs automatically.')
         )
       ))

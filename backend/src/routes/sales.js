@@ -4,6 +4,7 @@ const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 const {
   PAYMENT_METHODS,
+  MOBILE_BANK_APPS,
   roundMoney,
   normalizeDiscountPercentage,
   ensureSalesSchema,
@@ -205,6 +206,7 @@ router.get('/transactions', verifyToken, authorize('sales.view'), async (req, re
         s.total AS amount,
         sp.amount_received,
         sp.change_amount,
+        sp.bank_app_used,
         sp.reference_number,
         u.username AS user_name,
         COALESCE(s.customer_name_snapshot, c.name) AS customer_name,
@@ -236,6 +238,7 @@ router.get('/transactions', verifyToken, authorize('sales.view'), async (req, re
         sri.quantity,
         sri.unit_price,
         sri.reason,
+        sri.return_disposition,
         sri.accounting_reference,
         p.name AS product_name,
         p.sku,
@@ -299,6 +302,8 @@ router.get('/', verifyToken, authorize('sales.view'), async (req, res) => {
         COALESCE(s.customer_phone_snapshot, c.phone) AS customer_phone,
         sp.amount_received,
         sp.change_amount,
+        sp.bank_app_used,
+        sp.reference_number,
         sp.reference_number AS payment_reference,
         sp.received_at AS payment_received_at,
         COALESCE(sold.sold_qty, 0) AS sold_qty,
@@ -377,6 +382,8 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
       payment_method,
       payment_amount,
       discount_percentage,
+      bank_app_used,
+      reference_number,
       payment_reference
     } = req.body || {}
 
@@ -403,6 +410,20 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     const amountReceived = roundMoney(tenderedAmount)
     if (amountReceived < total) {
       throw createHttpError(400, 'payment must be greater than or equal to total amount')
+    }
+
+    let normalizedBankApp = null
+    let normalizedReferenceNumber = null
+    if (String(payment_method) === 'mobile_bank_transfer') {
+      normalizedBankApp = String(bank_app_used || '').trim()
+      if (!normalizedBankApp || !MOBILE_BANK_APPS.includes(normalizedBankApp)) {
+        throw createHttpError(400, 'bank_app_used is required and must be a supported mobile banking app')
+      }
+
+      normalizedReferenceNumber = String(reference_number || payment_reference || '').trim()
+      if (!normalizedReferenceNumber) {
+        throw createHttpError(400, 'reference_number is required')
+      }
     }
 
     const changeAmount = roundMoney(amountReceived - total)
@@ -473,9 +494,9 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     const saleId = saleResult.insertId
 
     await conn.query(
-      `INSERT INTO sales_payments (sale_id, amount_received, change_amount, payment_method, reference_number, received_by)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [saleId, amountReceived, changeAmount, payment_method, payment_reference || null, req.auth.id]
+      `INSERT INTO sales_payments (sale_id, amount_received, change_amount, payment_method, bank_app_used, reference_number, received_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [saleId, amountReceived, changeAmount, payment_method, normalizedBankApp, normalizedReferenceNumber, req.auth.id]
     )
 
     await applySaleInventoryChanges(conn, processedItems, productRows, req.auth.id, {
@@ -508,18 +529,15 @@ router.post('/returns', express.json(), verifyToken, authorize('sales.refund'), 
   try {
     await conn.beginTransaction()
 
-    const { receipt_no, sale_id, items, reason, accounting_reference } = req.body || {}
+    const { receipt_no, sale_id, items, reason, accounting_reference, return_disposition } = req.body || {}
     if (!receipt_no && !sale_id) {
       throw createHttpError(400, 'receipt_no or sale_id is required')
-    }
-    if (!String(accounting_reference || '').trim()) {
-      throw createHttpError(400, 'accounting_reference is required')
     }
 
     const sale = await getLockedSale(conn, { saleId: sale_id ? Number(sale_id) : null, receiptNo: receipt_no })
     if (!sale) throw createHttpError(404, 'sale not found')
 
-    const returnedItems = await processSaleReturn(conn, sale, items, req.auth.id, reason, accounting_reference)
+    const returnedItems = await processSaleReturn(conn, sale, items, req.auth.id, reason, accounting_reference, return_disposition)
     const updatedSale = await getSaleById(conn, sale.id)
 
     await conn.commit()
@@ -544,10 +562,7 @@ router.post('/:id/refund', express.json(), verifyToken, authorize('sales.refund'
   try {
     await conn.beginTransaction()
 
-    const { accounting_reference } = req.body || {}
-    if (!String(accounting_reference || '').trim()) {
-      throw createHttpError(400, 'accounting_reference is required')
-    }
+    const { accounting_reference, return_disposition } = req.body || {}
 
     const sale = await getLockedSale(conn, { saleId: Number(req.params.id) })
     if (!sale) throw createHttpError(404, 'sale not found')
@@ -563,7 +578,7 @@ router.post('/:id/refund', express.json(), verifyToken, authorize('sales.refund'
       throw createHttpError(400, 'sale already fully refunded')
     }
 
-    const returnedItems = await processSaleReturn(conn, sale, remainingItems, req.auth.id, 'full refund', accounting_reference)
+    const returnedItems = await processSaleReturn(conn, sale, remainingItems, req.auth.id, 'full refund', accounting_reference, return_disposition)
     const updatedSale = await getSaleById(conn, sale.id)
 
     await conn.commit()

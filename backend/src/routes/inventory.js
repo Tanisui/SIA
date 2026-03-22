@@ -248,7 +248,10 @@ router.get('/damaged', verifyToken, authorize(['inventory.view', 'products.view'
       LEFT JOIN products p ON p.id = it.product_id
       LEFT JOIN users u ON u.id = it.user_id
       WHERE it.transaction_type = 'OUT'
-        AND it.reason LIKE 'STOCK_OUT:DAMAGE%'
+        AND (
+          it.reason LIKE 'STOCK_OUT:DAMAGE%'
+          OR it.reference LIKE 'STOCK_OUT|disposition=DAMAGE%'
+        )
       ORDER BY it.created_at DESC
     `)
     res.json(rows)
@@ -280,12 +283,20 @@ router.get('/reports/shrinkage', verifyToken, authorize('inventory.view'), async
   try {
     const [rows] = await db.pool.query(`
       SELECT it.product_id, p.name AS product_name, p.sku,
-             SUM(ABS(it.quantity)) AS total_shrinkage, COUNT(*) AS incidents
+             SUM(ABS(it.quantity)) AS total_shrinkage,
+             COUNT(*) AS incidents,
+             COALESCE(
+               GROUP_CONCAT(DISTINCT it.reason ORDER BY it.created_at DESC SEPARATOR ' | '),
+               ''
+             ) AS reasons
       FROM inventory_transactions it
       LEFT JOIN products p ON p.id = it.product_id
       WHERE it.transaction_type = 'OUT'
         AND it.quantity < 0
-        AND it.reason LIKE 'STOCK_OUT:SHRINKAGE%'
+        AND (
+          it.reason LIKE 'STOCK_OUT:SHRINKAGE%'
+          OR it.reference LIKE 'STOCK_OUT|disposition=SHRINKAGE%'
+        )
       GROUP BY it.product_id
       ORDER BY total_shrinkage DESC
     `)
@@ -308,8 +319,8 @@ router.get('/reports/stock-out', verifyToken, authorize(['inventory.view', 'prod
         p.sku,
         ABS(it.quantity) AS quantity,
         CASE
-          WHEN it.reason LIKE 'STOCK_OUT:DAMAGE%' THEN 'DAMAGE'
-          WHEN it.reason LIKE 'STOCK_OUT:SHRINKAGE%' THEN 'SHRINKAGE'
+          WHEN it.reason LIKE 'STOCK_OUT:DAMAGE%' OR it.reference LIKE 'STOCK_OUT|disposition=DAMAGE%' THEN 'DAMAGE'
+          WHEN it.reason LIKE 'STOCK_OUT:SHRINKAGE%' OR it.reference LIKE 'STOCK_OUT|disposition=SHRINKAGE%' THEN 'SHRINKAGE'
           ELSE 'OTHER'
         END AS stock_out_type,
         it.reference,
@@ -322,6 +333,8 @@ router.get('/reports/stock-out', verifyToken, authorize(['inventory.view', 'prod
         AND (
           it.reason LIKE 'STOCK_OUT:DAMAGE%'
           OR it.reason LIKE 'STOCK_OUT:SHRINKAGE%'
+          OR it.reference LIKE 'STOCK_OUT|disposition=DAMAGE%'
+          OR it.reference LIKE 'STOCK_OUT|disposition=SHRINKAGE%'
         )
       ORDER BY it.created_at DESC
     `)
