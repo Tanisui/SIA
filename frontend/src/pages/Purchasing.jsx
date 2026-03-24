@@ -16,13 +16,10 @@ function createDefaultPoForm() {
 function createDefaultBaleForm() {
   return {
     bale_batch_no: '',
-    supplier_id: '',
+    supplier_name: '',
     purchase_date: '',
-    bale_type: '',
     bale_category: '',
     bale_cost: '',
-    shipping_cost: '',
-    other_charges: '',
     payment_status: 'UNPAID',
     notes: ''
   }
@@ -256,8 +253,8 @@ export default function Purchasing() {
   }, [poForm.items])
 
   const baleTotalPreview = useMemo(() => {
-    return (Number(baleForm.bale_cost) || 0) + (Number(baleForm.shipping_cost) || 0) + (Number(baleForm.other_charges) || 0)
-  }, [baleForm.bale_cost, baleForm.other_charges, baleForm.shipping_cost])
+    return Number(baleForm.bale_cost) || 0
+  }, [baleForm.bale_cost])
 
   const selectedBreakdownBale = useMemo(
     () => bales.find((row) => String(row.id) === String(breakdownForm.bale_purchase_id)),
@@ -274,11 +271,9 @@ export default function Purchasing() {
   const baleTotals = useMemo(() => {
     return bales.reduce((acc, row) => {
       acc.bale_cost += Number(row.bale_cost || 0)
-      acc.shipping_cost += Number(row.shipping_cost || 0)
-      acc.other_charges += Number(row.other_charges || 0)
       acc.total_purchase_cost += Number(row.total_purchase_cost || 0)
       return acc
-    }, { bale_cost: 0, shipping_cost: 0, other_charges: 0, total_purchase_cost: 0 })
+    }, { bale_cost: 0, total_purchase_cost: 0 })
   }, [bales])
 
   function resetBaleForm() {
@@ -812,17 +807,14 @@ export default function Purchasing() {
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Supplier *</label>
-                    <select
+                    <input
                       className="form-input"
+                      type="text"
                       required
-                      value={baleForm.supplier_id}
-                      onChange={(event) => setBaleForm((prev) => ({ ...prev, supplier_id: event.target.value }))}
-                    >
-                      <option value="">Select supplier</option>
-                      {supplierOptions.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
+                      value={baleForm.supplier_name}
+                      onChange={(event) => setBaleForm((prev) => ({ ...prev, supplier_name: event.target.value }))}
+                      placeholder="Enter supplier name"
+                    />
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Purchase Date *</label>
@@ -832,14 +824,6 @@ export default function Purchasing() {
                       required
                       value={baleForm.purchase_date}
                       onChange={(event) => setBaleForm((prev) => ({ ...prev, purchase_date: event.target.value }))}
-                    />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Bale Type</label>
-                    <input
-                      className="form-input"
-                      value={baleForm.bale_type}
-                      onChange={(event) => setBaleForm((prev) => ({ ...prev, bale_type: event.target.value }))}
                     />
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
@@ -871,28 +855,6 @@ export default function Purchasing() {
                       min={0}
                       value={baleForm.bale_cost}
                       onChange={(event) => setBaleForm((prev) => ({ ...prev, bale_cost: event.target.value }))}
-                    />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Shipping Cost</label>
-                    <input
-                      className="form-input"
-                      type="number"
-                      step="0.01"
-                      min={0}
-                      value={baleForm.shipping_cost}
-                      onChange={(event) => setBaleForm((prev) => ({ ...prev, shipping_cost: event.target.value }))}
-                    />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Other Charges</label>
-                    <input
-                      className="form-input"
-                      type="number"
-                      step="0.01"
-                      min={0}
-                      value={baleForm.other_charges}
-                      onChange={(event) => setBaleForm((prev) => ({ ...prev, other_charges: event.target.value }))}
                     />
                   </div>
                   <div className="form-group" style={{ gridColumn: '1 / -1', marginBottom: 0 }}>
@@ -933,10 +895,8 @@ export default function Purchasing() {
                     <th>Bale Batch No.</th>
                     <th>Purchase Date</th>
                     <th>Supplier</th>
-                    <th>Bale Type / Category</th>
+                    <th>Category</th>
                     <th>Bale Cost</th>
-                    <th>Shipping</th>
-                    <th>Other</th>
                     <th>Total Cost</th>
                     <th>Payment</th>
                     <th>Actions</th>
@@ -954,10 +914,8 @@ export default function Purchasing() {
                       <td style={{ fontWeight: 700 }}>{row.bale_batch_no}</td>
                       <td>{fmtDate(row.purchase_date)}</td>
                       <td>{row.supplier_name || '-'}</td>
-                      <td>{row.bale_type || row.bale_category || '-'}</td>
+                      <td>{row.bale_category || '-'}</td>
                       <td>{fmtCurrency(row.bale_cost)}</td>
-                      <td>{fmtCurrency(row.shipping_cost)}</td>
-                      <td>{fmtCurrency(row.other_charges)}</td>
                       <td>{fmtCurrency(row.total_purchase_cost)}</td>
                       <td><PaymentStatusBadge status={row.payment_status} /></td>
                       <td>
@@ -985,8 +943,6 @@ export default function Purchasing() {
                     <tr>
                       <td colSpan={4}>Totals</td>
                       <td>{fmtCurrency(baleTotals.bale_cost)}</td>
-                      <td>{fmtCurrency(baleTotals.shipping_cost)}</td>
-                      <td>{fmtCurrency(baleTotals.other_charges)}</td>
                       <td>{fmtCurrency(baleTotals.total_purchase_cost)}</td>
                       <td colSpan={2}></td>
                     </tr>

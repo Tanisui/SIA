@@ -121,30 +121,30 @@ function normalizeBalePurchaseInput(payload, options = {}) {
     parsed.bale_batch_no = baleBatchNo
   }
 
-  if (!isUpdate || body.supplier_id !== undefined) {
-    parsed.supplier_id = asOptionalInt(body.supplier_id, 'supplier_id')
+  if (!isUpdate || body.supplier_name !== undefined) {
+    const supplierName = asText(body.supplier_name)
+    if (!supplierName && !isUpdate) {
+      const err = new Error('supplier_name is required')
+      err.statusCode = 400
+      throw err
+    }
+    parsed.supplier_name = supplierName
   }
 
   if (!isUpdate || body.purchase_date !== undefined) {
     parsed.purchase_date = asDateOnly(body.purchase_date, 'purchase_date', !isUpdate)
   }
 
-  if (!isUpdate || body.bale_type !== undefined) parsed.bale_type = asText(body.bale_type)
   if (!isUpdate || body.bale_category !== undefined) parsed.bale_category = asText(body.bale_category)
 
-  const hasBaleCost = !isUpdate || body.bale_cost !== undefined
-  const hasShippingCost = !isUpdate || body.shipping_cost !== undefined
-  const hasOtherCharges = !isUpdate || body.other_charges !== undefined
-
-  if (hasBaleCost) parsed.bale_cost = asNumber(body.bale_cost, 'bale_cost')
-  if (hasShippingCost) parsed.shipping_cost = asNumber(body.shipping_cost, 'shipping_cost')
-  if (hasOtherCharges) parsed.other_charges = asNumber(body.other_charges, 'other_charges')
+  if (!isUpdate || body.bale_cost !== undefined) {
+    parsed.bale_cost = asNumber(body.bale_cost, 'bale_cost')
+  }
 
   if (!isUpdate || body.total_purchase_cost !== undefined) {
-    const computed = roundMoney((parsed.bale_cost || 0) + (parsed.shipping_cost || 0) + (parsed.other_charges || 0))
     parsed.total_purchase_cost = !isBlank(body.total_purchase_cost)
       ? asNumber(body.total_purchase_cost, 'total_purchase_cost')
-      : computed
+      : roundMoney(parsed.bale_cost || 0)
   }
 
   if (!isUpdate || body.payment_status !== undefined) {
@@ -209,11 +209,8 @@ function normalizeBreakdownInput(payload, existing = {}) {
 
 async function getBalePurchaseById(id) {
   const [rows] = await db.pool.query(`
-    SELECT
-      bp.*,
-      COALESCE(NULLIF(s.name, ''), 'Unknown Supplier') AS supplier_name
+    SELECT bp.*
     FROM bale_purchases bp
-    LEFT JOIN suppliers s ON s.id = bp.supplier_id
     WHERE bp.id = ?
     LIMIT 1
   `, [id])
@@ -223,25 +220,17 @@ async function getBalePurchaseById(id) {
 router.get('/', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
-    const { from, to, supplier_id, payment_status, search } = req.query
+    const { from, to, payment_status, search } = req.query
     const params = []
     let sql = `
-      SELECT
-        bp.*,
-        COALESCE(NULLIF(s.name, ''), 'Unknown Supplier') AS supplier_name
+      SELECT bp.*
       FROM bale_purchases bp
-      LEFT JOIN suppliers s ON s.id = bp.supplier_id
       WHERE 1=1
     `
 
     const fromDate = asDateOnly(from, 'from')
     const toDate = asDateOnly(to, 'to')
     sql += buildDateFilter('bp', 'purchase_date', fromDate, toDate, params)
-
-    if (!isBlank(supplier_id)) {
-      params.push(asOptionalInt(supplier_id, 'supplier_id'))
-      sql += ' AND bp.supplier_id = ?'
-    }
 
     if (!isBlank(payment_status)) {
       params.push(asPaymentStatus(payment_status))
@@ -250,8 +239,8 @@ router.get('/', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) 
 
     if (!isBlank(search)) {
       const needle = `%${String(search).trim()}%`
-      params.push(needle, needle, needle)
-      sql += ' AND (bp.bale_batch_no LIKE ? OR bp.bale_type LIKE ? OR bp.bale_category LIKE ?)'
+      params.push(needle, needle)
+      sql += ' AND (bp.bale_batch_no LIKE ? OR bp.supplier_name LIKE ?)'
     }
 
     sql += ' ORDER BY bp.purchase_date DESC, bp.id DESC'
@@ -316,26 +305,22 @@ router.post('/', express.json(), verifyToken, authorize('purchase.create'), asyn
   try {
     await ensureAutomatedReportsSchema()
     const payload = normalizeBalePurchaseInput(req.body, { isUpdate: false })
-    await ensureSupplierExists(payload.supplier_id)
 
     const [dup] = await db.pool.query('SELECT id FROM bale_purchases WHERE bale_batch_no = ? LIMIT 1', [payload.bale_batch_no])
     if (dup.length) return res.status(400).json({ error: 'bale_batch_no already exists' })
 
     const [result] = await db.pool.query(`
       INSERT INTO bale_purchases (
-        bale_batch_no, supplier_id, purchase_date, bale_type, bale_category,
-        bale_cost, shipping_cost, other_charges, total_purchase_cost,
+        bale_batch_no, supplier_name, purchase_date, bale_category,
+        bale_cost, total_purchase_cost,
         payment_status, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       payload.bale_batch_no,
-      payload.supplier_id,
+      payload.supplier_name,
       payload.purchase_date,
-      payload.bale_type,
       payload.bale_category,
       payload.bale_cost,
-      payload.shipping_cost,
-      payload.other_charges,
       payload.total_purchase_cost,
       payload.payment_status,
       payload.notes
@@ -359,28 +344,22 @@ router.put('/:id', express.json(), verifyToken, authorize('purchase.create'), as
 
     const body = req.body || {}
     const payload = normalizeBalePurchaseInput(body, { isUpdate: true })
-    await ensureSupplierExists(payload.supplier_id)
 
-    const hasCostInputs = body.bale_cost !== undefined || body.shipping_cost !== undefined || body.other_charges !== undefined
+    const hasCostInputs = body.bale_cost !== undefined
     const hasExplicitTotal = body.total_purchase_cost !== undefined && !isBlank(body.total_purchase_cost)
     if (!hasExplicitTotal && (hasCostInputs || body.total_purchase_cost !== undefined)) {
       const baleCost = payload.bale_cost !== undefined ? payload.bale_cost : Number(existing.bale_cost || 0)
-      const shippingCost = payload.shipping_cost !== undefined ? payload.shipping_cost : Number(existing.shipping_cost || 0)
-      const otherCharges = payload.other_charges !== undefined ? payload.other_charges : Number(existing.other_charges || 0)
-      payload.total_purchase_cost = roundMoney(baleCost + shippingCost + otherCharges)
+      payload.total_purchase_cost = roundMoney(baleCost)
     }
 
     const updates = []
     const params = []
     const allowedFields = [
       'bale_batch_no',
-      'supplier_id',
+      'supplier_name',
       'purchase_date',
-      'bale_type',
       'bale_category',
       'bale_cost',
-      'shipping_cost',
-      'other_charges',
       'total_purchase_cost',
       'payment_status',
       'notes'
