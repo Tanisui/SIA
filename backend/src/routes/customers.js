@@ -267,6 +267,23 @@ function uniqueLocationOptions(options) {
   return Array.from(map.values())
 }
 
+function mergeLocationOptionSets(...sets) {
+  const merged = []
+  const seen = new Set()
+
+  for (const set of sets) {
+    for (const option of set || []) {
+      if (!option || !option.name) continue
+      const key = normalizeSingleLine(option.name).toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(option)
+    }
+  }
+
+  return merged
+}
+
 function filterLocationOptions(options, query) {
   if (!query) return options
   const term = query.toLowerCase()
@@ -938,20 +955,39 @@ router.get('/locations/regions', verifyToken, authorize(['customers.view', 'cust
 
     const q = normalizeSearchTerm(req.query?.q)
     const limit = clampLocationLimit(req.query?.limit)
-    const rows = await fetchPhLocationRows('/regions', {
-      q: q || undefined,
-      limit: Math.max(limit, PH_LOCATION_DEFAULT_LIMIT)
-    })
+    try {
+      const rows = await fetchPhLocationRows('/regions', {
+        q: q || undefined,
+        limit: Math.max(limit, PH_LOCATION_DEFAULT_LIMIT)
+      })
 
-    const options = filterLocationOptions(
-      uniqueLocationOptions(rows.map(mapRegionOption).filter(Boolean)),
-      q
-    ).slice(0, limit)
+      const options = filterLocationOptions(
+        uniqueLocationOptions(rows.map(mapRegionOption).filter(Boolean)),
+        q
+      ).slice(0, limit)
 
-    res.json({ source: 'psgc', options })
+      if (options.length > 0 || q) {
+        return res.json({ source: 'psgc', options })
+      }
+
+      console.warn('ph region suggestion provider returned no rows; falling back to local/seed')
+    } catch (err) {
+      console.error('ph region suggestion provider failed:', err?.message || err)
+    }
+
+    let localOptions = []
+    try {
+      localOptions = await getLocalRegionFallback(q, limit)
+    } catch (err) {
+      console.error('local region fallback failed:', err?.message || err)
+    }
+
+    const seedOptions = getSeedRegionOptions(q, limit)
+    const options = mergeLocationOptionSets(seedOptions, localOptions).slice(0, limit)
+    return res.json({ source: seedOptions.length > 0 ? 'seed' : 'local', options })
   } catch (err) {
-    console.error('ph region suggestion provider failed:', err?.message || err)
-    res.status(503).json({ error: 'failed to load region suggestions from PSGC' })
+    console.error('region suggestions failed:', err?.message || err)
+    res.status(500).json({ error: 'failed to load region suggestions' })
   }
 })
 
@@ -964,25 +1000,45 @@ router.get('/locations/provinces', verifyToken, authorize(['customers.view', 'cu
     const limit = clampLocationLimit(req.query?.limit)
     const regionCode = normalizeText(req.query?.region_code || req.query?.regionCode)
     const regionName = normalizeSearchTerm(req.query?.region)
-    const rows = await fetchPhLocationRows('/provinces', {
-      q: q || undefined,
-      region_code: regionCode || undefined,
-      limit: Math.max(limit, PH_LOCATION_DEFAULT_LIMIT)
-    })
 
-    let options = uniqueLocationOptions(rows.map(mapProvinceOption).filter(Boolean))
-    if (regionCode) {
-      options = options.filter((option) => normalizeText(option.region_code) === regionCode)
-    }
-    if (regionName) {
-      options = options.filter((option) => normalizeSingleLine(option.region_name).toLowerCase().includes(regionName.toLowerCase()))
-    }
-    options = filterLocationOptions(options, q).slice(0, limit)
+    try {
+      const rows = await fetchPhLocationRows('/provinces', {
+        q: q || undefined,
+        region_code: regionCode || undefined,
+        limit: Math.max(limit, PH_LOCATION_DEFAULT_LIMIT)
+      })
 
-    res.json({ source: 'psgc', options })
+      let options = uniqueLocationOptions(rows.map(mapProvinceOption).filter(Boolean))
+      if (regionCode) {
+        options = options.filter((option) => normalizeText(option.region_code) === regionCode)
+      }
+      if (regionName) {
+        options = options.filter((option) => normalizeSingleLine(option.region_name).toLowerCase().includes(regionName.toLowerCase()))
+      }
+      options = filterLocationOptions(options, q).slice(0, limit)
+
+      if (options.length > 0 || q) {
+        return res.json({ source: 'psgc', options })
+      }
+
+      console.warn('ph province suggestion provider returned no rows; falling back to local/seed')
+    } catch (err) {
+      console.error('ph province suggestion provider failed:', err?.message || err)
+    }
+
+    let localOptions = []
+    try {
+      localOptions = await getLocalProvinceFallback(q, { regionCode, regionName }, limit)
+    } catch (err) {
+      console.error('local province fallback failed:', err?.message || err)
+    }
+
+    const seedOptions = getSeedProvinceOptions(q, { regionCode, regionName }, limit)
+    const options = mergeLocationOptionSets(seedOptions, localOptions).slice(0, limit)
+    return res.json({ source: seedOptions.length > 0 ? 'seed' : 'local', options })
   } catch (err) {
-    console.error('ph province suggestion provider failed:', err?.message || err)
-    res.status(503).json({ error: 'failed to load province suggestions from PSGC' })
+    console.error('province suggestions failed:', err?.message || err)
+    res.status(500).json({ error: 'failed to load province suggestions' })
   }
 })
 
@@ -997,32 +1053,52 @@ router.get('/locations/cities-municipalities', verifyToken, authorize(['customer
     const provinceName = normalizeSearchTerm(req.query?.province)
     const regionCode = normalizeText(req.query?.region_code || req.query?.regionCode)
     const regionName = normalizeSearchTerm(req.query?.region)
-    const rows = await fetchPhLocationRows('/cities-municipalities', {
-      q: q || undefined,
-      province_code: provinceCode || undefined,
-      region_code: regionCode || undefined,
-      limit: Math.max(limit, PH_LOCATION_DEFAULT_LIMIT)
-    })
 
-    let options = uniqueLocationOptions(rows.map(mapCityMunicipalityOption).filter(Boolean))
-    if (provinceCode) {
-      options = options.filter((option) => normalizeText(option?.province_code) === provinceCode)
-    }
-    if (provinceName) {
-      options = options.filter((option) => normalizeSingleLine(option?.province_name).toLowerCase().includes(provinceName.toLowerCase()))
-    }
-    if (regionCode) {
-      options = options.filter((option) => normalizeText(option?.region_code) === regionCode)
-    }
-    if (regionName) {
-      options = options.filter((option) => normalizeSingleLine(option?.region_name).toLowerCase().includes(regionName.toLowerCase()))
+    try {
+      const rows = await fetchPhLocationRows('/cities-municipalities', {
+        q: q || undefined,
+        province_code: provinceCode || undefined,
+        region_code: regionCode || undefined,
+        limit: Math.max(limit, PH_LOCATION_DEFAULT_LIMIT)
+      })
+
+      let options = uniqueLocationOptions(rows.map(mapCityMunicipalityOption).filter(Boolean))
+      if (provinceCode) {
+        options = options.filter((option) => normalizeText(option?.province_code) === provinceCode)
+      }
+      if (provinceName) {
+        options = options.filter((option) => normalizeSingleLine(option?.province_name).toLowerCase().includes(provinceName.toLowerCase()))
+      }
+      if (regionCode) {
+        options = options.filter((option) => normalizeText(option?.region_code) === regionCode)
+      }
+      if (regionName) {
+        options = options.filter((option) => normalizeSingleLine(option?.region_name).toLowerCase().includes(regionName.toLowerCase()))
+      }
+
+      options = filterLocationOptions(options, q).slice(0, limit)
+      if (options.length > 0 || q) {
+        return res.json({ source: 'psgc', options })
+      }
+
+      console.warn('ph city suggestion provider returned no rows; falling back to local/seed')
+    } catch (err) {
+      console.error('ph city suggestion provider failed:', err?.message || err)
     }
 
-    options = filterLocationOptions(options, q).slice(0, limit)
-    res.json({ source: 'psgc', options })
+    let localOptions = []
+    try {
+      localOptions = await getLocalCityFallback(q, { provinceCode, provinceName, regionCode, regionName }, limit)
+    } catch (err) {
+      console.error('local city fallback failed:', err?.message || err)
+    }
+
+    const seedOptions = getSeedCityMunicipalityOptions(q, { provinceCode, provinceName, regionCode, regionName }, limit)
+    const options = mergeLocationOptionSets(seedOptions, localOptions).slice(0, limit)
+    return res.json({ source: seedOptions.length > 0 ? 'seed' : 'local', options })
   } catch (err) {
-    console.error('ph city suggestion provider failed:', err?.message || err)
-    res.status(503).json({ error: 'failed to load city/municipality suggestions from PSGC' })
+    console.error('city/municipality suggestions failed:', err?.message || err)
+    res.status(500).json({ error: 'failed to load city/municipality suggestions' })
   }
 })
 
@@ -1034,20 +1110,45 @@ router.get('/locations/barangays', verifyToken, authorize(['customers.view', 'cu
     const q = normalizeSearchTerm(req.query?.q)
     const limit = clampLocationLimit(req.query?.limit)
     const cityCode = normalizeText(req.query?.city_municipality_code || req.query?.cityCode)
-    if (!cityCode) {
-      return res.json({ source: 'psgc', options: [] })
+    const cityName = normalizeSearchTerm(req.query?.city)
+    const provinceCode = normalizeText(req.query?.province_code || req.query?.provinceCode)
+    const regionCode = normalizeText(req.query?.region_code || req.query?.regionCode)
+
+    if (!cityCode && !cityName) {
+      return res.json({ source: 'seed', options: [] })
     }
 
-    const rows = await fetchPhLocationRows(`/cities-municipalities/${encodeURIComponent(cityCode)}/barangays`)
-    const options = filterLocationOptions(
-      uniqueLocationOptions(rows.map(mapBarangayOption).filter(Boolean)),
-      q
-    ).slice(0, limit)
+    if (cityCode) {
+      try {
+        const rows = await fetchPhLocationRows(`/cities-municipalities/${encodeURIComponent(cityCode)}/barangays`)
+        const options = filterLocationOptions(
+          uniqueLocationOptions(rows.map(mapBarangayOption).filter(Boolean)),
+          q
+        ).slice(0, limit)
 
-    res.json({ source: 'psgc', options })
+        if (options.length > 0 || q) {
+          return res.json({ source: 'psgc', options })
+        }
+
+        console.warn('ph barangay suggestion provider returned no rows; falling back to local/seed')
+      } catch (err) {
+        console.error('ph barangay suggestion provider failed:', err?.message || err)
+      }
+    }
+
+    let localOptions = []
+    try {
+      localOptions = await getLocalBarangayFallback(q, { cityCode, cityName, provinceCode, regionCode }, limit)
+    } catch (err) {
+      console.error('local barangay fallback failed:', err?.message || err)
+    }
+
+    const seedOptions = getSeedBarangayOptions(q, { cityCode, cityName }, limit)
+    const options = mergeLocationOptionSets(seedOptions, localOptions).slice(0, limit)
+    return res.json({ source: seedOptions.length > 0 ? 'seed' : 'local', options })
   } catch (err) {
-    console.error('ph barangay suggestion provider failed:', err?.message || err)
-    res.status(503).json({ error: 'failed to load barangay suggestions from PSGC' })
+    console.error('barangay suggestions failed:', err?.message || err)
+    res.status(500).json({ error: 'failed to load barangay suggestions' })
   }
 })
 

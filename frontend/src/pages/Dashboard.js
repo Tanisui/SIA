@@ -19,36 +19,35 @@ export default function Dashboard() {
   }, [])
 
   const fmt = (n) => {
-    if (n === null || n === undefined) return '—'
+    if (n === null || n === undefined) return '-'
     if (typeof n === 'number') return n.toLocaleString('en-PH')
     return String(n)
   }
+
   const fmtMoney = (n) => {
-    if (n === null || n === undefined) return '—'
-    return '₱' + parseFloat(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    if (n === null || n === undefined) return '-'
+    return '\u20B1' + parseFloat(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   }
 
   const cards = stats ? [
-    { title: 'Total Sales',      value: fmtMoney(stats.total_sales), sub: `${fmt(stats.total_orders)} orders all time`, icon: '🧾' },
-    { title: "Today's Sales",    value: fmtMoney(stats.today_sales), sub: `${fmt(stats.today_orders)} orders today`,    icon: '📊' },
-    { title: 'Products',         value: fmt(stats.products_count),   sub: 'Active in catalog',   icon: '👗' },
-    { title: 'Low Stock',        value: fmt(stats.low_stock_count),  sub: 'Need restocking',     icon: '📦' },
-    { title: 'Customers',        value: fmt(stats.customers_count),  sub: 'Registered',          icon: '👤' },
-    { title: 'Open POs',         value: fmt(stats.open_po_count),    sub: 'Purchase orders',     icon: '📋' },
+    { title: 'Total Sales', value: fmtMoney(stats.total_sales), sub: `${fmt(stats.total_orders)} orders all time`, icon: '\uD83E\uDDFE' },
+    { title: "Today's Sales", value: fmtMoney(stats.today_sales), sub: `${fmt(stats.today_orders)} orders today`, icon: '\uD83D\uDCCA' },
+    { title: 'Products', value: fmt(stats.products_count), sub: 'Active in catalog', icon: '\uD83D\uDC57' },
+    { title: 'Low Stock', value: fmt(stats.low_stock_count), sub: 'Need restocking', icon: '\uD83D\uDCE6' },
+    { title: 'Open POs', value: fmt(stats.open_po_count), sub: 'Purchase orders', icon: '\uD83D\uDCCB' },
   ] : [
-    { title: 'Total Sales',     value: '—', sub: 'Loading...', icon: '🧾' },
-    { title: "Today's Sales",   value: '—', sub: 'Loading...', icon: '📊' },
-    { title: 'Products',        value: '—', sub: 'Loading...', icon: '👗' },
-    { title: 'Low Stock',       value: '—', sub: 'Loading...', icon: '📦' },
-    { title: 'Customers',       value: '—', sub: 'Loading...', icon: '👤' },
-    { title: 'Open POs',        value: '—', sub: 'Loading...', icon: '📋' },
+    { title: 'Total Sales', value: '-', sub: 'Loading...', icon: '\uD83E\uDDFE' },
+    { title: "Today's Sales", value: '-', sub: 'Loading...', icon: '\uD83D\uDCCA' },
+    { title: 'Products', value: '-', sub: 'Loading...', icon: '\uD83D\uDC57' },
+    { title: 'Low Stock', value: '-', sub: 'Loading...', icon: '\uD83D\uDCE6' },
+    { title: 'Open POs', value: '-', sub: 'Loading...', icon: '\uD83D\uDCCB' },
   ]
 
   return React.createElement('div', null,
     // Page Header
     React.createElement('div', { className: 'page-header' },
       React.createElement('div', null,
-        React.createElement('h1', { className: 'page-title' }, `Good day, ${name} 👋`),
+        React.createElement('h1', { className: 'page-title' }, `Good day, ${name} \uD83D\uDC4B`),
         React.createElement('p', { className: 'page-subtitle' }, timeStr)
       )
     ),
@@ -91,9 +90,9 @@ export default function Dashboard() {
             stats.recent_sales.slice(0, 10).map(s =>
               React.createElement('tr', { key: s.id },
                 React.createElement('td', null, s.sale_number || `#${s.id}`),
-                React.createElement('td', null, s.clerk || '—'),
+                React.createElement('td', null, s.clerk || '-'),
                 React.createElement('td', { className: 'text-right text-dark', style: { fontWeight: '600', color: 'var(--gold-dark)' } }, fmtMoney(s.total)),
-                React.createElement('td', null, s.payment_method || '—'),
+                React.createElement('td', null, s.payment_method || '-'),
                 React.createElement('td', { className: 'text-muted' }, new Date(s.date).toLocaleDateString('en-PH'))
               )
             )
@@ -140,8 +139,9 @@ export default function Dashboard() {
             'Complete Boutique Management System - Sales, Inventory, Purchasing, and Reports integrated.'
           )
         ),
-        React.createElement('span', { style: { fontSize: '48px', flexShrink: 0 } }, '✨')
+        React.createElement('span', { style: { fontSize: '48px', flexShrink: 0 } }, '\u2728')
       )
-    )
+    ),
+    loading && React.createElement('div', { style: { marginTop: '16px', color: 'var(--text-light)' } }, 'Loading dashboard...')
   )
 }

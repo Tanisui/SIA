@@ -51,90 +51,8 @@ function normalizeOptionalText(value) {
   return normalized || null
 }
 
-async function resolveSaleCustomer(conn, { customerId, customerPayload, canCreateCustomerProfile }) {
-  const requestedCustomerId = Number(customerId)
-  const orderNote = normalizeOptionalText(customerPayload?.order_note)
-  const requestedName = normalizeOptionalText(customerPayload?.name)
-  const requestedPhone = normalizeOptionalText(customerPayload?.phone)
-  const requestedEmail = normalizeOptionalText(customerPayload?.email)
-  const saveCustomerProfile = customerPayload?.save_customer === true
-  const isWalkIn = customerPayload?.is_walk_in === true || (!requestedCustomerId && !requestedName && !requestedPhone && !requestedEmail)
-
-  if (Number.isInteger(requestedCustomerId) && requestedCustomerId > 0) {
-    const [customerRows] = await conn.query(
-      'SELECT id, name, phone, email FROM customers WHERE id = ? LIMIT 1',
-      [requestedCustomerId]
-    )
-    if (!customerRows.length) {
-      throw createHttpError(400, 'invalid customer_id')
-    }
-
-    return {
-      resolvedCustomerId: requestedCustomerId,
-      customerNameSnapshot: normalizeOptionalText(customerRows[0].name) || WALK_IN_CUSTOMER_LABEL,
-      customerPhoneSnapshot: normalizeOptionalText(customerRows[0].phone),
-      customerEmailSnapshot: normalizeOptionalText(customerRows[0].email),
-      orderNote
-    }
-  }
-
-  if (isWalkIn) {
-    return {
-      resolvedCustomerId: null,
-      customerNameSnapshot: WALK_IN_CUSTOMER_LABEL,
-      customerPhoneSnapshot: null,
-      customerEmailSnapshot: null,
-      orderNote
-    }
-  }
-
-  if (!requestedName) {
-    throw createHttpError(400, 'customer.name is required unless the sale is marked as walk-in')
-  }
-
-  if (!saveCustomerProfile) {
-    return {
-      resolvedCustomerId: null,
-      customerNameSnapshot: requestedName,
-      customerPhoneSnapshot: requestedPhone,
-      customerEmailSnapshot: requestedEmail,
-      orderNote
-    }
-  }
-
-  if (!canCreateCustomerProfile) {
-    throw createHttpError(403, 'You do not have permission to create customer profiles during checkout')
-  }
-
-  const [existingCustomers] = await conn.query(
-    `SELECT id
-     FROM customers
-     WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
-       AND COALESCE(TRIM(phone), '') = COALESCE(TRIM(?), '')
-       AND COALESCE(LOWER(TRIM(email)), '') = COALESCE(LOWER(TRIM(?)), '')
-     ORDER BY id ASC
-     LIMIT 1`,
-    [requestedName, requestedPhone, requestedEmail]
-  )
-
-  let resolvedCustomerId = null
-  if (existingCustomers.length) {
-    resolvedCustomerId = Number(existingCustomers[0].id)
-  } else {
-    const [customerInsert] = await conn.query(
-      'INSERT INTO customers (name, phone, email, notes) VALUES (?, ?, ?, ?)',
-      [requestedName, requestedPhone, requestedEmail, orderNote]
-    )
-    resolvedCustomerId = Number(customerInsert.insertId)
-  }
-
-  return {
-    resolvedCustomerId,
-    customerNameSnapshot: requestedName,
-    customerPhoneSnapshot: requestedPhone,
-    customerEmailSnapshot: requestedEmail,
-    orderNote
-  }
+function hasOwn(payload, key) {
+  return Object.prototype.hasOwnProperty.call(payload || {}, key)
 }
 
 async function getLockedSale(conn, { saleId, receiptNo }) {
@@ -157,7 +75,7 @@ router.get('/config', verifyToken, authorize(['sales.view', 'sales.create']), as
       payment_methods: PAYMENT_METHODS,
       allow_discount: hasPermission(permissions, 'sales.discount'),
       allow_price_override: hasPermission(permissions, 'sales.price_override'),
-      allow_customer_profile_save: hasPermission(permissions, 'customers.create'),
+      allow_customer_profile_save: false,
       walk_in_customer_label: WALK_IN_CUSTOMER_LABEL
     })
   } catch (err) {
@@ -487,8 +405,7 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     await conn.beginTransaction()
 
     const {
-      customer_id,
-      customer,
+      order_note,
       items,
       payment_method,
       payment_amount,
@@ -500,7 +417,10 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     const permissions = Array.isArray(req.auth?.permissions) ? req.auth.permissions : []
     const canApplyDiscount = hasPermission(permissions, 'sales.discount')
     const canOverridePrice = hasPermission(permissions, 'sales.price_override')
-    const canCreateCustomerProfile = hasPermission(permissions, 'customers.create')
+
+    if (hasOwn(req.body, 'customer_id') || hasOwn(req.body, 'customer')) {
+      throw createHttpError(400, 'customer_id and customer fields are no longer supported in sales payload')
+    }
 
     if (!PAYMENT_METHODS.includes(String(payment_method))) {
       throw createHttpError(400, 'invalid payment_method')
@@ -554,18 +474,11 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     const changeAmount = roundMoney(amountReceived - total)
     const saleNumber = await generateDocumentNumber(conn, 'sales', 'sale_number', 'SAL')
     const receiptNo = await generateDocumentNumber(conn, 'sales', 'receipt_no', 'RCT')
-
-    const {
-      resolvedCustomerId,
-      customerNameSnapshot,
-      customerPhoneSnapshot,
-      customerEmailSnapshot,
-      orderNote
-    } = await resolveSaleCustomer(conn, {
-      customerId: customer_id,
-      customerPayload: customer,
-      canCreateCustomerProfile
-    })
+    const orderNote = normalizeOptionalText(order_note)
+    const resolvedCustomerId = null
+    const customerNameSnapshot = WALK_IN_CUSTOMER_LABEL
+    const customerPhoneSnapshot = null
+    const customerEmailSnapshot = null
 
     const [saleResult] = await conn.query(
       `INSERT INTO sales (

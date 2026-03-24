@@ -470,7 +470,30 @@ async function getSaleById(conn, saleId) {
 }
 
 async function getSaleByReceipt(conn, receiptNo) {
-  const [rows] = await conn.query('SELECT id FROM sales WHERE receipt_no = ? LIMIT 1', [String(receiptNo || '').trim()])
+  const raw = String(receiptNo || '').trim()
+  if (!raw) return null
+
+  const compact = raw.replace(/\r?\n/g, ' ').trim()
+  const tokenMatch = compact.match(/\b(?:RCT|REC|RECEIPT)[-_: ]?[A-Z0-9-]{6,}\b/i)
+  const normalizedToken = tokenMatch?.[0]
+    ? tokenMatch[0]
+      .replace(/^RECEIPT[-_: ]?/i, 'RCT-')
+      .replace(/^REC[-_: ]?/i, 'RCT-')
+      .replace(/^RCT[-_: ]?/i, 'RCT-')
+      .replace(/\s+/g, '')
+      .toUpperCase()
+    : compact
+  const normalizedInput = normalizedToken.toUpperCase()
+
+  const [rows] = await conn.query(
+    `SELECT id
+     FROM sales
+     WHERE UPPER(TRIM(receipt_no)) = ?
+        OR UPPER(TRIM(sale_number)) = ?
+     LIMIT 1`,
+    [normalizedInput, normalizedInput]
+  )
+
   if (!rows.length) return null
   return getSaleById(conn, rows[0].id)
 }

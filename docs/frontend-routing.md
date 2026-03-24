@@ -8,7 +8,8 @@ Key file
 
 Routing notes
 - Public routes: `/login`, `/forgot-password`, `/forgot-email`.
-- Protected app (root `/`) uses `ProtectedRoute` and `Layout`. Inside it are main pages: `Dashboard`, `Users` (also `employees` is redirected to `users`), `Roles`, `Categories`, `Inventory`, `Sales`, `Customers`, `Purchasing`, `Payroll`, `Expenses`, `Audit`, `Files`, `Settings`, `Attendance`, `Notifications`, `Reports`, and `ChangePassword`.
+- Protected app (root `/`) uses `ProtectedRoute` and `Layout`. Inside it are main pages: `Dashboard`, `Users` (also `employees` is redirected to `users`), `Roles`, `Categories`, `Inventory`, `Sales`, `Purchasing`, `Payroll`, `Expenses`, `Audit`, `Files`, `Settings`, `Attendance`, `Notifications`, `Reports`, and `ChangePassword`.
+- Customer module routes are deprecated and no longer registered in `App.js`.
 
 ProtectedRoute
 - Ensures the user is authenticated (via Redux/authSlice and/or `localStorage`) before rendering the app shell. On missing auth, it should redirect to `/login`.

@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useSelector } from 'react-redux'
 import api from '../api/api.js'
-import Modal from '../components/Modal.js'
 
 const fmt = (n) => Number(n || 0).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })
 const fmtDate = (d) => d ? new Date(d).toLocaleString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'
@@ -11,13 +10,27 @@ const pct = (v) => Math.min(Math.max(num(v), 0), 100)
 const text = (value) => String(value || '').trim()
 const normalizeText = (value) => text(value).toLowerCase()
 const productLabel = (p) => `${p?.sku ? `${p.sku} - ` : ''}${p?.name || 'Unnamed product'}`
-const customerLabel = (customer) => text(customer?.name) || 'Unnamed customer'
+const extractScannedReceiptId = (rawValue) => {
+  const raw = String(rawValue || '').trim()
+  if (!raw) return ''
+  const compact = raw.replace(/\r?\n/g, ' ').trim()
+  const tokenMatch = compact.match(/\b(?:RCT|REC|RECEIPT)[-_: ]?[A-Z0-9-]{6,}\b/i)
+  if (tokenMatch?.[0]) {
+    return tokenMatch[0]
+      .replace(/^RECEIPT[-_: ]?/i, 'RCT-')
+      .replace(/^REC[-_: ]?/i, 'RCT-')
+      .replace(/^RCT[-_: ]?/i, 'RCT-')
+      .replace(/\s+/g, '')
+      .toUpperCase()
+  }
+  const plainReceipt = compact.match(/\bRCT-[A-Z0-9-]+\b/i)
+  if (plainReceipt?.[0]) return plainReceipt[0].toUpperCase()
+  return compact
+}
 const DEFAULT_SALES_CONFIG = {
   payment_methods: ['cash', 'mobile_bank_transfer'],
   allow_discount: false,
-  allow_price_override: false,
-  allow_customer_profile_save: false,
-  walk_in_customer_label: 'Walk-in Customer'
+  allow_price_override: false
 }
 const MOBILE_BANK_APPS = [
   'BDO Online', 'BPI Online', 'Landbank Mobile Banking', 'Metrobank App', 'RCBC Pulz',
@@ -48,7 +61,6 @@ export default function Sales() {
 
   const [tab, setTab] = useState('pos')
   const [products, setProducts] = useState([])
-  const [customers, setCustomers] = useState([])
   const [sales, setSales] = useState([])
   const [transactions, setTransactions] = useState([])
   const [report, setReport] = useState(null)
@@ -62,16 +74,6 @@ export default function Sales() {
   const [isProductPickerOpen, setIsProductPickerOpen] = useState(false)
   const [price, setPrice] = useState('')
   const [qty, setQty] = useState('1')
-  const [customerId, setCustomerId] = useState('')
-  const [isCustomerPickerOpen, setIsCustomerPickerOpen] = useState(false)
-  const [isCreateCustomerModalOpen, setIsCreateCustomerModalOpen] = useState(false)
-  const [creatingCustomer, setCreatingCustomer] = useState(false)
-  const [newCustomerForm, setNewCustomerForm] = useState({ name: '', phone: '', email: '', address: '', notes: '' })
-  const [isWalkInSale, setIsWalkInSale] = useState(true)
-  const [saveCustomerProfile, setSaveCustomerProfile] = useState(false)
-  const [customerNameInput, setCustomerNameInput] = useState('')
-  const [customerPhoneInput, setCustomerPhoneInput] = useState('')
-  const [customerEmailInput, setCustomerEmailInput] = useState('')
   const [orderNote, setOrderNote] = useState('')
   const [paymentMethod, setPaymentMethod] = useState('cash')
   const [discountPercentage, setDiscountPercentage] = useState('')
@@ -103,8 +105,6 @@ export default function Sales() {
 
   const allowDiscount = Boolean(config.allow_discount)
   const allowPriceOverride = Boolean(config.allow_price_override)
-  const allowCustomerProfileSave = Boolean(config.allow_customer_profile_save)
-  const walkInCustomerLabel = String(config.walk_in_customer_label || DEFAULT_SALES_CONFIG.walk_in_customer_label)
   const filteredProducts = products.filter((product) => {
     const needle = normalizeText(search)
     if (!needle) return true
@@ -115,17 +115,7 @@ export default function Sales() {
       product?.barcode
     ].some((value) => normalizeText(value).includes(needle))
   })
-  const filteredCustomers = customers.filter((customer) => {
-    const needle = normalizeText(customerNameInput)
-    if (!needle) return true
-    return [
-      customer?.name,
-      customer?.phone,
-      customer?.email
-    ].some((value) => normalizeText(value).includes(needle))
-  })
   const selectedProductData = products.find((item) => String(item.id) === String(selectedProduct)) || null
-  const selectedCustomerRecord = customers.find((customer) => String(customer.id) === String(customerId)) || null
   const subtotal = round(cart.reduce((sum, item) => sum + num(item.unit_price) * num(item.quantity), 0))
   const discountPct = allowDiscount ? pct(discountPercentage) : 0
   const discountAmount = round(subtotal * (discountPct / 100))
@@ -147,10 +137,9 @@ export default function Sales() {
     ;(async () => {
       try {
         setLoading(true)
-        const [configRes, productsRes, customersRes] = await Promise.allSettled([
+        const [configRes, productsRes] = await Promise.allSettled([
           api.get('/sales/config'),
-          loadPosProducts(),
-          api.get('/customers')
+          loadPosProducts()
         ])
         if (!active) return
         const issues = []
@@ -158,8 +147,6 @@ export default function Sales() {
         else issues.push('Sales settings could not be loaded.')
         if (productsRes.status === 'fulfilled') setProducts(Array.isArray(productsRes.value) ? productsRes.value : [])
         else issues.push('Products could not be loaded for POS.')
-        if (customersRes.status === 'fulfilled') setCustomers(Array.isArray(customersRes.value?.data) ? customersRes.value.data : [])
-        else issues.push('Customers could not be loaded. Walk-in sales are still available.')
         if (issues.length) setError(issues.join(' '))
       } catch (err) {
         if (active) setError(err?.response?.data?.error || 'Failed to load sales data')
@@ -181,26 +168,6 @@ export default function Sales() {
   }, [tab])
 
   useEffect(() => {
-    if (!customerId) return
-    const selected = customers.find((customer) => String(customer.id) === String(customerId))
-    if (!selected) return
-    setIsWalkInSale(false)
-    setSaveCustomerProfile(false)
-    setCustomerNameInput(String(selected.name || ''))
-    setCustomerPhoneInput(String(selected.phone || ''))
-    setCustomerEmailInput(String(selected.email || ''))
-  }, [customerId, customers])
-
-  useEffect(() => {
-    if (!isWalkInSale) return
-    setCustomerId('')
-    setSaveCustomerProfile(false)
-    setCustomerNameInput('')
-    setCustomerPhoneInput('')
-    setCustomerEmailInput('')
-  }, [isWalkInSale])
-
-  useEffect(() => {
     if (config.allow_discount) return
     if (String(discountPercentage).trim()) setDiscountPercentage('')
   }, [config.allow_discount, discountPercentage])
@@ -209,72 +176,6 @@ export default function Sales() {
   function flash(message) { setSuccess(message); setTimeout(() => setSuccess(null), 4000) }
   function stock(productId) { return num(products.find((item) => String(item.id) === String(productId))?.stock_quantity) }
   function cartQty(productId, skip = -1) { return cart.reduce((sum, item, index) => index === skip ? sum : (String(item.product_id) === String(productId) ? sum + num(item.quantity) : sum), 0) }
-
-  function openCreateCustomerModal() {
-    setIsCustomerPickerOpen(false)
-    setNewCustomerForm({
-      name: text(customerNameInput),
-      phone: text(customerPhoneInput),
-      email: text(customerEmailInput),
-      address: '',
-      notes: text(orderNote)
-    })
-    setIsCreateCustomerModalOpen(true)
-  }
-
-  function closeCreateCustomerModal() {
-    if (creatingCustomer) return
-    setIsCreateCustomerModalOpen(false)
-  }
-
-  function setNewCustomerField(name, value) {
-    setNewCustomerForm((prev) => ({ ...prev, [name]: value }))
-  }
-
-  async function createCustomerFromModal() {
-    const payload = {
-      name: text(newCustomerForm.name),
-      phone: text(newCustomerForm.phone),
-      email: text(newCustomerForm.email),
-      address: text(newCustomerForm.address),
-      notes: text(newCustomerForm.notes)
-    }
-    if (!payload.name) {
-      setError('Customer name is required')
-      return
-    }
-    try {
-      clearMsg()
-      setCreatingCustomer(true)
-      const created = await api.post('/customers', payload)
-      const createdId = String(created?.data?.id || '')
-      if (!createdId) throw new Error('Customer was created but no id was returned')
-
-      setCustomers((prev) => {
-        if (prev.some((item) => String(item.id) === createdId)) return prev
-        return [{ id: Number(createdId), name: payload.name, phone: payload.phone || null, email: payload.email || null }, ...prev]
-      })
-      setCustomerId(createdId)
-      setIsWalkInSale(false)
-      setSaveCustomerProfile(false)
-      setCustomerNameInput(payload.name)
-      setCustomerPhoneInput(payload.phone || '')
-      setCustomerEmailInput(payload.email || '')
-      setIsCreateCustomerModalOpen(false)
-      flash('New customer created and selected for this sale.')
-
-      // Sync the customer picker with latest server records without blocking the modal close.
-      api.get('/customers')
-        .then((res) => {
-          if (Array.isArray(res?.data)) setCustomers(res.data)
-        })
-        .catch(() => {})
-    } catch (err) {
-      setError(err?.response?.data?.error || err?.message || 'Failed to create customer')
-    } finally {
-      setCreatingCustomer(false)
-    }
-  }
 
   function selectProductOption(product) {
     if (!product?.id) return
@@ -291,42 +192,6 @@ export default function Sales() {
     if (normalizeText(value) === normalizeText(productLabel(selectedProductData))) return
     setSelectedProduct('')
     setPrice('')
-  }
-
-  function selectCustomerOption(customer) {
-    if (!customer?.id) return
-    setIsWalkInSale(false)
-    setCustomerId(String(customer.id))
-    setCustomerNameInput(String(customer.name || ''))
-    setCustomerPhoneInput(String(customer.phone || ''))
-    setCustomerEmailInput(String(customer.email || ''))
-    setSaveCustomerProfile(false)
-    setIsCustomerPickerOpen(false)
-  }
-
-  function handleCustomerNameChange(value) {
-    setCustomerNameInput(value)
-    setIsCustomerPickerOpen(true)
-    if (isWalkInSale && text(value)) setIsWalkInSale(false)
-    if (!selectedCustomerRecord) return
-    if (normalizeText(value) === normalizeText(customerLabel(selectedCustomerRecord))) return
-    setCustomerId('')
-  }
-
-  function handleCustomerPhoneChange(value) {
-    setCustomerPhoneInput(value)
-    if (isWalkInSale && text(value)) setIsWalkInSale(false)
-    if (!selectedCustomerRecord) return
-    if (text(value) === text(selectedCustomerRecord.phone)) return
-    setCustomerId('')
-  }
-
-  function handleCustomerEmailChange(value) {
-    setCustomerEmailInput(value)
-    if (isWalkInSale && text(value)) setIsWalkInSale(false)
-    if (!selectedCustomerRecord) return
-    if (normalizeText(value) === normalizeText(selectedCustomerRecord.email)) return
-    setCustomerId('')
   }
 
   function qtyError(nextQty, productId = selectedProduct, skip = -1) {
@@ -406,13 +271,6 @@ export default function Sales() {
     setIsProductPickerOpen(false)
     setPrice('')
     setQty('1')
-    setIsWalkInSale(true)
-    setCustomerId('')
-    setIsCustomerPickerOpen(false)
-    setSaveCustomerProfile(false)
-    setCustomerNameInput('')
-    setCustomerPhoneInput('')
-    setCustomerEmailInput('')
     setOrderNote('')
     setPaymentMethod('cash')
     setDiscountPercentage('')
@@ -459,27 +317,10 @@ export default function Sales() {
     if (cart.some((item, index) => !!qtyError(item.quantity, item.product_id, index))) return setError('Resolve cart stock issues first')
     if (cartHasLockedPriceOverride) return setError('This draft contains price overrides that require manager permission before checkout')
     if (total <= 0) return setError('Total must be greater than 0')
-    const trimmedName = String(customerNameInput || '').trim()
-    const trimmedPhone = String(customerPhoneInput || '').trim()
-    const trimmedEmail = String(customerEmailInput || '').trim()
     const trimmedOrderNote = String(orderNote || '').trim()
-    if (!isWalkInSale && !customerId && !trimmedName) return setError('Enter a customer name or select a saved customer before checkout')
-    const customerPayload = { is_walk_in: isWalkInSale, order_note: trimmedOrderNote || undefined }
-    if (!isWalkInSale && !customerId) {
-      customerPayload.name = trimmedName
-      if (trimmedPhone) customerPayload.phone = trimmedPhone
-      if (trimmedEmail) customerPayload.email = trimmedEmail
-      if (allowCustomerProfileSave && saveCustomerProfile) customerPayload.save_customer = true
-    }
     setPendingOrder({
       items: cart.map((item) => ({ ...item })),
-      customer_id: !isWalkInSale && customerId ? num(customerId) : null,
-      customer: {
-        ...customerPayload,
-        name: isWalkInSale ? walkInCustomerLabel : (selectedCustomerRecord?.name || trimmedName),
-        phone: isWalkInSale ? undefined : (selectedCustomerRecord?.phone || trimmedPhone || undefined),
-        email: isWalkInSale ? undefined : (selectedCustomerRecord?.email || trimmedEmail || undefined)
-      },
+      order_note: trimmedOrderNote || undefined,
       payment_method: paymentMethod,
       discount_percentage: discountPct,
       total
@@ -493,7 +334,6 @@ export default function Sales() {
   async function completeSale() {
     clearMsg()
     if (!pendingOrder) return setError('No pending order')
-    if (!pendingOrder.customer?.is_walk_in && !pendingOrder.customer_id && !String(pendingOrder.customer?.name || '').trim()) return setError('Customer name is required unless the sale is marked as walk-in')
     if (requiresBankTransferFields && !isBankAppValid) return setError('Bank App Used is required')
     if (requiresBankTransferFields && !isReferenceValid) return setError('Reference Number is required')
     if (!isAmountValid) return setError(requiresBankTransferFields ? 'Bank transfer amount must match the total amount exactly' : 'Payment must be greater than or equal to the total amount')
@@ -501,8 +341,7 @@ export default function Sales() {
       setLoading(true)
       const res = await api.post('/sales', {
         items: pendingOrder.items.map((item) => ({ product_id: item.product_id, quantity: item.quantity, unit_price: item.unit_price })),
-        customer_id: pendingOrder.customer_id || undefined,
-        customer: pendingOrder.customer,
+        order_note: pendingOrder.order_note,
         payment_method: pendingOrder.payment_method,
         payment_amount: round(tendered),
         bank_app_used: requiresBankTransferFields ? bankAppUsed : undefined,
@@ -540,9 +379,20 @@ export default function Sales() {
     } finally { setLoading(false) }
   }
 
+  async function loadReceiptFromHistory(receiptId) {
+    try {
+      const history = (await api.get(`/sales?receipt_no=${encodeURIComponent(receiptId)}`)).data
+      const matchedSale = Array.isArray(history) ? history.find((sale) => String(sale?.receipt_no || '').toUpperCase() === receiptId.toUpperCase()) : null
+      if (!matchedSale) return null
+      return matchedSale
+    } catch {
+      return null
+    }
+  }
+
   async function lookupReceipt(receiptValue = returnReceiptNo) {
     clearMsg()
-    const receiptId = String(receiptValue || '').trim()
+    const receiptId = extractScannedReceiptId(receiptValue)
     if (!receiptId) return setError('Enter a receipt ID')
     try {
       setLoading(true)
@@ -551,9 +401,17 @@ export default function Sales() {
       setReturnLookup(sale)
       setReturnQuantities(Object.fromEntries((sale.items || []).map((item) => [item.id, ''])))
     } catch (err) {
-      setReturnLookup(null)
-      setReturnQuantities({})
-      setError(err?.response?.data?.error || 'Receipt not found')
+      const fallbackSale = await loadReceiptFromHistory(receiptId)
+      if (fallbackSale) {
+        setReturnReceiptNo(receiptId)
+        setReturnLookup(fallbackSale)
+        setReturnQuantities(Object.fromEntries((fallbackSale.items || []).map((item) => [item.id, ''])))
+        flash(`Receipt ${receiptId} loaded from sales history.`)
+      } else {
+        setReturnLookup(null)
+        setReturnQuantities({})
+        setError(err?.response?.data?.error || 'Receipt not found')
+      }
     } finally { setLoading(false) }
   }
 
@@ -692,52 +550,9 @@ export default function Sales() {
 
           <div className="card" style={{ position: 'sticky', top: 80, height: 'fit-content' }}>
             <h3 style={{ marginBottom: 12 }}>POS Summary</h3>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}><input type="checkbox" checked={isWalkInSale} onChange={(e) => setIsWalkInSale(e.target.checked)} /><span>{walkInCustomerLabel} sale</span></label>
-            <div className="form-group" style={{ position: 'relative' }}>
-              <label className="form-label">Customer Name</label>
-              <input
-                className="form-input"
-                value={customerNameInput}
-                onChange={(e) => handleCustomerNameChange(e.target.value)}
-                onFocus={() => setIsCustomerPickerOpen(true)}
-                onBlur={() => window.setTimeout(() => setIsCustomerPickerOpen(false), 120)}
-                onKeyDown={(e) => {
-                  if (e.key !== 'Enter') return
-                  const exactCustomer = customers.find((customer) => normalizeText(customerLabel(customer)) === normalizeText(customerNameInput))
-                  if (!exactCustomer) return
-                  e.preventDefault()
-                  selectCustomerOption(exactCustomer)
-                }}
-                placeholder="Search from Customers or type a new customer name"
-              />
-              {isCustomerPickerOpen && (
-                <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, zIndex: 30, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 12px 30px rgba(15, 23, 42, 0.08)', maxHeight: 240, overflowY: 'auto' }}>
-                  {filteredCustomers.length === 0 ? (
-                    <div style={{ padding: '12px 14px', color: 'var(--text-light)', fontSize: 13 }}>No matching customer found. You can still use manual customer details.</div>
-                  ) : filteredCustomers.slice(0, 8).map((customer) => (
-                    <button
-                      type="button"
-                      key={customer.id}
-                      onMouseDown={(e) => {
-                        e.preventDefault()
-                        selectCustomerOption(customer)
-                      }}
-                      style={{ width: '100%', padding: '12px 14px', border: 'none', borderBottom: '1px solid rgba(148, 163, 184, 0.16)', background: String(customer.id) === String(customerId) ? '#fff7ed' : '#fff', textAlign: 'left', cursor: 'pointer' }}
-                    >
-                      <div style={{ fontWeight: 600, color: 'var(--text-dark)' }}>{customerLabel(customer)}</div>
-                      <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-light)' }}>
-                        {customer.phone || 'No phone saved'}{customer.email ? ` | ${customer.email}` : ''}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
+            <div style={{ marginBottom: 16, padding: '10px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 12, color: 'var(--text-mid)' }}>
+              Customer module is deprecated for POS checkout. New sales are recorded as walk-in.
             </div>
-            <div className="form-group"><label className="form-label">Customer Phone</label><input className="form-input" value={customerPhoneInput} onChange={(e) => handleCustomerPhoneChange(e.target.value)} placeholder="Optional phone number" /></div>
-            <div className="form-group"><label className="form-label">Customer Email / Gmail</label><input className="form-input" type="email" value={customerEmailInput} onChange={(e) => handleCustomerEmailChange(e.target.value)} placeholder="customer@gmail.com" /></div>
-            <button type="button" className="btn btn-secondary" onClick={openCreateCustomerModal} style={{ marginBottom: 16, width: '100%' }}>Create New Customer</button>
-            {customerId && selectedCustomerRecord && <div style={{ marginBottom: 16, padding: '10px 12px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, fontSize: 12, color: '#92400e' }}>Using customer profile from Customers: {customerLabel(selectedCustomerRecord)}{selectedCustomerRecord.email ? ` | ${selectedCustomerRecord.email}` : ''}. Editing these fields will switch to manual customer details for this sale.</div>}
-            {!isWalkInSale && !customerId && allowCustomerProfileSave && <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}><input type="checkbox" checked={saveCustomerProfile} onChange={(e) => setSaveCustomerProfile(e.target.checked)} />Save this named customer as a reusable profile</label>}
             <div className="form-group"><label className="form-label">Order Note</label><textarea className="form-input" rows="2" value={orderNote} onChange={(e) => setOrderNote(e.target.value)} /></div>
             <div className="form-group"><label className="form-label">Payment Method</label><select className="form-input" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>{(config.payment_methods || ['cash', 'mobile_bank_transfer']).map((method) => <option key={method} value={method}>{method === 'mobile_bank_transfer' ? 'Bank Transfer' : 'Cash'}</option>)}</select></div>
             <div className="form-group"><label className="form-label">Discount (%)</label><input className="form-input" type="number" min="0" max="100" step="0.01" value={allowDiscount ? discountPercentage : '0'} disabled={!allowDiscount} onChange={(e) => setDiscountPercentage(e.target.value)} /></div>
@@ -759,7 +574,7 @@ export default function Sales() {
               <h3 style={{ marginBottom: 12 }}>Accept Payment</h3>
               {!pendingOrder ? <p style={{ color: 'var(--text-light)' }}>No pending order. Build one in POS first.</p> : <>
                 <div className="table-wrap" style={{ marginBottom: 16 }}><table><thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Subtotal</th></tr></thead><tbody>{pendingOrder.items.map((item, index) => <tr key={`${item.product_id}-${index}`}><td>{item.name}</td><td>{item.quantity}</td><td>{fmt(item.unit_price)}</td><td style={{ fontWeight: 600 }}>{fmt(item.unit_price * item.quantity)}</td></tr>)}</tbody></table></div>
-                <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text-mid)' }}>Customer: {pendingOrder.customer?.name || '-'}{pendingOrder.customer?.phone ? ` | ${pendingOrder.customer.phone}` : ''}{pendingOrder.customer?.email ? ` | ${pendingOrder.customer.email}` : ''}{pendingOrder.customer?.order_note ? ` | Note: ${pendingOrder.customer.order_note}` : ''}</div>
+                <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text-mid)' }}>Order Note: {pendingOrder.order_note || '-'}</div>
                 <div className="form-group"><label className="form-label">Amount Received</label><input className="form-input" type="number" min="0.01" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} /></div>
                 {requiresBankTransferFields && <div className="form-group"><label className="form-label">Bank App Used *</label><select className="form-input" value={bankAppUsed} onChange={(e) => setBankAppUsed(e.target.value)}><option value="">Select mobile banking app</option>{MOBILE_BANK_APPS.map((name) => <option key={name} value={name}>{name}</option>)}</select></div>}
                 {requiresBankTransferFields && <div className="form-group"><label className="form-label">Reference Number *</label><input className="form-input" value={referenceNumber} onChange={(e) => setReferenceNumber(e.target.value)} /></div>}
@@ -772,7 +587,7 @@ export default function Sales() {
               <div ref={receiptRef}>
                 <div style={{ textAlign: 'center', marginBottom: 8 }}><h2 style={{ margin: 0, fontSize: 15 }}>Cecille&apos;s N&apos;Style</h2><div>Paid Receipt</div></div>
                 <div>Receipt: {lastReceipt.receipt_no}</div><div>Sale ID: {lastReceipt.sale_number}</div><div>Date: {fmtDate(lastReceipt.date || new Date())}</div>
-                <div>Customer: {lastReceipt.customer_name || '-'}</div><div>Phone: {lastReceipt.customer_phone || '-'}</div><div>Email: {lastReceipt.customer_email || '-'}</div><div>Payment: {lastReceipt.payment_method}</div>
+                <div>Payment: {lastReceipt.payment_method}</div>
                 <div>Order Note: {lastReceipt.order_note || '-'}</div>
                 <div>Bank App Used: {lastReceipt.bank_app_used || '-'}</div><div>Reference Number: {lastReceipt.reference_number || lastReceipt.payment_reference || '-'}</div>
                 <div>Subtotal: {fmt(lastReceipt.subtotal)}</div><div>Discount: {fmt(lastReceipt.discount)}</div>
@@ -803,9 +618,7 @@ export default function Sales() {
           {viewSale && <div className="card" style={{ marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}><h3>Sale Details - {viewSale.sale_number}</h3><button className="btn btn-secondary" onClick={() => setViewSale(null)}>Close</button></div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12, marginBottom: 12 }}>
-              <div><strong>Receipt: </strong>{viewSale.receipt_no}</div><div><strong>Customer: </strong>{viewSale.customer_name || '-'}</div><div><strong>Phone: </strong>{viewSale.customer_phone || '-'}</div>
-              <div><strong>Email: </strong>{viewSale.customer_email || '-'}</div>
-              <div><strong>Customer Source: </strong>{viewSale.customer_id ? 'Customer module' : (viewSale.customer_name === walkInCustomerLabel ? walkInCustomerLabel : 'Manual entry')}</div><div><strong>Date: </strong>{fmtDate(viewSale.date)}</div><div><strong>Clerk: </strong>{viewSale.clerk_name || '-'}</div>
+              <div><strong>Receipt: </strong>{viewSale.receipt_no}</div><div><strong>Date: </strong>{fmtDate(viewSale.date)}</div><div><strong>Clerk: </strong>{viewSale.clerk_name || '-'}</div>
               <div><strong>Payment: </strong>{viewSale.payment_method}</div><div><strong>Bank App Used: </strong>{viewSale.bank_app_used || '-'}</div><div><strong>Reference Number: </strong>{viewSale.reference_number || viewSale.payment_reference || '-'}</div>
               <div><strong>Subtotal: </strong>{fmt(viewSale.subtotal)}</div><div><strong>Discount: </strong>{fmt(viewSale.discount)}</div><div><strong>Total: </strong>{fmt(viewSale.total)}</div>
               <div><strong>Return: </strong>{viewSale.return_status}</div><div><strong>Received: </strong>{fmt(viewSale.amount_received)}</div><div><strong>Change: </strong>{fmt(viewSale.change_amount)}</div>
@@ -900,7 +713,20 @@ export default function Sales() {
             <div className="card" style={{ marginBottom: 16 }}>
               <h3 style={{ marginBottom: 12 }}>Receipt Lookup</h3>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, alignItems: 'end' }}>
-                <div className="form-group" style={{ marginBottom: 0 }}><label className="form-label">Receipt ID</label><input className="form-input" value={returnReceiptNo} onChange={(e) => setReturnReceiptNo(e.target.value)} /></div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Receipt ID</label>
+                  <input
+                    className="form-input"
+                    value={returnReceiptNo}
+                    onChange={(e) => setReturnReceiptNo(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return
+                      e.preventDefault()
+                      lookupReceipt(e.currentTarget.value)
+                    }}
+                    placeholder="Scan or type receipt id from Sales history"
+                  />
+                </div>
                 <button className="btn btn-primary" onClick={lookupReceipt}>Load Receipt</button>
               </div>
             </div>
@@ -947,44 +773,6 @@ export default function Sales() {
 
       {tab === 'report' && !report && <div className="card">No report data yet.</div>}
       {loading && <div style={{ marginTop: 16, color: 'var(--text-light)' }}>Loading...</div>}
-
-      <Modal
-        open={isCreateCustomerModalOpen}
-        onClose={closeCreateCustomerModal}
-        title="Create New Customer"
-        size="lg"
-        footer={(
-          <>
-            <button className="btn btn-secondary" onClick={closeCreateCustomerModal} disabled={creatingCustomer}>Cancel</button>
-            <button className="btn btn-primary" onClick={createCustomerFromModal} disabled={creatingCustomer}>
-              {creatingCustomer ? 'Creating...' : 'Create & Use Customer'}
-            </button>
-          </>
-        )}
-      >
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">Customer Name *</label>
-            <input className="form-input" value={newCustomerForm.name} onChange={(e) => setNewCustomerField('name', e.target.value)} />
-          </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">Phone</label>
-            <input className="form-input" value={newCustomerForm.phone} onChange={(e) => setNewCustomerField('phone', e.target.value)} />
-          </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">Email / Gmail</label>
-            <input className="form-input" type="email" value={newCustomerForm.email} onChange={(e) => setNewCustomerField('email', e.target.value)} />
-          </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">Address</label>
-            <input className="form-input" value={newCustomerForm.address} onChange={(e) => setNewCustomerField('address', e.target.value)} />
-          </div>
-          <div className="form-group" style={{ marginBottom: 0, gridColumn: '1 / -1' }}>
-            <label className="form-label">Notes</label>
-            <textarea className="form-input" rows="3" value={newCustomerForm.notes} onChange={(e) => setNewCustomerField('notes', e.target.value)} />
-          </div>
-        </div>
-      </Modal>
     </div>
   )
 }
