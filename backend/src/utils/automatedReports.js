@@ -128,19 +128,15 @@ async function ensureAutomatedReportsSchema() {
       CREATE TABLE IF NOT EXISTS bale_purchases (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         bale_batch_no VARCHAR(100) NOT NULL UNIQUE,
-        supplier_id BIGINT UNSIGNED NULL,
+        supplier_name VARCHAR(255),
         purchase_date DATE NOT NULL,
-        bale_type VARCHAR(120),
         bale_category VARCHAR(120),
         bale_cost DECIMAL(12,2) DEFAULT 0.00,
-        shipping_cost DECIMAL(12,2) DEFAULT 0.00,
-        other_charges DECIMAL(12,2) DEFAULT 0.00,
         total_purchase_cost DECIMAL(12,2) DEFAULT 0.00,
         payment_status ENUM('PAID', 'PARTIAL', 'UNPAID') DEFAULT 'UNPAID',
         notes TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `)
 
@@ -388,39 +384,30 @@ async function getBalePurchases(range) {
       bp.id,
       bp.bale_batch_no,
       bp.purchase_date,
-      COALESCE(NULLIF(s.name, ''), 'Unknown Supplier') AS supplier_name,
-      COALESCE(NULLIF(bp.bale_type, ''), NULLIF(bp.bale_category, ''), 'Unspecified Bale') AS bale_type,
+      bp.supplier_name,
+      COALESCE(NULLIF(bp.bale_category, ''), 'Unspecified Bale') AS bale_category,
       COALESCE(bp.bale_cost, 0) AS bale_cost,
-      COALESCE(bp.shipping_cost, 0) AS shipping_cost,
-      COALESCE(bp.other_charges, 0) AS other_charges,
-      COALESCE(bp.total_purchase_cost, COALESCE(bp.bale_cost, 0) + COALESCE(bp.shipping_cost, 0) + COALESCE(bp.other_charges, 0)) AS total_purchase_cost,
+      COALESCE(bp.total_purchase_cost, COALESCE(bp.bale_cost, 0)) AS total_purchase_cost,
       COALESCE(NULLIF(bp.payment_status, ''), 'UNPAID') AS payment_status
     FROM bale_purchases bp
-    LEFT JOIN suppliers s ON s.id = bp.supplier_id
     WHERE 1=1${dateFilter}
     ORDER BY bp.purchase_date DESC, bp.id DESC
   `, params)
 
   const totals = rows.reduce((acc, row) => {
     acc.baleCost += toNumber(row.bale_cost)
-    acc.shippingCost += toNumber(row.shipping_cost)
-    acc.otherCharges += toNumber(row.other_charges)
     acc.totalPurchaseCost += toNumber(row.total_purchase_cost)
     return acc
-  }, { baleCost: 0, shippingCost: 0, otherCharges: 0, totalPurchaseCost: 0 })
+  }, { baleCost: 0, totalPurchaseCost: 0 })
 
   return {
     rows: rows.map((row) => ({
       ...row,
       bale_cost: roundMoney(row.bale_cost),
-      shipping_cost: roundMoney(row.shipping_cost),
-      other_charges: roundMoney(row.other_charges),
       total_purchase_cost: roundMoney(row.total_purchase_cost)
     })),
     totals: {
       baleCost: roundMoney(totals.baleCost),
-      shippingCost: roundMoney(totals.shippingCost),
-      otherCharges: roundMoney(totals.otherCharges),
       totalPurchaseCost: roundMoney(totals.totalPurchaseCost)
     }
   }
