@@ -158,16 +158,14 @@ function normalizeBalePurchaseInput(payload, options = {}) {
 function normalizeBreakdownInput(payload, existing = {}) {
   const body = payload || {}
   const totalPieces = body.total_pieces !== undefined ? Number(body.total_pieces) : Number(existing.total_pieces || 0)
-  const saleableItems = body.saleable_items !== undefined ? Number(body.saleable_items) : Number(existing.saleable_items || 0)
-  const premiumItems = body.premium_items !== undefined ? Number(body.premium_items) : Number(existing.premium_items || 0)
   const standardItems = body.standard_items !== undefined ? Number(body.standard_items) : Number(existing.standard_items || 0)
   const lowGradeItems = body.low_grade_items !== undefined ? Number(body.low_grade_items) : Number(existing.low_grade_items || 0)
   const damagedItems = body.damaged_items !== undefined ? Number(body.damaged_items) : Number(existing.damaged_items || 0)
+  const saleableItems = standardItems + lowGradeItems
+  const premiumItems = 0
 
   const integerFields = [
     ['total_pieces', totalPieces],
-    ['saleable_items', saleableItems],
-    ['premium_items', premiumItems],
     ['standard_items', standardItems],
     ['low_grade_items', lowGradeItems],
     ['damaged_items', damagedItems]
@@ -180,11 +178,6 @@ function normalizeBreakdownInput(payload, existing = {}) {
     }
   }
 
-  if ((premiumItems + standardItems + lowGradeItems) > saleableItems) {
-    const err = new Error('premium_items + standard_items + low_grade_items cannot exceed saleable_items')
-    err.statusCode = 400
-    throw err
-  }
   if ((saleableItems + damagedItems) > totalPieces && totalPieces > 0) {
     const err = new Error('saleable_items + damaged_items cannot exceed total_pieces')
     err.statusCode = 400

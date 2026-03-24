@@ -9,8 +9,8 @@ export default function Users(){
   const [loading, setLoading] = useState(false)
   const [selectedUser, setSelectedUser] = useState(null)
   const [showDetails, setShowDetails] = useState(false)
-  const [archiveTarget, setArchiveTarget] = useState(null)
-  const [archiveLoading, setArchiveLoading] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
 
@@ -29,19 +29,19 @@ export default function Users(){
     setLoading(false)
   }
 
-  const handleArchive = async () => {
-    if (!archiveTarget || archiveLoading) return
-    setArchiveLoading(true)
+  const handleDelete = async () => {
+    if (!deleteTarget || deleteLoading) return
+    setDeleteLoading(true)
     setError(null)
     try {
-      await api.put(`/users/${archiveTarget.id}`, { is_active: 0 })
-      setSuccess('User archived successfully')
-      setArchiveTarget(null)
+      await api.delete(`/users/${deleteTarget.id}`)
+      setSuccess('User deleted successfully')
+      setDeleteTarget(null)
       await fetchUsers()
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to archive user')
+      setError(err.response?.data?.error || 'Failed to delete user')
     } finally {
-      setArchiveLoading(false)
+      setDeleteLoading(false)
     }
   }
 
@@ -109,8 +109,8 @@ export default function Users(){
                     <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12, marginRight: 4 }} onClick={() => navigate(`/users/${u.id}/edit`)}>
                       Edit
                     </button>
-                    <button className="btn btn-danger" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => setArchiveTarget(u)}>
-                      Archive
+                    <button className="btn btn-danger" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => setDeleteTarget(u)}>
+                      Delete
                     </button>
                   </td>
                 </tr>
@@ -177,12 +177,12 @@ export default function Users(){
       )}
 
       <ConfirmModal
-        open={!!archiveTarget}
-        onClose={() => setArchiveTarget(null)}
-        title="Archive User"
-        message={archiveTarget ? `Archive ${archiveTarget.username}? This will set the account inactive.` : ''}
-        onConfirm={handleArchive}
-        loading={archiveLoading}
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete User"
+        message={deleteTarget ? `Delete ${deleteTarget.username} permanently? This action cannot be undone.` : ''}
+        onConfirm={handleDelete}
+        loading={deleteLoading}
         danger
       />
     </div>

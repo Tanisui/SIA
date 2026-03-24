@@ -12,34 +12,70 @@ export default function Dashboard() {
   const timeStr = now.toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
 
   useEffect(() => {
-    api.get('/dashboard/stats')
-      .then(res => setStats(res.data))
-      .catch(err => console.error('dashboard stats error:', err))
-      .finally(() => setLoading(false))
+    let active = true
+
+    async function fetchStats(withLoader = false) {
+      if (withLoader) setLoading(true)
+      try {
+        const res = await api.get('/dashboard/stats')
+        if (!active) return
+        setStats(res.data)
+      } catch (err) {
+        if (active) console.error('dashboard stats error:', err)
+      } finally {
+        if (active && withLoader) setLoading(false)
+      }
+    }
+
+    fetchStats(true)
+    const intervalId = window.setInterval(() => fetchStats(false), 60000)
+
+    const handleFocus = () => fetchStats(false)
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') fetchStats(false)
+    }
+
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      active = false
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
   }, [])
 
   const fmt = (n) => {
-    if (n === null || n === undefined) return '-'
+    if (n === null || n === undefined) return '0'
     if (typeof n === 'number') return n.toLocaleString('en-PH')
     return String(n)
   }
 
   const fmtMoney = (n) => {
-    if (n === null || n === undefined) return '-'
-    return '\u20B1' + parseFloat(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    const amount = Number(n)
+    if (!Number.isFinite(amount)) return '\u20B10.00'
+    return '\u20B1' + amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   }
+
+  const monthlyBalesCount = stats ? (stats.bales_month_count ?? stats.bales_30d_count) : 0
+  const monthlyBaleSpend = stats ? (stats.bale_spend_month ?? stats.bale_spend_30d) : 0
 
   const cards = stats ? [
     { title: 'Total Sales', value: fmtMoney(stats.total_sales), sub: `${fmt(stats.total_orders)} orders all time`, icon: '\uD83E\uDDFE' },
     { title: "Today's Sales", value: fmtMoney(stats.today_sales), sub: `${fmt(stats.today_orders)} orders today`, icon: '\uD83D\uDCCA' },
     { title: 'Products', value: fmt(stats.products_count), sub: 'Active in catalog', icon: '\uD83D\uDC57' },
     { title: 'Low Stock', value: fmt(stats.low_stock_count), sub: 'Need restocking', icon: '\uD83D\uDCE6' },
+    { title: 'Bales Purchased (This Month)', value: fmt(monthlyBalesCount), sub: 'Auto resets every month', icon: '\uD83E\uDDFA' },
+    { title: 'Bale Spend (This Month)', value: fmtMoney(monthlyBaleSpend), sub: 'Updates from Bale Purchases', icon: '\uD83D\uDCB8' },
     { title: 'Open POs', value: fmt(stats.open_po_count), sub: 'Purchase orders', icon: '\uD83D\uDCCB' },
   ] : [
     { title: 'Total Sales', value: '-', sub: 'Loading...', icon: '\uD83E\uDDFE' },
     { title: "Today's Sales", value: '-', sub: 'Loading...', icon: '\uD83D\uDCCA' },
     { title: 'Products', value: '-', sub: 'Loading...', icon: '\uD83D\uDC57' },
     { title: 'Low Stock', value: '-', sub: 'Loading...', icon: '\uD83D\uDCE6' },
+    { title: 'Bales Purchased (This Month)', value: '-', sub: 'Loading...', icon: '\uD83E\uDDFA' },
+    { title: 'Bale Spend (This Month)', value: '-', sub: 'Loading...', icon: '\uD83D\uDCB8' },
     { title: 'Open POs', value: '-', sub: 'Loading...', icon: '\uD83D\uDCCB' },
   ]
 

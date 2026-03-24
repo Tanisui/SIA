@@ -29,8 +29,6 @@ function createDefaultBreakdownForm() {
   return {
     bale_purchase_id: '',
     total_pieces: '',
-    saleable_items: '',
-    premium_items: '',
     standard_items: '',
     low_grade_items: '',
     damaged_items: '',
@@ -98,8 +96,6 @@ function mapBreakdownToForm(row) {
   return {
     bale_purchase_id: row?.bale_purchase_id ? String(row.bale_purchase_id) : '',
     total_pieces: String(row?.total_pieces ?? ''),
-    saleable_items: String(row?.saleable_items ?? ''),
-    premium_items: String(row?.premium_items ?? ''),
     standard_items: String(row?.standard_items ?? ''),
     low_grade_items: String(row?.low_grade_items ?? ''),
     damaged_items: String(row?.damaged_items ?? ''),
@@ -115,7 +111,7 @@ export default function Purchasing() {
       : JSON.parse(localStorage.getItem('permissions') || '[]')
   )
 
-  const [activeTab, setActiveTab] = useState('purchase-orders')
+  const [activeTab, setActiveTab] = useState('bale-purchases')
   const [suppliers, setSuppliers] = useState([])
   const [products, setProducts] = useState([])
   const [orders, setOrders] = useState([])
@@ -261,13 +257,6 @@ export default function Purchasing() {
     [bales, breakdownForm.bale_purchase_id]
   )
 
-  const breakdownCostPerSaleable = useMemo(() => {
-    const saleable = Number(breakdownForm.saleable_items) || 0
-    const purchaseCost = Number(selectedBreakdownBale?.total_purchase_cost || 0)
-    if (saleable <= 0) return 0
-    return purchaseCost / saleable
-  }, [breakdownForm.saleable_items, selectedBreakdownBale?.total_purchase_cost])
-
   const baleTotals = useMemo(() => {
     return bales.reduce((acc, row) => {
       acc.bale_cost += Number(row.bale_cost || 0)
@@ -379,7 +368,7 @@ export default function Purchasing() {
     setEditingBaleId(row.id)
     setBaleForm({
       bale_batch_no: row.bale_batch_no || '',
-      supplier_id: row.supplier_id ? String(row.supplier_id) : '',
+      supplier_name: row.supplier_name || '',
       purchase_date: toDateInput(row.purchase_date),
       bale_type: row.bale_type || '',
       bale_category: row.bale_category || '',
@@ -401,8 +390,8 @@ export default function Purchasing() {
       setError('Bale Batch No. is required.')
       return
     }
-    if (!baleForm.supplier_id) {
-      setError('Supplier is required for bale purchases.')
+    if (!String(baleForm.supplier_name || '').trim()) {
+      setError('Supplier name is required for bale purchases.')
       return
     }
     if (!baleForm.purchase_date) {
@@ -412,7 +401,7 @@ export default function Purchasing() {
 
     const payload = {
       bale_batch_no: baleForm.bale_batch_no.trim(),
-      supplier_id: Number(baleForm.supplier_id),
+      supplier_name: String(baleForm.supplier_name || '').trim(),
       purchase_date: baleForm.purchase_date,
       bale_type: baleForm.bale_type || null,
       bale_category: baleForm.bale_category || null,
@@ -513,8 +502,6 @@ export default function Purchasing() {
 
     const payload = {
       total_pieces: toNonNegativeInteger(breakdownForm.total_pieces),
-      saleable_items: toNonNegativeInteger(breakdownForm.saleable_items),
-      premium_items: toNonNegativeInteger(breakdownForm.premium_items),
       standard_items: toNonNegativeInteger(breakdownForm.standard_items),
       low_grade_items: toNonNegativeInteger(breakdownForm.low_grade_items),
       damaged_items: toNonNegativeInteger(breakdownForm.damaged_items),
@@ -522,13 +509,10 @@ export default function Purchasing() {
       notes: breakdownForm.notes || null
     }
 
-    const saleableComposition = payload.premium_items + payload.standard_items + payload.low_grade_items
-    if (saleableComposition > payload.saleable_items) {
-      setError('Premium + Standard + Low-grade cannot exceed Saleable Items.')
-      return
-    }
+    payload.saleable_items = payload.standard_items + payload.low_grade_items
+    payload.premium_items = 0
     if (payload.saleable_items + payload.damaged_items > payload.total_pieces && payload.total_pieces > 0) {
-      setError('Saleable Items + Damaged cannot exceed Total Pieces.')
+      setError('Standard + Low-grade + Damaged cannot exceed Total Pieces.')
       return
     }
 
@@ -550,7 +534,7 @@ export default function Purchasing() {
         <div>
           <h1 className="page-title">Purchasing & Bale Workflow</h1>
           <p className="page-subtitle">
-            Manage supplier purchase orders, bale purchases, and bale breakdown encoding in one workspace.
+            Manage bale purchases, bale breakdown encoding, and expense planning in one workspace.
           </p>
         </div>
       </div>
@@ -561,13 +545,6 @@ export default function Purchasing() {
       ) : null}
 
       <div className="purchase-tabs">
-        <button
-          className={`purchase-tab ${activeTab === 'purchase-orders' ? 'purchase-tab-active' : ''}`}
-          onClick={() => setActiveTab('purchase-orders')}
-          type="button"
-        >
-          Purchase Orders
-        </button>
         <button
           className={`purchase-tab ${activeTab === 'bale-purchases' ? 'purchase-tab-active' : ''}`}
           onClick={() => setActiveTab('bale-purchases')}
@@ -1007,26 +984,6 @@ export default function Purchasing() {
                   />
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Saleable Items</label>
-                  <input
-                    className="form-input"
-                    type="number"
-                    min={0}
-                    value={breakdownForm.saleable_items}
-                    onChange={(event) => setBreakdownForm((prev) => ({ ...prev, saleable_items: event.target.value }))}
-                  />
-                </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Premium Items</label>
-                  <input
-                    className="form-input"
-                    type="number"
-                    min={0}
-                    value={breakdownForm.premium_items}
-                    onChange={(event) => setBreakdownForm((prev) => ({ ...prev, premium_items: event.target.value }))}
-                  />
-                </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label">Standard Items</label>
                   <input
                     className="form-input"
@@ -1078,8 +1035,8 @@ export default function Purchasing() {
                     <div style={{ fontWeight: 700 }}>{fmtCurrency(selectedBreakdownBale?.total_purchase_cost || 0)}</div>
                   </div>
                   <div>
-                    <div style={{ color: 'var(--text-light)', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Cost per Saleable Item</div>
-                    <div style={{ fontWeight: 700 }}>{fmtCurrency(breakdownCostPerSaleable)}</div>
+                    <div style={{ color: 'var(--text-light)', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Computed Saleable Items</div>
+                    <div style={{ fontWeight: 700 }}>{fmtNumber((Number(breakdownForm.standard_items) || 0) + (Number(breakdownForm.low_grade_items) || 0))}</div>
                   </div>
                 </div>
               </div>
@@ -1107,19 +1064,16 @@ export default function Purchasing() {
                     <th>Supplier</th>
                     <th>Breakdown Date</th>
                     <th>Total Pieces</th>
-                    <th>Saleable</th>
-                    <th>Premium</th>
                     <th>Standard</th>
                     <th>Low-grade</th>
                     <th>Damaged</th>
-                    <th>Cost / Saleable</th>
                     <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {breakdowns.length === 0 ? (
                     <tr>
-                      <td colSpan={11} style={{ textAlign: 'center', color: 'var(--text-light)' }}>
+                      <td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-light)' }}>
                         {loading ? 'Loading breakdown records...' : 'No bale breakdown records found for this filter.'}
                       </td>
                     </tr>
@@ -1129,12 +1083,9 @@ export default function Purchasing() {
                       <td>{row.supplier_name || '-'}</td>
                       <td>{fmtDate(row.breakdown_date || row.purchase_date)}</td>
                       <td>{fmtNumber(row.total_pieces)}</td>
-                      <td>{fmtNumber(row.saleable_items)}</td>
-                      <td>{fmtNumber(row.premium_items)}</td>
                       <td>{fmtNumber(row.standard_items)}</td>
                       <td>{fmtNumber(row.low_grade_items)}</td>
                       <td>{fmtNumber(row.damaged_items)}</td>
-                      <td>{fmtCurrency(row.cost_per_saleable_item)}</td>
                       <td>
                         <button
                           className="btn btn-outline btn-sm"
@@ -1156,6 +1107,7 @@ export default function Purchasing() {
           </div>
         </>
       ) : null}
+
     </div>
   )
 }

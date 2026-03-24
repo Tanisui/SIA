@@ -19,7 +19,7 @@ export default function UserFormPage({ mode = 'create' }) {
   const { id } = useParams()
   const isEdit = mode === 'edit'
 
-  const [rolesOptions, setRolesOptions] = useState([])                                                                              
+  const [rolesOptions, setRolesOptions] = useState([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [formData, setFormData] = useState(DEFAULT_FORM)
@@ -28,7 +28,7 @@ export default function UserFormPage({ mode = 'create' }) {
 
   const [openSaveConfirm, setOpenSaveConfirm] = useState(false)
   const [openCancelConfirm, setOpenCancelConfirm] = useState(false)
-  const [openArchiveConfirm, setOpenArchiveConfirm] = useState(false)
+  const [openDeleteConfirm, setOpenDeleteConfirm] = useState(false)
 
   useEffect(() => {
     let mounted = true
@@ -153,18 +153,18 @@ export default function UserFormPage({ mode = 'create' }) {
     }
   }
 
-  const archiveRecord = async () => {
+  const deleteRecord = async () => {
     if (!isEdit || saving) return
     setSaving(true)
     setError(null)
     try {
-      await api.put(`/users/${id}`, { is_active: 0 })
+      await api.delete(`/users/${id}`)
       navigate('/users')
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to archive user')
+      setError(err?.response?.data?.error || 'Failed to delete user')
     } finally {
       setSaving(false)
-      setOpenArchiveConfirm(false)
+      setOpenDeleteConfirm(false)
     }
   }
 
@@ -257,8 +257,8 @@ export default function UserFormPage({ mode = 'create' }) {
                 Cancel
               </button>
               {isEdit && (
-                <button type="button" className="btn btn-danger" onClick={() => setOpenArchiveConfirm(true)} disabled={saving}>
-                  Archive
+                <button type="button" className="btn btn-danger" onClick={() => setOpenDeleteConfirm(true)} disabled={saving}>
+                  Delete
                 </button>
               )}
             </div>
@@ -284,11 +284,11 @@ export default function UserFormPage({ mode = 'create' }) {
       />
 
       <ConfirmModal
-        open={openArchiveConfirm}
-        onClose={() => setOpenArchiveConfirm(false)}
-        title="Archive User"
-        message="Archive this user now? The account will be inactive."
-        onConfirm={archiveRecord}
+        open={openDeleteConfirm}
+        onClose={() => setOpenDeleteConfirm(false)}
+        title="Delete User"
+        message="Delete this user permanently? This action cannot be undone."
+        onConfirm={deleteRecord}
         loading={saving}
         danger
       />

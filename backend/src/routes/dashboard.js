@@ -60,6 +60,40 @@ router.get('/stats', verifyToken, async (req, res) => {
     )
     results.open_po_count = openPO[0].count || 0
 
+    // Lean bale snapshot (current calendar month)
+    results.bales_month_count = 0
+    results.bale_spend_month = 0
+    // Backward-compatible aliases for existing frontend fields.
+    results.bales_30d_count = 0
+    results.bale_spend_30d = 0
+
+    try {
+      const [baleSnapshot] = await db.pool.query(
+        `SELECT
+           COALESCE(SUM(
+             CASE WHEN bp.purchase_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+                    AND bp.purchase_date < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)
+               THEN 1 ELSE 0 END
+           ), 0) AS bales_month_count,
+           COALESCE(SUM(
+             CASE WHEN bp.purchase_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+                    AND bp.purchase_date < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)
+               THEN COALESCE(bp.total_purchase_cost, bp.bale_cost, 0)
+               ELSE 0
+             END
+           ), 0) AS bale_spend_month
+         FROM bale_purchases bp`
+      )
+      results.bales_month_count = Number(baleSnapshot[0]?.bales_month_count) || 0
+      results.bale_spend_month = parseFloat(baleSnapshot[0]?.bale_spend_month) || 0
+      results.bales_30d_count = results.bales_month_count
+      results.bale_spend_30d = results.bale_spend_month
+    } catch (err) {
+      if (err?.code !== 'ER_NO_SUCH_TABLE') {
+        console.error('dashboard bale month snapshot query error:', err)
+      }
+    }
+
     // Recent sales (last 5)
     const [recentSales] = await db.pool.query(
       `SELECT s.id, s.sale_number, s.total, s.payment_method, s.date, u.username AS clerk
