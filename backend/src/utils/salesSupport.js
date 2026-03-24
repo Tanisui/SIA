@@ -2,6 +2,7 @@ const db = require('../database')
 
 const DEFAULT_TAX_RATE = 0.12
 const PAYMENT_METHODS = ['cash', 'mobile_bank_transfer']
+const WALK_IN_CUSTOMER_LABEL = 'Walk-in Customer'
 const MOBILE_BANK_APPS = [
   'BDO Online',
   'BPI Online',
@@ -91,8 +92,45 @@ async function ensureSalesSchema() {
       [String(DEFAULT_TAX_RATE)]
     )
 
+    const posPermissions = [
+      ['sales.discount', 'Allow applying percentage discounts during POS checkout'],
+      ['sales.price_override', 'Allow overriding line-item selling prices during POS checkout']
+    ]
+    for (const [name, description] of posPermissions) {
+      await db.pool.query(
+        'INSERT IGNORE INTO permissions (name, description) VALUES (?, ?)',
+        [name, description]
+      ).catch(() => {})
+    }
+
+    const rolePermissionGrants = {
+      Admin: ['sales.discount', 'sales.price_override'],
+      Manager: ['sales.discount', 'sales.price_override']
+    }
+    for (const [roleName, permissions] of Object.entries(rolePermissionGrants)) {
+      const [roleRows] = await db.pool.query(
+        'SELECT id FROM roles WHERE name = ? LIMIT 1',
+        [roleName]
+      ).catch(() => [[]])
+      if (!roleRows.length) continue
+
+      for (const permissionName of permissions) {
+        const [permissionRows] = await db.pool.query(
+          'SELECT id FROM permissions WHERE name = ? LIMIT 1',
+          [permissionName]
+        ).catch(() => [[]])
+        if (!permissionRows.length) continue
+
+        await db.pool.query(
+          'INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)',
+          [roleRows[0].id, permissionRows[0].id]
+        ).catch(() => {})
+      }
+    }
+
     await db.pool.query('ALTER TABLE sales ADD COLUMN customer_name_snapshot VARCHAR(255) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sales ADD COLUMN customer_phone_snapshot VARCHAR(64) NULL').catch(() => {})
+    await db.pool.query('ALTER TABLE sales ADD COLUMN customer_email_snapshot VARCHAR(255) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sales ADD COLUMN order_note TEXT NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sales_payments ADD COLUMN bank_app_used VARCHAR(128) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sale_items ADD COLUMN product_name_snapshot VARCHAR(255) NULL').catch(() => {})
@@ -101,6 +139,7 @@ async function ensureSalesSchema() {
     await db.pool.query('ALTER TABLE sale_items ADD COLUMN barcode_snapshot VARCHAR(128) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sale_items ADD COLUMN size_snapshot VARCHAR(64) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sale_items ADD COLUMN color_snapshot VARCHAR(64) NULL').catch(() => {})
+    await db.pool.query("ALTER TABLE products ADD COLUMN status ENUM('available','sold','damaged','reserved','archived') DEFAULT 'available'").catch(() => {})
 
     // Keep older databases compatible when this column was introduced after table creation.
     await db.pool.query('ALTER TABLE sale_return_items ADD COLUMN accounting_reference VARCHAR(255) NULL')
@@ -217,7 +256,8 @@ async function loadProductsForSale(conn, productIds) {
   return products
 }
 
-async function prepareSaleItems(conn, items) {
+async function prepareSaleItems(conn, items, options = {}) {
+  const allowPriceOverride = options.allowPriceOverride === true
   const normalizedItems = Array.isArray(items)
     ? items
         .map((item) => ({
@@ -262,13 +302,22 @@ async function prepareSaleItems(conn, items) {
   let subtotal = 0
   const processedItems = normalizedItems.map((item) => {
     const product = productRows.get(item.product_id)
-    const unitPrice = item.unit_price !== undefined && item.unit_price !== null
+    const hasExplicitUnitPrice = item.unit_price !== undefined && item.unit_price !== null && String(item.unit_price) !== ''
+    const defaultUnitPrice = roundMoney(product.price)
+    const requestedUnitPrice = hasExplicitUnitPrice
       ? Number(item.unit_price)
-      : Number(product.price)
+      : defaultUnitPrice
 
-    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+    if (!Number.isFinite(requestedUnitPrice) || requestedUnitPrice < 0) {
       const err = new Error('unit_price must be zero or greater')
       err.statusCode = 400
+      throw err
+    }
+
+    const unitPrice = roundMoney(requestedUnitPrice)
+    if (hasExplicitUnitPrice && unitPrice !== defaultUnitPrice && !allowPriceOverride) {
+      const err = new Error(`Price override is not allowed for ${product.name}`)
+      err.statusCode = 403
       throw err
     }
 
@@ -304,7 +353,16 @@ async function applySaleInventoryChanges(conn, processedItems, productRows, user
     const newQty = currentQty - item.quantity
     currentQtyByProduct.set(item.product_id, newQty)
 
-    await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, item.product_id])
+    await conn.query(
+      `UPDATE products
+       SET stock_quantity = ?,
+           status = CASE
+             WHEN ? <= 0 THEN 'sold'
+             ELSE COALESCE(status, 'available')
+           END
+       WHERE id = ?`,
+      [newQty, newQty, item.product_id]
+    )
     await conn.query(
       `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after, reference)
        VALUES (?, 'OUT', ?, ?, ?, ?, ?)`,
@@ -376,6 +434,7 @@ async function getSaleById(conn, saleId) {
       u.username AS clerk_name,
       COALESCE(s.customer_name_snapshot, c.name) AS customer_name,
       COALESCE(s.customer_phone_snapshot, c.phone) AS customer_phone,
+      COALESCE(s.customer_email_snapshot, c.email) AS customer_email,
       sp.amount_received,
       sp.change_amount,
       sp.bank_app_used,
@@ -525,7 +584,21 @@ async function processSaleReturn(conn, sale, requestedItems, userId, reason, acc
     const normalizedReason = String(reason || '').trim()
     const returnReasonText = normalizedReason || `Sale return (${normalizedDisposition})`
 
-    await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [qtyAfterReturn, item.product_id])
+    if (normalizedDisposition === 'RESTOCK') {
+      await conn.query(
+        `UPDATE products
+         SET stock_quantity = ?, status = 'available'
+         WHERE id = ?`,
+        [qtyAfterReturn, item.product_id]
+      )
+    } else {
+      await conn.query(
+        `UPDATE products
+         SET stock_quantity = ?
+         WHERE id = ?`,
+        [qtyAfterReturn, item.product_id]
+      )
+    }
     await conn.query(
       `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after, reference)
        VALUES (?, 'RETURN', ?, ?, ?, ?, ?)`,
@@ -542,7 +615,17 @@ async function processSaleReturn(conn, sale, requestedItems, userId, reason, acc
     if (normalizedDisposition !== 'RESTOCK') {
       const qtyAfterStockOut = Math.max(qtyAfterReturn - item.quantity, 0)
       product.stock_quantity = qtyAfterStockOut
-      await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [qtyAfterStockOut, item.product_id])
+      const dispositionStatus = normalizedDisposition === 'DAMAGE' ? 'damaged' : 'archived'
+      await conn.query(
+        `UPDATE products
+         SET stock_quantity = ?,
+             status = CASE
+               WHEN ? <= 0 THEN ?
+               ELSE COALESCE(status, 'available')
+             END
+         WHERE id = ?`,
+        [qtyAfterStockOut, qtyAfterStockOut, dispositionStatus, item.product_id]
+      )
       await conn.query(
         `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after, reference)
          VALUES (?, 'OUT', ?, ?, ?, ?, ?)`,
@@ -582,6 +665,7 @@ async function processSaleReturn(conn, sale, requestedItems, userId, reason, acc
 module.exports = {
   DEFAULT_TAX_RATE,
   PAYMENT_METHODS,
+  WALK_IN_CUSTOMER_LABEL,
   MOBILE_BANK_APPS,
   roundMoney,
   normalizeDiscountPercentage,

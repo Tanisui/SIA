@@ -1,0 +1,113 @@
+{
+  "generated_at": "2026-03-23T12:00:00.000Z",
+  "filters": {
+    "from": "2026-03-01",
+    "to": "2026-03-23"
+  },
+  "summary": {
+    "totalSales": 125430.5,
+    "totalBalePurchases": 84500,
+    "grossProfit": 40930.5,
+    "balesPurchased": 6,
+    "itemsAddedToInventory": 412,
+    "itemsSold": 268,
+    "damagedUnsellableItems": 34,
+    "remainingSaleableItems": 110
+  },
+  "balePurchases": [
+    {
+      "id": 11,
+      "bale_batch_no": "BATCH-2026-0315-01",
+      "purchase_date": "2026-03-15",
+      "supplier_name": "North Luzon Textile Lots",
+      "bale_type": "Dresses Mixed",
+      "bale_cost": 15000,
+      "shipping_cost": 1200,
+      "other_charges": 300,
+      "total_purchase_cost": 16500,
+      "payment_status": "PAID"
+    }
+  ],
+  "balePurchasesTotals": {
+    "baleCost": 77000,
+    "shippingCost": 6100,
+    "otherCharges": 1400,
+    "totalPurchaseCost": 84500
+  },
+  "baleBreakdowns": [
+    {
+      "bale_purchase_id": 11,
+      "bale_batch_no": "BATCH-2026-0315-01",
+      "total_pieces": 92,
+      "saleable_items": 84,
+      "premium_items": 18,
+      "standard_items": 42,
+      "low_grade_items": 24,
+      "damaged_items": 8,
+      "cost_per_saleable_item": 196.43
+    }
+  ],
+  "salesByBale": [
+    {
+      "date_sold": "2026-03-21T06:16:21.000Z",
+      "item_code": "ITM-000783",
+      "product_name": "Floral Midi Dress",
+      "category": "Dresses",
+      "bale_batch_no": "BATCH-2026-0315-01",
+      "selling_price": 649,
+      "quantity": 1,
+      "sales_total": 649
+    }
+  ],
+  "salesByBaleTotals": {
+    "quantity": 268,
+    "salesTotal": 125430.5
+  },
+  "baleProfitability": [
+    {
+      "bale_purchase_id": 11,
+      "bale_batch_no": "BATCH-2026-0315-01",
+      "supplier_name": "North Luzon Textile Lots",
+      "bale_type": "Dresses Mixed",
+      "total_purchase_cost": 16500,
+      "revenue_generated": 28120,
+      "gross_profit": 11620,
+      "sold_pieces": 43,
+      "remaining_pieces": 41,
+      "saleable_items": 84,
+      "damaged_items": 8,
+      "sell_through_rate": 51.19
+    }
+  ],
+  "profitabilityHighlights": {
+    "best_performing_bale": {
+      "bale_batch_no": "BATCH-2026-0315-01",
+      "gross_profit": 11620,
+      "supplier_name": "North Luzon Textile Lots"
+    },
+    "worst_performing_bale": {
+      "bale_batch_no": "BATCH-2026-0308-04",
+      "gross_profit": -1200,
+      "supplier_name": "Metro Surplus Imports"
+    }
+  },
+  "supplierPerformance": [
+    {
+      "supplier_name": "North Luzon Textile Lots",
+      "number_of_bales_purchased": 3,
+      "average_bale_cost": 16133.33,
+      "average_saleable_items": 81.67,
+      "average_damaged_items": 7.33,
+      "total_revenue_generated": 69400,
+      "estimated_gross_profit": 21000,
+      "best_performing_bale": "BATCH-2026-0315-01"
+    }
+  ],
+  "inventoryMovement": {
+    "openingInventory": 202,
+    "itemsAddedFromBales": 178,
+    "itemsSold": 268,
+    "damagedLoss": 12,
+    "endingInventory": 100
+  }
+}

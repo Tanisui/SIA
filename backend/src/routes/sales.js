@@ -5,6 +5,7 @@ const { verifyToken, authorize } = require('../middleware/authMiddleware')
 const {
   PAYMENT_METHODS,
   MOBILE_BANK_APPS,
+  WALK_IN_CUSTOMER_LABEL,
   roundMoney,
   normalizeDiscountPercentage,
   ensureSalesSchema,
@@ -33,6 +34,109 @@ function getErrorMessage(err, fallback) {
   return err?.message || fallback
 }
 
+function hasPermission(permissions, required) {
+  if (!required) return true
+  if (!Array.isArray(permissions) || !permissions.length) return false
+  if (permissions.includes('admin.*') || permissions.includes(required)) return true
+
+  return permissions.some((permission) => {
+    if (!String(permission).endsWith('.*')) return false
+    const prefix = String(permission).slice(0, -2)
+    return prefix && String(required).startsWith(`${prefix}.`)
+  })
+}
+
+function normalizeOptionalText(value) {
+  const normalized = String(value || '').trim()
+  return normalized || null
+}
+
+async function resolveSaleCustomer(conn, { customerId, customerPayload, canCreateCustomerProfile }) {
+  const requestedCustomerId = Number(customerId)
+  const orderNote = normalizeOptionalText(customerPayload?.order_note)
+  const requestedName = normalizeOptionalText(customerPayload?.name)
+  const requestedPhone = normalizeOptionalText(customerPayload?.phone)
+  const requestedEmail = normalizeOptionalText(customerPayload?.email)
+  const saveCustomerProfile = customerPayload?.save_customer === true
+  const isWalkIn = customerPayload?.is_walk_in === true || (!requestedCustomerId && !requestedName && !requestedPhone && !requestedEmail)
+
+  if (Number.isInteger(requestedCustomerId) && requestedCustomerId > 0) {
+    const [customerRows] = await conn.query(
+      'SELECT id, name, phone, email FROM customers WHERE id = ? LIMIT 1',
+      [requestedCustomerId]
+    )
+    if (!customerRows.length) {
+      throw createHttpError(400, 'invalid customer_id')
+    }
+
+    return {
+      resolvedCustomerId: requestedCustomerId,
+      customerNameSnapshot: normalizeOptionalText(customerRows[0].name) || WALK_IN_CUSTOMER_LABEL,
+      customerPhoneSnapshot: normalizeOptionalText(customerRows[0].phone),
+      customerEmailSnapshot: normalizeOptionalText(customerRows[0].email),
+      orderNote
+    }
+  }
+
+  if (isWalkIn) {
+    return {
+      resolvedCustomerId: null,
+      customerNameSnapshot: WALK_IN_CUSTOMER_LABEL,
+      customerPhoneSnapshot: null,
+      customerEmailSnapshot: null,
+      orderNote
+    }
+  }
+
+  if (!requestedName) {
+    throw createHttpError(400, 'customer.name is required unless the sale is marked as walk-in')
+  }
+
+  if (!saveCustomerProfile) {
+    return {
+      resolvedCustomerId: null,
+      customerNameSnapshot: requestedName,
+      customerPhoneSnapshot: requestedPhone,
+      customerEmailSnapshot: requestedEmail,
+      orderNote
+    }
+  }
+
+  if (!canCreateCustomerProfile) {
+    throw createHttpError(403, 'You do not have permission to create customer profiles during checkout')
+  }
+
+  const [existingCustomers] = await conn.query(
+    `SELECT id
+     FROM customers
+     WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
+       AND COALESCE(TRIM(phone), '') = COALESCE(TRIM(?), '')
+       AND COALESCE(LOWER(TRIM(email)), '') = COALESCE(LOWER(TRIM(?)), '')
+     ORDER BY id ASC
+     LIMIT 1`,
+    [requestedName, requestedPhone, requestedEmail]
+  )
+
+  let resolvedCustomerId = null
+  if (existingCustomers.length) {
+    resolvedCustomerId = Number(existingCustomers[0].id)
+  } else {
+    const [customerInsert] = await conn.query(
+      'INSERT INTO customers (name, phone, email, notes) VALUES (?, ?, ?, ?)',
+      [requestedName, requestedPhone, requestedEmail, orderNote]
+    )
+    resolvedCustomerId = Number(customerInsert.insertId)
+  }
+
+  return {
+    resolvedCustomerId,
+    customerNameSnapshot: requestedName,
+    customerPhoneSnapshot: requestedPhone,
+    customerEmailSnapshot: requestedEmail,
+    orderNote
+  }
+}
+
 async function getLockedSale(conn, { saleId, receiptNo }) {
   const [rows] = saleId
     ? await conn.query('SELECT id FROM sales WHERE id = ? FOR UPDATE', [saleId])
@@ -45,11 +149,16 @@ async function getLockedSale(conn, { saleId, receiptNo }) {
 router.get('/config', verifyToken, authorize(['sales.view', 'sales.create']), async (req, res) => {
   try {
     await ensureSalesSchema()
+    const permissions = Array.isArray(req.auth?.permissions) ? req.auth.permissions : []
     res.json({
       discount_type: 'percentage',
       tax_rate: 0,
       tax_rate_percentage: 0,
-      payment_methods: PAYMENT_METHODS
+      payment_methods: PAYMENT_METHODS,
+      allow_discount: hasPermission(permissions, 'sales.discount'),
+      allow_price_override: hasPermission(permissions, 'sales.price_override'),
+      allow_customer_profile_save: hasPermission(permissions, 'customers.create'),
+      walk_in_customer_label: WALK_IN_CUSTOMER_LABEL
     })
   } catch (err) {
     console.error(err)
@@ -210,7 +319,8 @@ router.get('/transactions', verifyToken, authorize('sales.view'), async (req, re
         sp.reference_number,
         u.username AS user_name,
         COALESCE(s.customer_name_snapshot, c.name) AS customer_name,
-        COALESCE(s.customer_phone_snapshot, c.phone) AS customer_phone
+        COALESCE(s.customer_phone_snapshot, c.phone) AS customer_phone,
+        COALESCE(s.customer_email_snapshot, c.email) AS customer_email
       FROM sales_payments sp
       JOIN sales s ON s.id = sp.sale_id
       LEFT JOIN users u ON u.id = sp.received_by
@@ -300,6 +410,7 @@ router.get('/', verifyToken, authorize('sales.view'), async (req, res) => {
         u.username AS clerk_name,
         COALESCE(s.customer_name_snapshot, c.name) AS customer_name,
         COALESCE(s.customer_phone_snapshot, c.phone) AS customer_phone,
+        COALESCE(s.customer_email_snapshot, c.email) AS customer_email,
         sp.amount_received,
         sp.change_amount,
         sp.bank_app_used,
@@ -386,6 +497,10 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
       reference_number,
       payment_reference
     } = req.body || {}
+    const permissions = Array.isArray(req.auth?.permissions) ? req.auth.permissions : []
+    const canApplyDiscount = hasPermission(permissions, 'sales.discount')
+    const canOverridePrice = hasPermission(permissions, 'sales.price_override')
+    const canCreateCustomerProfile = hasPermission(permissions, 'customers.create')
 
     if (!PAYMENT_METHODS.includes(String(payment_method))) {
       throw createHttpError(400, 'invalid payment_method')
@@ -396,8 +511,14 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
       throw createHttpError(400, 'payment_amount must be greater than 0')
     }
 
-    const { processedItems, subtotal, productRows } = await prepareSaleItems(conn, items)
+    const { processedItems, subtotal, productRows } = await prepareSaleItems(conn, items, {
+      allowPriceOverride: canOverridePrice
+    })
     const discountPct = normalizeDiscountPercentage(discount_percentage)
+    if (discountPct > 0 && !canApplyDiscount) {
+      throw createHttpError(403, 'You do not have permission to apply discounts')
+    }
+
     const discountAmt = roundMoney(subtotal * (discountPct / 100))
     const taxableBase = Math.max(subtotal - discountAmt, 0)
     const taxAmt = 0
@@ -408,7 +529,11 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     }
 
     const amountReceived = roundMoney(tenderedAmount)
-    if (amountReceived < total) {
+    if (String(payment_method) === 'mobile_bank_transfer') {
+      if (amountReceived !== total) {
+        throw createHttpError(400, 'bank transfer payment must match the exact sale total')
+      }
+    } else if (amountReceived < total) {
       throw createHttpError(400, 'payment must be greater than or equal to total amount')
     }
 
@@ -430,57 +555,31 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     const saleNumber = await generateDocumentNumber(conn, 'sales', 'sale_number', 'SAL')
     const receiptNo = await generateDocumentNumber(conn, 'sales', 'receipt_no', 'RCT')
 
-    let customerNameSnapshot = String(customer?.name || '').trim()
-    let customerPhoneSnapshot = String(customer?.phone || '').trim() || null
-    const orderNote = String(customer?.order_note || '').trim() || null
-
-    if (!customerNameSnapshot && customer_id) {
-      const [customerRows] = await conn.query('SELECT name, phone FROM customers WHERE id = ? LIMIT 1', [Number(customer_id)])
-      if (customerRows.length) {
-        customerNameSnapshot = String(customerRows[0].name || '').trim()
-        if (!customerPhoneSnapshot) customerPhoneSnapshot = String(customerRows[0].phone || '').trim() || null
-      }
-    }
-
-    if (!customerNameSnapshot) {
-      throw createHttpError(400, 'customer.name is required')
-    }
-
-    let resolvedCustomerId = customer_id ? Number(customer_id) : null
-    if (!resolvedCustomerId) {
-      const [existingCustomers] = await conn.query(
-        `SELECT id
-         FROM customers
-         WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
-           AND COALESCE(TRIM(phone), '') = COALESCE(TRIM(?), '')
-         ORDER BY id ASC
-         LIMIT 1`,
-        [customerNameSnapshot, customerPhoneSnapshot]
-      )
-
-      if (existingCustomers.length) {
-        resolvedCustomerId = Number(existingCustomers[0].id)
-      } else {
-        const [customerInsert] = await conn.query(
-          'INSERT INTO customers (name, phone, notes) VALUES (?, ?, ?)',
-          [customerNameSnapshot, customerPhoneSnapshot, orderNote || null]
-        )
-        resolvedCustomerId = Number(customerInsert.insertId)
-      }
-    }
+    const {
+      resolvedCustomerId,
+      customerNameSnapshot,
+      customerPhoneSnapshot,
+      customerEmailSnapshot,
+      orderNote
+    } = await resolveSaleCustomer(conn, {
+      customerId: customer_id,
+      customerPayload: customer,
+      canCreateCustomerProfile
+    })
 
     const [saleResult] = await conn.query(
       `INSERT INTO sales (
-        sale_number, clerk_id, customer_id, customer_name_snapshot, customer_phone_snapshot, order_note,
+        sale_number, clerk_id, customer_id, customer_name_snapshot, customer_phone_snapshot, customer_email_snapshot, order_note,
         subtotal, tax, discount, total, payment_method, receipt_no, status
       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED')`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED')`,
       [
         saleNumber,
         req.auth.id,
         resolvedCustomerId,
         customerNameSnapshot,
         customerPhoneSnapshot,
+        customerEmailSnapshot,
         orderNote,
         subtotal,
         taxAmt,

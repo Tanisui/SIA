@@ -607,6 +607,95 @@ input:disabled, select:disabled, textarea:disabled {
   }
 }
 
+/* Customer form layout (non-sticky to avoid overlapping fields) */
+.customer-form-shell {
+  max-width: 1180px;
+  width: 100%;
+}
+
+.customer-form-card {
+  max-width: 1180px;
+  width: 100%;
+  position: static;
+  max-height: none;
+  overflow: visible;
+}
+
+.customer-form-row-two {
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.customer-form-row-single {
+  grid-template-columns: 1fr;
+}
+
+.customer-form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+  position: static;
+  padding-top: 8px;
+}
+
+.customer-suggest-wrap {
+  position: relative;
+}
+
+.customer-suggest-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 25;
+}
+
+.customer-suggest-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 10px 12px;
+  color: var(--text-dark);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.customer-suggest-item:hover {
+  background: var(--cream-white);
+}
+
+.customer-suggest-item small {
+  color: var(--text-light);
+  font-size: 12px;
+}
+
+.customer-suggest-status {
+  padding: 10px 12px;
+  color: var(--text-light);
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .customer-form-row-two {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .customer-form-actions .btn {
+    width: 100%;
+  }
+}
+
 /* ── Dashboard Grid ── */
 .dashboard-grid {
   display: grid;
@@ -697,6 +786,14 @@ tbody td {
 tbody td.text-center { text-align: center; }
 tbody td.text-right { text-align: right; }
 tbody td.text-muted { color: var(--text-light); }
+
+tfoot td {
+  padding: 14px 16px;
+  background: var(--cream-white);
+  border-top: 2px solid var(--border);
+  font-weight: 600;
+  color: var(--text-mid);
+}
 
 /* Table actions */
 .table-actions {
@@ -893,6 +990,15 @@ tbody td.text-muted { color: var(--text-light); }
 .form-select:focus {
   border-color: var(--gold);
   box-shadow: 0 0 0 3px rgba(184, 137, 42, 0.08);
+}
+
+.form-select.error {
+  border-color: var(--error);
+  background-color: #FFF5F5;
+}
+
+.form-select.error:focus {
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.08);
 }
 
 .form-textarea {
@@ -1709,5 +1815,219 @@ tbody td.text-muted { color: var(--text-light); }
   
   .page {
     padding: 0;
+  }
+}
+
+/* Automated Reports */
+.purchase-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  border-bottom: 2px solid var(--border);
+}
+
+.purchase-tab {
+  padding: 10px 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  background: transparent;
+  color: var(--text-mid);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.purchase-tab:hover {
+  color: var(--gold-dark);
+}
+
+.purchase-tab-active {
+  color: var(--gold-dark);
+  border-bottom-color: var(--gold);
+}
+
+.reports-page .page-header {
+  margin-bottom: 20px;
+}
+
+.reports-filter-card {
+  margin-bottom: 20px;
+}
+
+.reports-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.reports-refresh-btn {
+  min-width: 120px;
+}
+
+.reports-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.reports-summary-card {
+  padding: 18px;
+}
+
+.reports-summary-value {
+  font-size: 26px;
+}
+
+.reports-summary-value-default {
+  color: var(--text-dark);
+}
+
+.reports-summary-value-success {
+  color: var(--success);
+}
+
+.reports-summary-value-danger {
+  color: var(--error);
+}
+
+.reports-summary-value-info {
+  color: var(--info);
+}
+
+.reports-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  border-bottom: 2px solid var(--border);
+}
+
+.reports-tab {
+  padding: 10px 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  background: transparent;
+  color: var(--text-mid);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.reports-tab:hover {
+  color: var(--gold-dark);
+}
+
+.reports-tab-active {
+  color: var(--gold-dark);
+  border-bottom-color: var(--gold);
+}
+
+.reports-section-card {
+  padding: 18px;
+}
+
+.reports-section-header {
+  margin-bottom: 14px;
+}
+
+.reports-section-header h3 {
+  margin: 0 0 6px;
+  font-size: 24px;
+}
+
+.reports-section-header p {
+  margin: 0;
+  color: var(--text-light);
+  font-size: 14px;
+}
+
+.reports-inline-error {
+  margin-bottom: 14px;
+}
+
+.reports-highlight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.reports-highlight-card {
+  padding: 16px;
+}
+
+.reports-highlight-positive {
+  border-color: #86efac;
+  background: var(--success-light);
+}
+
+.reports-highlight-negative {
+  border-color: #fecaca;
+  background: var(--error-light);
+}
+
+.reports-highlight-batch {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.reports-highlight-meta {
+  font-size: 13px;
+  color: var(--text-mid);
+}
+
+.reports-table-wrap {
+  margin-bottom: 6px;
+}
+
+.reports-pagination-wrap {
+  margin-top: 8px;
+}
+
+.reports-state-card {
+  margin-bottom: 18px;
+}
+
+.reports-table-loading {
+  padding: 28px;
+}
+
+.reports-formula-card {
+  margin-top: 12px;
+  font-size: 14px;
+  color: var(--text-mid);
+  text-align: center;
+}
+
+@media (max-width: 1200px) {
+  .reports-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .reports-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .reports-refresh-btn {
+    width: 100%;
+  }
+
+  .reports-highlight-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .reports-summary-grid {
+    grid-template-columns: 1fr;
   }
 }

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import api from '../api/api.js'
 
 const schema = [
@@ -78,6 +79,7 @@ function FieldInput({ field, value, onChange }){
 }
 
 export default function Customers(){
+  const navigate = useNavigate()
   const pk = 'id'
   const [allCustomers, setAllCustomers] = useState([])
   const [displayedCustomers, setDisplayedCustomers] = useState([])
@@ -144,12 +146,10 @@ export default function Customers(){
   const onChange = (name, value) => setForm(prev => ({ ...prev, [name]: value }))
 
   const startCreate = () => {
-    setEditing('create')
-    setForm({})
+    navigate('/customers/new')
   }
   const startEdit = (it) => {
-    setEditing('edit')
-    setForm(it)
+    navigate(`/customers/${it[pk]}/edit`)
   }
   const cancel = () => {
     setEditing(null)

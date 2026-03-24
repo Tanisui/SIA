@@ -40,7 +40,7 @@ async function seed() {
 
 		'inventory.view','inventory.receive','inventory.dispatch','inventory.adjust','inventory.reconcile','inventory.export','inventory.lowstock_alert_manage',
 
-		'sales.view','sales.create','sales.refund','sales.print_receipt','sales.export',
+		'sales.view','sales.create','sales.refund','sales.print_receipt','sales.export','sales.discount','sales.price_override',
 
 		'customers.view','customers.create','customers.update','customers.delete',
 
@@ -68,7 +68,7 @@ async function seed() {
 			'inventory.view','inventory.receive','inventory.dispatch','inventory.adjust','inventory.reconcile',
 			'suppliers.view','suppliers.create','suppliers.update',
 			'purchase.create','purchase.view','purchase.receive','purchase.update',
-			'sales.view','sales.create','sales.refund',
+			'sales.view','sales.create','sales.refund','sales.discount','sales.price_override',
 			'customers.view','customers.create','customers.update',
 			'payroll.view'
 		],

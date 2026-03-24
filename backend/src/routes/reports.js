@@ -7,6 +7,10 @@ const {
   buildDateFilter,
   roundMoney
 } = require('../utils/salesSupport')
+const {
+  getAutomatedReports,
+  buildAutomatedReportsCsv
+} = require('../utils/automatedReports')
 
 let ensureReportsSchemaPromise = null
 
@@ -199,6 +203,76 @@ router.get('/overview', verifyToken, authorize(['reports.view', 'finance.reports
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'failed to generate automated reports' })
+  }
+})
+
+/**
+ * Bale-aware automated reports response shape:
+ * {
+ *   generated_at, filters: { from, to },
+ *   summary,
+ *   balePurchases, balePurchasesTotals,
+ *   baleBreakdowns,
+ *   salesByBale, salesByBaleTotals,
+ *   baleProfitability, profitabilityHighlights,
+ *   supplierPerformance,
+ *   inventoryMovement
+ * }
+ */
+router.get('/automated', verifyToken, authorize(['reports.view', 'finance.reports.view']), async (req, res) => {
+  try {
+    const payload = await getAutomatedReports(req.query?.from, req.query?.to)
+    res.json(payload)
+  } catch (err) {
+    console.error(err)
+    const statusCode = err?.statusCode || 500
+    const isValidationError = statusCode >= 400 && statusCode < 500
+
+    res.status(statusCode).json({
+      error: isValidationError
+        ? err.message
+        : 'Unable to generate bale-aware automated reports right now.',
+      details: isValidationError
+        ? 'Please review your date range and try again.'
+        : 'Check database connectivity and report table schema, then retry.',
+      code: isValidationError ? 'REPORT_INPUT_INVALID' : 'REPORT_GENERATION_FAILED'
+    })
+  }
+})
+
+router.get('/automated/export', verifyToken, authorize(['reports.export', 'finance.reports.view', 'reports.view']), async (req, res) => {
+  try {
+    const format = String(req.query?.format || 'csv').trim().toLowerCase()
+    if (format !== 'csv') {
+      return res.status(400).json({
+        error: 'Unsupported export format. Use format=csv.',
+        details: 'Only CSV export is currently available for automated bale reports.'
+      })
+    }
+
+    const payload = await getAutomatedReports(req.query?.from, req.query?.to)
+    const csv = buildAutomatedReportsCsv(payload)
+    const from = payload?.filters?.from || 'from'
+    const to = payload?.filters?.to || 'to'
+    const filename = `automated-bale-reports-${from}-to-${to}.csv`
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+    res.send(csv)
+  } catch (err) {
+    console.error(err)
+    const statusCode = err?.statusCode || 500
+    const isValidationError = statusCode >= 400 && statusCode < 500
+
+    res.status(statusCode).json({
+      error: isValidationError
+        ? err.message
+        : 'Unable to export bale-aware automated reports right now.',
+      details: isValidationError
+        ? 'Please review your date range and export format.'
+        : 'Retry in a few moments after confirming report data is available.',
+      code: isValidationError ? 'REPORT_EXPORT_INPUT_INVALID' : 'REPORT_EXPORT_FAILED'
+    })
   }
 })
 

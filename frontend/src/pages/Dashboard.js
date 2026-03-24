@@ -34,8 +34,6 @@ export default function Dashboard() {
     { title: 'Products',         value: fmt(stats.products_count),   sub: 'Active in catalog',   icon: '👗' },
     { title: 'Low Stock',        value: fmt(stats.low_stock_count),  sub: 'Need restocking',     icon: '📦' },
     { title: 'Customers',        value: fmt(stats.customers_count),  sub: 'Registered',          icon: '👤' },
-    { title: 'Employees',        value: fmt(stats.employees_count),  sub: 'Active staff',        icon: '👥' },
-    { title: 'Pending Payroll',  value: fmt(stats.pending_payroll_count), sub: fmtMoney(stats.pending_payroll_total) + ' total', icon: '💰' },
     { title: 'Open POs',         value: fmt(stats.open_po_count),    sub: 'Purchase orders',     icon: '📋' },
   ] : [
     { title: 'Total Sales',     value: '—', sub: 'Loading...', icon: '🧾' },
@@ -43,8 +41,6 @@ export default function Dashboard() {
     { title: 'Products',        value: '—', sub: 'Loading...', icon: '👗' },
     { title: 'Low Stock',       value: '—', sub: 'Loading...', icon: '📦' },
     { title: 'Customers',       value: '—', sub: 'Loading...', icon: '👤' },
-    { title: 'Employees',       value: '—', sub: 'Loading...', icon: '👥' },
-    { title: 'Pending Payroll', value: '—', sub: 'Loading...', icon: '💰' },
     { title: 'Open POs',        value: '—', sub: 'Loading...', icon: '📋' },
   ]
 
@@ -141,7 +137,7 @@ export default function Dashboard() {
         React.createElement('div', null,
           React.createElement('h3', { style: { color: 'var(--tan)', fontFamily: 'Cormorant Garamond, serif', fontSize: '24px', margin: '0 0 8px 0' } }, "Cecille's N'Style POS"),
           React.createElement('p', { style: { fontSize: '14px', color: 'var(--sidebar-muted)', margin: 0, lineHeight: '1.6' } },
-            'Complete Boutique Management System — Sales, Inventory, Employees, Payroll & Accounting integrated.'
+            'Complete Boutique Management System - Sales, Inventory, Purchasing, and Reports integrated.'
           )
         ),
         React.createElement('span', { style: { fontSize: '48px', flexShrink: 0 } }, '✨')

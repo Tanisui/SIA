@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS `sales` (
 	`customer_id` BIGINT UNSIGNED,
 	`customer_name_snapshot` VARCHAR(255),
 	`customer_phone_snapshot` VARCHAR(64),
+	`customer_email_snapshot` VARCHAR(255),
 	`order_note` TEXT,
 	`subtotal` DECIMAL(12,2) DEFAULT 0.00,
 	`tax` DECIMAL(12,2) DEFAULT 0.00,
