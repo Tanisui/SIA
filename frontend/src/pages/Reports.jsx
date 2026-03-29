@@ -247,8 +247,6 @@ export default function Reports() {
               { key: 'supplier_name', label: 'Supplier Name' },
               { key: 'bale_type', label: 'Bale Type / Category' },
               { key: 'bale_cost', label: 'Bale Cost', align: 'right', render: (value) => formatCurrency(value) },
-              { key: 'shipping_cost', label: 'Shipping Cost', align: 'right', render: (value) => formatCurrency(value) },
-              { key: 'other_charges', label: 'Other Charges', align: 'right', render: (value) => formatCurrency(value) },
               { key: 'total_purchase_cost', label: 'Total Purchase Cost', align: 'right', render: (value) => formatCurrency(value) },
               {
                 key: 'payment_status',
@@ -263,8 +261,6 @@ export default function Reports() {
             footer={{
               bale_batch_no: 'TOTAL',
               bale_cost: formatCurrency(report?.balePurchasesTotals?.baleCost),
-              shipping_cost: formatCurrency(report?.balePurchasesTotals?.shippingCost),
-              other_charges: formatCurrency(report?.balePurchasesTotals?.otherCharges),
               total_purchase_cost: formatCurrency(report?.balePurchasesTotals?.totalPurchaseCost)
             }}
           />

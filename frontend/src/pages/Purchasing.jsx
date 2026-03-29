@@ -373,8 +373,6 @@ export default function Purchasing() {
       bale_type: row.bale_type || '',
       bale_category: row.bale_category || '',
       bale_cost: String(row.bale_cost ?? ''),
-      shipping_cost: String(row.shipping_cost ?? ''),
-      other_charges: String(row.other_charges ?? ''),
       payment_status: row.payment_status || 'UNPAID',
       notes: row.notes || ''
     })
@@ -406,9 +404,7 @@ export default function Purchasing() {
       bale_type: baleForm.bale_type || null,
       bale_category: baleForm.bale_category || null,
       bale_cost: toMoney(baleForm.bale_cost),
-      shipping_cost: toMoney(baleForm.shipping_cost),
-      other_charges: toMoney(baleForm.other_charges),
-      total_purchase_cost: toMoney(baleForm.bale_cost) + toMoney(baleForm.shipping_cost) + toMoney(baleForm.other_charges),
+      total_purchase_cost: toMoney(baleForm.bale_cost),
       payment_status: baleForm.payment_status || 'UNPAID',
       notes: baleForm.notes || null
     }
