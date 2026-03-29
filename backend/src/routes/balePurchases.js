@@ -255,11 +255,10 @@ router.get('/breakdowns', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (
         bb.*,
         bp.bale_batch_no,
         bp.purchase_date,
-        COALESCE(NULLIF(s.name, ''), 'Unknown Supplier') AS supplier_name,
-        COALESCE(bp.total_purchase_cost, COALESCE(bp.bale_cost, 0) + COALESCE(bp.shipping_cost, 0) + COALESCE(bp.other_charges, 0)) AS total_purchase_cost
+        bp.supplier_name,
+        COALESCE(bp.total_purchase_cost, bp.bale_cost) AS total_purchase_cost
       FROM bale_breakdowns bb
       JOIN bale_purchases bp ON bp.id = bb.bale_purchase_id
-      LEFT JOIN suppliers s ON s.id = bp.supplier_id
       WHERE 1=1
     `
 
@@ -412,7 +411,7 @@ router.get('/:id/breakdown', verifyToken, authorize(BALE_VIEW_PERMISSIONS), asyn
       SELECT
         bb.*,
         bp.bale_batch_no,
-        COALESCE(bp.total_purchase_cost, COALESCE(bp.bale_cost, 0) + COALESCE(bp.shipping_cost, 0) + COALESCE(bp.other_charges, 0)) AS total_purchase_cost
+        COALESCE(bp.total_purchase_cost, bp.bale_cost) AS total_purchase_cost
       FROM bale_breakdowns bb
       JOIN bale_purchases bp ON bp.id = bb.bale_purchase_id
       WHERE bb.bale_purchase_id = ?
@@ -436,7 +435,7 @@ async function upsertBreakdown(req, res) {
     const [purchaseRows] = await conn.query(`
       SELECT
         id,
-        COALESCE(total_purchase_cost, COALESCE(bale_cost, 0) + COALESCE(shipping_cost, 0) + COALESCE(other_charges, 0)) AS total_purchase_cost
+        COALESCE(total_purchase_cost, bale_cost) AS total_purchase_cost
       FROM bale_purchases
       WHERE id = ?
       LIMIT 1
@@ -521,7 +520,7 @@ async function upsertBreakdown(req, res) {
       SELECT
         bb.*,
         bp.bale_batch_no,
-        COALESCE(bp.total_purchase_cost, COALESCE(bp.bale_cost, 0) + COALESCE(bp.shipping_cost, 0) + COALESCE(bp.other_charges, 0)) AS total_purchase_cost
+        COALESCE(bp.total_purchase_cost, bp.bale_cost) AS total_purchase_cost
       FROM bale_breakdowns bb
       JOIN bale_purchases bp ON bp.id = bb.bale_purchase_id
       WHERE bb.bale_purchase_id = ?

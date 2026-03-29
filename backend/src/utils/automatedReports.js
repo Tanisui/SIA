@@ -302,7 +302,7 @@ async function getSummary(range) {
   const [baleRows] = await db.pool.query(`
     SELECT
       COUNT(*) AS bales_purchased,
-      COALESCE(SUM(COALESCE(bp.total_purchase_cost, COALESCE(bp.bale_cost, 0) + COALESCE(bp.shipping_cost, 0) + COALESCE(bp.other_charges, 0))), 0) AS total_bale_purchases
+      COALESCE(SUM(COALESCE(bp.total_purchase_cost, bp.bale_cost)), 0) AS total_bale_purchases
     FROM bale_purchases bp
     WHERE 1=1${baleDateFilter}
   `, baleParams)
@@ -432,7 +432,7 @@ async function getBaleBreakdowns(range) {
         bb.cost_per_saleable_item,
         CASE
           WHEN COALESCE(bb.saleable_items, 0) > 0 THEN
-            COALESCE(bp.total_purchase_cost, COALESCE(bp.bale_cost, 0) + COALESCE(bp.shipping_cost, 0) + COALESCE(bp.other_charges, 0)) / bb.saleable_items
+            COALESCE(bp.total_purchase_cost, bp.bale_cost) / bb.saleable_items
           ELSE 0
         END
       ) AS cost_per_saleable_item
@@ -508,16 +508,15 @@ async function getBaleProfitability(range) {
       bp.id AS bale_purchase_id,
       bp.bale_batch_no,
       bp.purchase_date,
-      COALESCE(NULLIF(sup.name, ''), 'Unknown Supplier') AS supplier_name,
-      COALESCE(NULLIF(bp.bale_type, ''), NULLIF(bp.bale_category, ''), 'Unspecified Bale') AS bale_type,
-      COALESCE(bp.total_purchase_cost, COALESCE(bp.bale_cost, 0) + COALESCE(bp.shipping_cost, 0) + COALESCE(bp.other_charges, 0)) AS total_purchase_cost,
+      bp.supplier_name,
+      COALESCE(NULLIF(bp.bale_category, ''), 'Unspecified Bale') AS bale_type,
+      COALESCE(bp.total_purchase_cost, bp.bale_cost) AS total_purchase_cost,
       COALESCE(sales_data.revenue_generated, 0) AS revenue_generated,
       COALESCE(sales_data.sold_pieces, 0) AS sold_pieces,
       COALESCE(inventory_data.remaining_pieces, 0) AS remaining_pieces,
       COALESCE(bb.saleable_items, 0) AS saleable_items,
       COALESCE(bb.damaged_items, 0) AS damaged_items
     FROM bale_purchases bp
-    LEFT JOIN suppliers sup ON sup.id = bp.supplier_id
     LEFT JOIN bale_breakdowns bb ON bb.bale_purchase_id = bp.id
     LEFT JOIN (
       SELECT
@@ -796,8 +795,6 @@ function buildAutomatedReportsCsv(reportPayload) {
     'Supplier Name',
     'Bale Type / Category',
     'Bale Cost',
-    'Shipping Cost',
-    'Other Charges',
     'Total Purchase Cost',
     'Payment Status'
   ]))
@@ -809,8 +806,6 @@ function buildAutomatedReportsCsv(reportPayload) {
       row.supplier_name,
       row.bale_type,
       row.bale_cost,
-      row.shipping_cost,
-      row.other_charges,
       row.total_purchase_cost,
       row.payment_status
     ]))

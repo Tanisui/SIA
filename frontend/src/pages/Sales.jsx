@@ -93,6 +93,10 @@ export default function Sales() {
   const [returnReason, setReturnReason] = useState('')
   const [returnDisposition, setReturnDisposition] = useState('RESTOCK')
   const [returnQuantities, setReturnQuantities] = useState({})
+  const [availableReceipts, setAvailableReceipts] = useState([])
+  const [filteredReceipts, setFilteredReceipts] = useState([])
+  const [showReceiptDropdown, setShowReceiptDropdown] = useState(false)
+  const [receiptSearchTimeout, setReceiptSearchTimeout] = useState(null)
 
   const tabs = [
     ['pos', 'POS', 'sales.create'],
@@ -388,6 +392,50 @@ export default function Sales() {
     } catch {
       return null
     }
+  }
+
+  async function loadAvailableReceipts() {
+    try {
+      const result = (await api.get('/sales')).data
+      const receipts = (Array.isArray(result) ? result : []).map((row) => ({
+        id: row.id,
+        receipt_no: row.receipt_no || '',
+        sale_number: row.sale_number || '',
+        date: row.date || '',
+        total: row.total || 0
+      }))
+      setAvailableReceipts(receipts)
+    } catch (err) {
+      console.error('Failed to load receipts:', err)
+    }
+  }
+
+  function handleReceiptSearch(value) {
+    setReturnReceiptNo(value)
+    setShowReceiptDropdown(true)
+
+    if (receiptSearchTimeout) clearTimeout(receiptSearchTimeout)
+
+    const timeoutId = setTimeout(() => {
+      if (!value.trim()) {
+        setFilteredReceipts(availableReceipts.slice(0, 10))
+      } else {
+        const needle = value.toLowerCase().trim()
+        const results = availableReceipts.filter((receipt) =>
+          receipt.receipt_no.toLowerCase().includes(needle) ||
+          receipt.sale_number.toLowerCase().includes(needle)
+        ).slice(0, 15)
+        setFilteredReceipts(results)
+      }
+    }, 300)
+
+    setReceiptSearchTimeout(timeoutId)
+  }
+
+  function selectReceiptFromDropdown(receiptNo) {
+    setReturnReceiptNo(receiptNo)
+    setShowReceiptDropdown(false)
+    setTimeout(() => lookupReceipt(receiptNo), 0)
   }
 
   async function lookupReceipt(receiptValue = returnReceiptNo) {
@@ -713,21 +761,64 @@ export default function Sales() {
             <div className="card" style={{ marginBottom: 16 }}>
               <h3 style={{ marginBottom: 12 }}>Receipt Lookup</h3>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, alignItems: 'end' }}>
-                <div className="form-group" style={{ marginBottom: 0 }}>
+                <div className="form-group" style={{ marginBottom: 0, position: 'relative' }}>
                   <label className="form-label">Receipt ID</label>
                   <input
                     className="form-input"
                     value={returnReceiptNo}
-                    onChange={(e) => setReturnReceiptNo(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key !== 'Enter') return
-                      e.preventDefault()
-                      lookupReceipt(e.currentTarget.value)
+                    onChange={(e) => handleReceiptSearch(e.target.value)}
+                    onFocus={() => {
+                      setShowReceiptDropdown(true)
+                      if (!availableReceipts.length) loadAvailableReceipts()
                     }}
-                    placeholder="Scan or type receipt id from Sales history"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        lookupReceipt(returnReceiptNo)
+                        setShowReceiptDropdown(false)
+                      } else if (e.key === 'Escape') {
+                        setShowReceiptDropdown(false)
+                      }
+                    }}
+                    placeholder="Type or scan receipt ID"
                   />
+                  {showReceiptDropdown && filteredReceipts.length > 0 && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      background: 'white',
+                      border: '1px solid var(--border)',
+                      borderTop: 'none',
+                      borderRadius: '0 0 4px 4px',
+                      maxHeight: 250,
+                      overflowY: 'auto',
+                      zIndex: 10,
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                    }}>
+                      {filteredReceipts.map((receipt, idx) => (
+                        <div
+                          key={idx}
+                          onClick={() => selectReceiptFromDropdown(receipt.receipt_no)}
+                          style={{
+                            padding: '10px 12px',
+                            cursor: 'pointer',
+                            borderBottom: idx < filteredReceipts.length - 1 ? '1px solid var(--border-light)' : 'none',
+                            transition: 'background 0.15s',
+                            background: 'white'
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = 'var(--hover-bg, #f9f9f9)'}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'white'}
+                        >
+                          <div style={{ fontWeight: 500, fontSize: 13 }}>{receipt.receipt_no}</div>
+                          <div style={{ fontSize: 12, color: 'var(--text-light)' }}>{fmtDate(receipt.date)} • {fmt(receipt.total)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <button className="btn btn-primary" onClick={lookupReceipt}>Load Receipt</button>
+                <button className="btn btn-primary" onClick={() => { lookupReceipt(returnReceiptNo); setShowReceiptDropdown(false) }}>Load Receipt</button>
               </div>
             </div>
             {returnLookup && <div className="card">
