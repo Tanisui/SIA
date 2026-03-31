@@ -23,6 +23,44 @@ function parseReferenceMeta(rawValue) {
   return { tag, meta }
 }
 
+const STOCK_OUT_REASON_LABELS = {
+  DAMAGE: 'Damage',
+  SHRINKAGE: 'Shrinkage'
+}
+
+function toTitleCaseWords(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function getStockOutTypeLabel(value) {
+  const normalized = String(value || '').trim().toUpperCase()
+  if (!normalized) return ''
+  return STOCK_OUT_REASON_LABELS[normalized] || toTitleCaseWords(normalized)
+}
+
+function parseStockOutReason(value) {
+  const match = String(value || '').trim().match(/^STOCK_OUT:([A-Z_]+)(?:\s*\|\s*(.*))?$/i)
+  if (!match) return null
+  return { type: String(match[1] || '').toUpperCase(), detail: String(match[2] || '').trim() }
+}
+
+function formatStockOutReason(type, detail) {
+  const label = getStockOutTypeLabel(type)
+  if (!label) return String(detail || '').trim()
+
+  const normalizedDetail = String(detail || '').trim()
+  if (!normalizedDetail) return label
+  if (normalizedDetail.toLowerCase() === label.toLowerCase()) return label
+  if (normalizedDetail.toLowerCase().startsWith(`${label.toLowerCase()} - `)) return normalizedDetail
+  return `${label} - ${normalizedDetail}`
+}
+
 function formatTransactionReference(value) {
   const parsed = parseReferenceMeta(value)
   if (!parsed) return value || '—'
@@ -32,23 +70,44 @@ function formatTransactionReference(value) {
     return `Sale ${sale}${meta.receipt ? ` • Receipt ${meta.receipt}` : ''}`
   }
   if (tag === 'SALE_RETURN') {
-    return `Sale return${meta.receipt ? ` • Receipt ${meta.receipt}` : ''}${meta.disposition ? ` • ${meta.disposition}` : ''}`
+    return `Sale return${meta.receipt ? ` • Receipt ${meta.receipt}` : ''}${meta.disposition ? ` • ${meta.disposition}` : ''}${meta.acct_ref ? ` • Acct Ref ${meta.acct_ref}` : ''}`
   }
   if (tag === 'STOCK_OUT') {
-    return `Stock out${meta.disposition ? ` • ${meta.disposition}` : ''}${meta.receipt ? ` • Receipt ${meta.receipt}` : ''}`
+    return `Stock out${meta.disposition ? ` • ${meta.disposition}` : ''}${meta.receipt ? ` • Receipt ${meta.receipt}` : ''}${meta.acct_ref ? ` • Acct Ref ${meta.acct_ref}` : ''}`
   }
   return value
 }
 
-function formatTransactionReason(reason, reference) {
+function formatTransactionReason(reason, reference = '') {
   const rawReason = String(reason || '').trim()
   if (!rawReason) return '—'
   if (/^SALE_LINK[:|]/.test(rawReason)) return 'POS sale deduction'
+
   const parsedRef = parseReferenceMeta(reference)
   if (parsedRef?.tag === 'SALE_LINK' && rawReason === 'POS sale deduction') return rawReason
-  if (rawReason.startsWith('STOCK_OUT:DAMAGE | ')) return rawReason.replace('STOCK_OUT:DAMAGE | ', '')
-  if (rawReason.startsWith('STOCK_OUT:SHRINKAGE | ')) return rawReason.replace('STOCK_OUT:SHRINKAGE | ', '')
+
+  const parsedReason = parseStockOutReason(rawReason)
+  if (parsedReason) return formatStockOutReason(parsedReason.type, parsedReason.detail)
+
+  if (parsedRef?.tag === 'STOCK_OUT' && parsedRef.meta?.disposition) {
+    if (/^stock\s*out\b/i.test(rawReason)) return rawReason
+    return formatStockOutReason(parsedRef.meta.disposition, rawReason)
+  }
+
   return rawReason
+}
+
+function formatGroupedTransactionReasons(value) {
+  const rawValue = String(value || '').trim()
+  if (!rawValue) return '—'
+
+  const grouped = rawValue
+    .split(/\s+\|\s+(?=(?:STOCK_OUT:[A-Z_]+|SALE_LINK[:|]))/g)
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  if (grouped.length <= 1) return formatTransactionReason(rawValue)
+  return grouped.map((part) => formatTransactionReason(part)).join(' | ')
 }
 
 const infoTip = (text) => React.createElement('span', {
@@ -406,7 +465,7 @@ export default function Inventory() {
     { key: 'overview', label: 'Overview' },
     { key: 'stock-in', label: 'Stock In' },
     { key: 'stock-out', label: 'Stock Out' },
-    { key: 'returns', label: 'Returns' },
+    { key: 'returns', label: 'Supplier Returns' },
     { key: 'purchase-orders', label: 'Purchase Orders' },
     { key: 'products', label: 'Products' },
     { key: 'transactions', label: 'Transactions' },
@@ -420,7 +479,7 @@ export default function Inventory() {
     React.createElement('div', { className: 'page-header' },
       React.createElement('div', null,
         React.createElement('h1', { className: 'page-title' }, 'Inventory Management'),
-        React.createElement('p', { className: 'page-subtitle' }, 'Track stock-in, stock-out, returns, damages & purchase orders')
+        React.createElement('p', { className: 'page-subtitle' }, 'Track stock-in, stock-out, supplier returns, damages, and purchase orders. Use Purchase Orders for replenishment.')
       )
     ),
 
@@ -517,7 +576,7 @@ export default function Inventory() {
             )
           ),
           React.createElement('p', { style: { marginTop: 6, fontSize: 12, color: 'var(--text-light)' } },
-            'Direct purchase is for stock-in without supplier. If supplier is involved, create a Purchase Order below.'
+            'Direct Stock-In is an emergency/manual fallback. For normal replenishment, use Purchase Orders so supplier, expected date, and unit cost are tracked before receiving.'
           ),
           React.createElement('button', { type: 'submit', className: 'btn btn-primary', style: { marginTop: 12 } }, 'Record Stock In')
         )
@@ -587,7 +646,7 @@ export default function Inventory() {
     // ═══════════════ RETURNS ═══════════════
     tab === 'returns' && React.createElement('div', null,
       React.createElement('div', { className: 'card' },
-        React.createElement('h3', { style: { marginBottom: 16 } }, 'Supplier Return (Inventory Out)'),
+        React.createElement('h3', { style: { marginBottom: 16 } }, 'Supplier Return (Inventory Out Only)'),
         React.createElement('form', { onSubmit: handleReturn },
           React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 } },
             React.createElement('div', { className: 'form-group' },
@@ -607,7 +666,7 @@ export default function Inventory() {
             )
           ),
           React.createElement('p', { style: { marginTop: 6, marginBottom: 10, fontSize: 12, color: 'var(--text-light)' } },
-            'Customer returns are processed in Sales > Returns using receipt lookup. This form is only for supplier returns that reduce stock.'
+            'This tab is for supplier returns only and will reduce stock. Customer returns must be processed in Sales > Returns using receipt lookup and return handling.'
           ),
           React.createElement('button', { type: 'submit', className: 'btn btn-primary', style: { marginTop: 12 } }, 'Process Return')
         )
@@ -618,6 +677,9 @@ export default function Inventory() {
     tab === 'purchase-orders' && React.createElement('div', null,
       React.createElement('div', { className: 'card', style: { marginBottom: 20 } },
         React.createElement('h3', { style: { marginBottom: 16 } }, 'Create New Purchase Order'),
+        React.createElement('p', { style: { marginTop: -4, marginBottom: 12, fontSize: 12, color: 'var(--text-light)' } },
+          'Recommended for replenishment: creating a PO does not increase stock yet. Stock is added only after clicking Receive on an OPEN PO.'
+        ),
         React.createElement('button', { type: 'button', className: 'btn btn-secondary', style: { marginBottom: 12 }, onClick: fetchSuppliers }, 'Refresh Supplier List'),
         React.createElement('form', { onSubmit: handleCreatePO },
           React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 } },
@@ -919,7 +981,7 @@ React.createElement('input', { className: 'form-input', type: 'date', value: poF
               React.createElement('td', null, fmtDate(d.created_at)),
               React.createElement('td', null, `${d.sku ? d.sku + ' — ' : ''}${d.product_name || ''}`),
               React.createElement('td', { style: { fontWeight: 600, color: 'var(--error)' } }, d.quantity),
-              React.createElement('td', null, d.reason || '—'),
+              React.createElement('td', null, formatTransactionReason(d.reason, d.reference)),
               React.createElement('td', null, d.reported_by_name || '—')
             ))
           )
@@ -977,7 +1039,7 @@ React.createElement('input', { className: 'form-input', type: 'date', value: poF
                   React.createElement('td', null, s.product_name),
                   React.createElement('td', { style: { fontWeight: 600, color: 'var(--error)' } }, s.total_shrinkage),
                   React.createElement('td', null, s.incidents),
-                  React.createElement('td', null, s.reasons || '—')
+                  React.createElement('td', null, formatGroupedTransactionReasons(s.reasons))
                 ))
           )
         )

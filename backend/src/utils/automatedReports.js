@@ -120,6 +120,17 @@ async function runSchemaChange(sql, params = []) {
   }
 }
 
+async function getTableColumnSet(tableName) {
+  const [rows] = await db.pool.query(`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ?
+  `, [tableName])
+
+  return new Set(rows.map((row) => String(row.COLUMN_NAME || '').toLowerCase()))
+}
+
 async function ensureAutomatedReportsSchema() {
   if (ensureAutomatedReportsSchemaPromise) return ensureAutomatedReportsSchemaPromise
 
@@ -159,6 +170,38 @@ async function ensureAutomatedReportsSchema() {
         FOREIGN KEY (bale_purchase_id) REFERENCES bale_purchases(id) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `)
+
+    const balePurchaseColumns = await getTableColumnSet('bale_purchases')
+    if (!balePurchaseColumns.has('supplier_name')) {
+      await runSchemaChange('ALTER TABLE bale_purchases ADD COLUMN supplier_name VARCHAR(255) NULL AFTER bale_batch_no')
+    }
+
+    const hasSupplierId = balePurchaseColumns.has('supplier_id')
+    const supplierColumns = hasSupplierId ? await getTableColumnSet('suppliers') : new Set()
+    const hasSuppliersTable = supplierColumns.has('id') && supplierColumns.has('name')
+    if (hasSupplierId && hasSuppliersTable) {
+      await db.pool.query(`
+        UPDATE bale_purchases bp
+        LEFT JOIN suppliers s ON s.id = bp.supplier_id
+        SET bp.supplier_name = COALESCE(
+          NULLIF(TRIM(bp.supplier_name), ''),
+          NULLIF(TRIM(s.name), ''),
+          CONCAT('Supplier #', bp.supplier_id)
+        )
+        WHERE bp.supplier_id IS NOT NULL
+          AND (bp.supplier_name IS NULL OR TRIM(bp.supplier_name) = '')
+      `)
+    } else if (hasSupplierId) {
+      await db.pool.query(`
+        UPDATE bale_purchases
+        SET supplier_name = COALESCE(
+          NULLIF(TRIM(supplier_name), ''),
+          CONCAT('Supplier #', supplier_id)
+        )
+        WHERE supplier_id IS NOT NULL
+          AND (supplier_name IS NULL OR TRIM(supplier_name) = '')
+      `)
+    }
 
     await db.pool.query(`
       CREATE TABLE IF NOT EXISTS inventory_adjustments (

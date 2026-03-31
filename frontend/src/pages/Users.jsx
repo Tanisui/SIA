@@ -54,7 +54,7 @@ export default function Users(){
     <div className="page">
       {/* Header */}
       <div className="page-header">
-        <h1 className="page-title">Users & Employees</h1>
+        <h1 className="page-title">Users</h1>
         <button className="btn btn-primary" onClick={() => navigate('/users/new')}>
           + Create new
         </button>
