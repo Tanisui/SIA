@@ -9,7 +9,7 @@ const NAV_ITEMS = [
   { to: '/categories', label: 'Categories', icon: '\ud83c\udff7', perm: 'products.view' },
   { to: '/inventory', label: 'Inventory', icon: '\ud83d\udce6', perm: 'inventory.view' },
   { to: '/sales', label: 'Sales', icon: '\ud83e\uddfe', perm: ['sales.view', 'sales.create'] },
-  { to: '/purchasing', label: 'Purchasing', icon: '\ud83d\uded2', perm: 'purchase.view' },
+  { to: '/purchasing', label: 'Bales', icon: '\ud83d\uded2', perm: ['inventory.view', 'inventory.receive', 'reports.view', 'finance.reports.view'] },
   { section: 'Finance' },
   { to: '/reports', label: 'Reports', icon: '\ud83d\udcc8', perm: ['reports.view', 'finance.reports.view'] },
   { section: 'System' },

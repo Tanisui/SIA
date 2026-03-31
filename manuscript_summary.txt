@@ -29,7 +29,7 @@ Functional Requirements (high level)
    - Create sales transactions, support multiple payment methods.
    - Generate receipts and persist sales records with timestamps, clerk, items, totals.
 4. Customer & Supplier Management
-   - Store customer contact and order history; record supplier details and purchase orders.
+   - Store customer contact and order history; record supplier details and profiles.
 5. Employee & Payroll Management
    - Employee records, attendance logging, automated payroll calculations (hours, deductions, advances).
 6. Reporting & Analytics

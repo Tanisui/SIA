@@ -31,11 +31,10 @@ Modules & Attributes — Cecille's N'Style
 - User inputs: name, contact, email, address, notes
 - Details: lookup by phone, consent for marketing
 
-7) Suppliers & Purchases
+7) Suppliers
 - Supplier attributes: supplier_id, name, contact_person, phone, email, address
-- Purchase Order: po_id, supplier_id, items, status, received_date, total
-- User inputs: supplier details, create PO (items, qty, expected date), mark received
-- Details: PO lifecycle, link received stock to inventory transactions
+- User inputs: supplier details and contact maintenance
+- Details: supplier records support sourcing and reference data
 
 8) Employees
 - Attributes: employee_id, name, role, contact, hire_date, pay_rate, employment_status, bank_details
@@ -83,7 +82,7 @@ Modules & Attributes — Cecille's N'Style
 - Details: rate-limit keys, restrict scopes, webhook retries
 
 Notes & Relations
-- Relationships: sales -> sale_items -> products; purchase_orders -> products; employees -> attendance -> payroll
+- Relationships: sales -> sale_items -> products; employees -> attendance -> payroll
 - Validation: qty >= 0, price >= 0, unique constraints (SKU, email), referential integrity
 - UI: forms with client-side validation, search/autocomplete for products/customers/suppliers
 

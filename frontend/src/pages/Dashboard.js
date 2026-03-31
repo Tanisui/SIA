@@ -68,7 +68,6 @@ export default function Dashboard() {
     { title: 'Low Stock', value: fmt(stats.low_stock_count), sub: 'Need restocking', icon: '\uD83D\uDCE6' },
     { title: 'Bales Purchased (This Month)', value: fmt(monthlyBalesCount), sub: 'Auto resets every month', icon: '\uD83E\uDDFA' },
     { title: 'Bale Spend (This Month)', value: fmtMoney(monthlyBaleSpend), sub: 'Updates from Bale Purchases', icon: '\uD83D\uDCB8' },
-    { title: 'Open POs', value: fmt(stats.open_po_count), sub: 'Purchase orders', icon: '\uD83D\uDCCB' },
   ] : [
     { title: 'Total Sales', value: '-', sub: 'Loading...', icon: '\uD83E\uDDFE' },
     { title: "Today's Sales", value: '-', sub: 'Loading...', icon: '\uD83D\uDCCA' },
@@ -76,7 +75,6 @@ export default function Dashboard() {
     { title: 'Low Stock', value: '-', sub: 'Loading...', icon: '\uD83D\uDCE6' },
     { title: 'Bales Purchased (This Month)', value: '-', sub: 'Loading...', icon: '\uD83E\uDDFA' },
     { title: 'Bale Spend (This Month)', value: '-', sub: 'Loading...', icon: '\uD83D\uDCB8' },
-    { title: 'Open POs', value: '-', sub: 'Loading...', icon: '\uD83D\uDCCB' },
   ]
 
   return React.createElement('div', null,
@@ -172,7 +170,7 @@ export default function Dashboard() {
         React.createElement('div', null,
           React.createElement('h3', { style: { color: 'var(--tan)', fontFamily: 'Cormorant Garamond, serif', fontSize: '24px', margin: '0 0 8px 0' } }, "Cecille's N'Style POS"),
           React.createElement('p', { style: { fontSize: '14px', color: 'var(--sidebar-muted)', margin: 0, lineHeight: '1.6' } },
-            'Complete Boutique Management System - Sales, Inventory, Purchasing, and Reports integrated.'
+            'Complete Boutique Management System - Sales, Inventory, Bale Workflow, and Reports integrated.'
           )
         ),
         React.createElement('span', { style: { fontSize: '48px', flexShrink: 0 } }, '\u2728')

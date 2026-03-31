@@ -54,12 +54,6 @@ router.get('/stats', verifyToken, async (req, res) => {
     results.pending_payroll_count = pendingPayroll[0].count || 0
     results.pending_payroll_total = parseFloat(pendingPayroll[0].total) || 0
 
-    // Open purchase orders
-    const [openPO] = await db.pool.query(
-      `SELECT COUNT(*) AS count FROM purchase_orders WHERE status = 'OPEN'`
-    )
-    results.open_po_count = openPO[0].count || 0
-
     // Lean bale snapshot (current calendar month)
     results.bales_month_count = 0
     results.bale_spend_month = 0

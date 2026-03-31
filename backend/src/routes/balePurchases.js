@@ -6,7 +6,7 @@ const { ensureAutomatedReportsSchema } = require('../utils/automatedReports')
 const { roundMoney } = require('../utils/salesSupport')
 
 const PAYMENT_STATUSES = ['PAID', 'PARTIAL', 'UNPAID']
-const BALE_VIEW_PERMISSIONS = ['purchase.view', 'purchase.create', 'products.view', 'reports.view', 'finance.reports.view']
+const BALE_VIEW_PERMISSIONS = ['inventory.view', 'inventory.receive', 'products.view', 'reports.view', 'finance.reports.view']
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
 function isBlank(value) {
@@ -293,7 +293,7 @@ router.get('/:id', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, re
   }
 })
 
-router.post('/', express.json(), verifyToken, authorize('purchase.create'), async (req, res) => {
+router.post('/', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const payload = normalizeBalePurchaseInput(req.body, { isUpdate: false })
@@ -327,7 +327,7 @@ router.post('/', express.json(), verifyToken, authorize('purchase.create'), asyn
   }
 })
 
-router.put('/:id', express.json(), verifyToken, authorize('purchase.create'), async (req, res) => {
+router.put('/:id', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const id = asOptionalInt(req.params.id, 'id')
@@ -377,7 +377,7 @@ router.put('/:id', express.json(), verifyToken, authorize('purchase.create'), as
   }
 })
 
-router.delete('/:id', verifyToken, authorize('purchase.create'), async (req, res) => {
+router.delete('/:id', verifyToken, authorize('inventory.receive'), async (req, res) => {
   const conn = await db.pool.getConnection()
   try {
     await ensureAutomatedReportsSchema()
@@ -536,7 +536,7 @@ async function upsertBreakdown(req, res) {
   }
 }
 
-router.post('/:id/breakdown', express.json(), verifyToken, authorize('purchase.create'), upsertBreakdown)
-router.put('/:id/breakdown', express.json(), verifyToken, authorize('purchase.create'), upsertBreakdown)
+router.post('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
+router.put('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
 
 module.exports = router

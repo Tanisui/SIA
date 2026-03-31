@@ -12,7 +12,7 @@ Account Types (roles) and short descriptions
 - Accountant: Financial operations — payroll processing, financial reports, exports.
 - HR: Employee management — staff records, attendance management.
 - Auditor / ReadOnly: View-only access to reports and records.
-- Supplier (optional external): Limited portal for purchase orders/status (if built).
+- Supplier (optional external): Limited portal for supplier information or status updates (if built).
 
 Permission strings by module
 (Use these when storing/checking permissions.)

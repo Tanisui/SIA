@@ -1,7 +1,7 @@
 # Backend - Routes Overview
 
 Responsibilities
-- Each file in `backend/src/routes/` defines a resource router (Express `Router`) for a domain area: users, roles, products, inventory, sales, customers (archived), suppliers, payroll, attendance, reports, files, settings, notifications, audit, expenses, dashboard, ledger, categories, purchase-orders, etc.
+- Each file in `backend/src/routes/` defines a resource router (Express `Router`) for a domain area: users, roles, products, inventory, sales, customers (archived), suppliers, payroll, attendance, reports, files, settings, notifications, audit, expenses, dashboard, ledger, categories, and bale-purchases.
 
 Common patterns
 - Most routes apply `verifyToken` and `authorize(permission)` middleware to protect endpoints.
@@ -12,10 +12,9 @@ Selected route responsibilities (high level)
 - `rbac.js` - list permissions, roles, user role lookups.
 - `users.js` - user CRUD, activation, possibly password reset.
 - `products.js` - product CRUD and low-stock alerts.
-- `inventory.js` - stock-in/out, adjustments, returns, damaged listings, inventory reports.
+- `inventory.js` - stock-in/out, adjustments, damaged listings, inventory reports.
 - `sales.js` - create sale (walk-in only payload), list, refunds, sales reports.
 - `customers.js` - retained for archive/rollback but not mounted in runtime server.
-- `purchaseOrders.js` - create and receive POs.
 - `employees.js` - employee CRUD for HR and payroll/attendance integrations.
 
 Where to inspect

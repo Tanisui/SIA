@@ -45,7 +45,6 @@ async function seed() {
 		'customers.view','customers.create','customers.update','customers.delete',
 
 		'suppliers.view','suppliers.create','suppliers.update','suppliers.delete',
-		'purchase.create','purchase.view','purchase.receive','purchase.update','purchase.delete',
 
 		'employees.view','employees.create','employees.update','employees.delete','attendance.record','attendance.view',
 
@@ -67,7 +66,6 @@ async function seed() {
 			'reports.view','reports.generate','products.view','products.create','products.update',
 			'inventory.view','inventory.receive','inventory.dispatch','inventory.adjust','inventory.reconcile',
 			'suppliers.view','suppliers.create','suppliers.update',
-			'purchase.create','purchase.view','purchase.receive','purchase.update',
 			'sales.view','sales.create','sales.refund','sales.discount','sales.price_override',
 			'customers.view','customers.create','customers.update',
 			'payroll.view'
@@ -80,7 +78,7 @@ async function seed() {
 		'Inventory Clerk': [
 			'inventory.view','inventory.receive','inventory.dispatch','inventory.adjust',
 			'products.view','products.create','products.update',
-			'suppliers.view','purchase.view','purchase.create','purchase.receive'
+			'suppliers.view'
 		],
 		'Accountant': [
 			'payroll.view','payroll.process','payroll.export','finance.reports.view','reports.view'
@@ -89,7 +87,7 @@ async function seed() {
 			'employees.view','employees.create','employees.update','attendance.record','attendance.view'
 		],
 		'Auditor': ['reports.view','reports.export','system.audit.view'],
-		'Supplier': ['suppliers.view','purchase.view']
+		'Supplier': ['suppliers.view']
 	}
 
 	for (const roleName of Object.keys(roles)) {
