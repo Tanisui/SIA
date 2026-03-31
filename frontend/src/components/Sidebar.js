@@ -13,7 +13,7 @@ const NAV_ITEMS = [
   { section: 'Finance' },
   { to: '/reports', label: 'Reports', icon: '\ud83d\udcc8', perm: ['reports.view', 'finance.reports.view'] },
   { section: 'System' },
-  { to: '/users', label: 'Users & Employees', icon: '\ud83d\udd11', perm: 'users.view' },
+  { to: '/users', label: 'Users', icon: '\ud83d\udd11', perm: 'users.view' },
   { to: '/roles', label: 'Roles', icon: '\ud83d\udee1', perm: 'roles.view' },
   { to: '/audit', label: 'Audit', icon: '\ud83d\udccb', perm: 'system.audit.view' },
   { section: 'Account' },

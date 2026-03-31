@@ -134,7 +134,7 @@ export default function Users(){
 
   return React.createElement('div', { className: 'page' },
     React.createElement('div', { className: 'page-header' },
-      React.createElement('h1', { className: 'page-title' }, 'Users & Employees'),
+      React.createElement('h1', { className: 'page-title' }, 'Users'),
       React.createElement('button', { 
         className: 'btn btn-primary',
         onClick: startCreate

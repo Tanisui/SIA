@@ -457,6 +457,13 @@ export default function EntityPage({
                 items.map((it) => React.createElement('tr', { key: it[pk] || JSON.stringify(it) },
                   visibleSchema.map((f) => React.createElement('td', { key: f.name }, (() => {
                     const val = it[f.name]
+                    if (typeof f.renderList === 'function') {
+                      try {
+                        return f.renderList(val, it)
+                      } catch (e) {
+                        console.error(`renderList failed for field "${f.name}"`, e)
+                      }
+                    }
                     if (Array.isArray(val)) return val.join(', ')
                     if (f.name === 'is_active') return (val === 1 || val === '1' || val === true) ? 'Yes' : 'No'
 
