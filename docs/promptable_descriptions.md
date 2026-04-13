@@ -42,7 +42,6 @@ Use the template for these route files (each file defines an Express `Router`):
 - `backend/src/routes/categories.js` — categories CRUD
 - `backend/src/routes/suppliers.js` — suppliers CRUD
 - `backend/src/routes/inventory.js` — inventory transactions, stock-in/out, reports
-- `backend/src/routes/purchaseOrders.js` — purchase orders flows
 - `backend/src/routes/sales.js` — sales create/list/refund
 - `backend/src/routes/customers.js` — customers CRUD
 - `backend/src/routes/employees.js` — employees CRUD

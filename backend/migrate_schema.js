@@ -253,31 +253,6 @@ async function run() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
 
-  await exec('Ensure purchase_orders', `
-    CREATE TABLE IF NOT EXISTS purchase_orders (
-      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-      po_number VARCHAR(100) UNIQUE,
-      supplier_id BIGINT UNSIGNED,
-      status ENUM('OPEN','RECEIVED','CANCELLED') DEFAULT 'OPEN',
-      expected_date DATE,
-      total DECIMAL(12,2) DEFAULT 0.00,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `)
-
-  await exec('Ensure purchase_items', `
-    CREATE TABLE IF NOT EXISTS purchase_items (
-      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-      purchase_order_id BIGINT UNSIGNED NOT NULL,
-      product_id BIGINT UNSIGNED NOT NULL,
-      quantity INT NOT NULL,
-      unit_cost DECIMAL(12,2) DEFAULT 0.00,
-      FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id) ON DELETE CASCADE,
-      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `)
-
   await exec('Ensure sales', `
     CREATE TABLE IF NOT EXISTS sales (
       id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

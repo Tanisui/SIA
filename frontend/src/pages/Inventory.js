@@ -62,8 +62,6 @@ const INVENTORY_TAB_KEYS = new Set([
   'overview',
   'stock-in',
   'stock-out',
-  'returns',
-  'purchase-orders',
   'products',
   'barcode-labels',
   'transactions',
@@ -252,14 +250,12 @@ function deleteActionIcon() {
 export default function Inventory() {
   // ── state ──
   const [products, setProducts] = useState([])
-  const [suppliers, setSuppliers] = useState([])
   const [employees, setEmployees] = useState([])
   const [categories, setCategories] = useState([])
   const [transactions, setTransactions] = useState([])
   const [damaged, setDamaged] = useState([])
   const [lowStock, setLowStock] = useState([])
   const [shrinkage, setShrinkage] = useState([])
-  const [purchaseOrders, setPurchaseOrders] = useState([])
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -271,12 +267,9 @@ export default function Inventory() {
   const [stockInForm, setStockInForm] = useState({ product_id: '', quantity: '', reference: '', date: '' })
   const [adjustForm, setAdjustForm] = useState({ product_id: '', quantity: '', reason: '', employee_id: '' })
   const [damageForm, setDamageForm] = useState({ product_id: '', quantity: '', reason: '', employee_id: '' })
-  const [returnForm, setReturnForm] = useState({ product_id: '', quantity: '', return_type: 'supplier', reason: '' })
   const [stockInBarcode, setStockInBarcode] = useState('')
   const [adjustBarcode, setAdjustBarcode] = useState('')
   const [damageBarcode, setDamageBarcode] = useState('')
-  const [returnBarcode, setReturnBarcode] = useState('')
-  const [poForm, setPoForm] = useState({ supplier_id: '', expected_date: '', items: [{ product_id: '', quantity: '', unit_cost: '' }] })
   const [productForm, setProductForm] = useState({ sku: '', name: '', brand: '', description: '', category_id: '', price: '', cost: '', stock_quantity: '', low_stock_threshold: '10', size: '', color: '', barcode: '' })
   const [editingProduct, setEditingProduct] = useState(null)
   const [showProductModal, setShowProductModal] = useState(false)
@@ -315,11 +308,6 @@ export default function Inventory() {
       setProducts(prodRes.data || [])
       setCategories(catRes.data || [])
       setEmployees(empRes.data || [])
-
-      try {
-        const supRes = await api.get('/suppliers')
-        setSuppliers(supRes.data || [])
-      } catch (e) { /* ignore suppliers fetch error */ }
     } catch (e) { /* ignore */ }
     setLoading(false)
   }, [])
@@ -349,17 +337,6 @@ export default function Inventory() {
     try { const res = await api.get('/inventory/reports/summary'); setSummary(res.data) } catch (e) { /* ignore */ }
   }, [])
 
-  const fetchPOs = useCallback(async () => {
-    try { const res = await api.get('/purchase-orders'); setPurchaseOrders(res.data || []) } catch (e) { /* ignore */ }
-  }, [])
-
-  const fetchSuppliers = useCallback(async () => {
-    try {
-      const supRes = await api.get('/suppliers')
-      setSuppliers(supRes.data || [])
-    } catch (e) { /* ignore */ }
-  }, [])
-
   useEffect(() => { fetchAll() }, [fetchAll])
   useEffect(() => {
     if (tab === 'transactions') fetchTransactions()
@@ -367,9 +344,8 @@ export default function Inventory() {
     if (tab === 'low-stock') fetchLowStock()
     if (tab === 'shrinkage') fetchShrinkage()
     if (tab === 'reports') fetchSummary()
-    if (tab === 'purchase-orders') { fetchPOs(); fetchSuppliers() }
     if (tab === 'overview') { fetchSummary(); fetchLowStock() }
-  }, [tab, fetchTransactions, fetchDamaged, fetchLowStock, fetchShrinkage, fetchSummary, fetchPOs, fetchSuppliers])
+  }, [tab, fetchTransactions, fetchDamaged, fetchLowStock, fetchShrinkage, fetchSummary])
 
   useEffect(() => {
     if (location.pathname !== '/inventory') return
@@ -1058,17 +1034,6 @@ export default function Inventory() {
     } catch (err) { setError(err?.response?.data?.error || 'Stock in failed') }
   }
 
-  // ── Receive PO ──
-  const handleReceivePO = async (poId) => {
-    clearMessages()
-    if (!confirm('Receive this purchase order and add items to inventory?')) return
-    try {
-      await api.post('/inventory/stock-in/receive-po', { purchase_order_id: poId })
-      showMsg('Purchase order received — stock updated')
-      fetchPOs(); fetchAll()
-    } catch (err) { setError(err?.response?.data?.error || 'Receive PO failed') }
-  }
-
   // ── Adjustment ──
   const handleAdjust = async (e) => {
     e.preventDefault(); clearMessages()
@@ -1121,77 +1086,6 @@ export default function Inventory() {
       showMsg('Damage recorded')
       fetchAll()
     } catch (err) { setError(err?.response?.data?.error || 'Damage record failed') }
-  }
-
-  // ── Return ──
-  const handleReturn = async (e) => {
-    e.preventDefault(); clearMessages()
-    try {
-      await api.post('/inventory/returns', {
-        product_id: Number(returnForm.product_id),
-        quantity: Number(returnForm.quantity),
-        return_type: 'supplier',
-        reason: returnForm.reason
-      })
-      setReturnForm({ product_id: '', quantity: '', return_type: 'supplier', reason: '' })
-      setReturnBarcode('')
-      showMsg('Return processed')
-      fetchAll()
-    } catch (err) { setError(err?.response?.data?.error || 'Return failed') }
-  }
-
-  // ── Create PO ──
-  const handleCreatePO = async (e) => {
-    e.preventDefault(); clearMessages()
-    try {
-      const items = poForm.items.filter(i => i.product_id && i.quantity).map(i => ({
-        product_id: Number(i.product_id), quantity: Number(i.quantity), unit_cost: Number(i.unit_cost) || 0
-      }))
-      await api.post('/purchase-orders', {
-        supplier_id: Number(poForm.supplier_id),
-        expected_date: poForm.expected_date || undefined,
-        items
-      })
-      setPoForm({ supplier_id: '', expected_date: '', items: [{ product_id: '', quantity: '', unit_cost: '' }] })
-      showMsg('Purchase order created')
-      fetchPOs()
-    } catch (err) { setError(err?.response?.data?.error || 'Create PO failed') }
-  }
-
-  const addPoItem = () => {
-    setPoForm(prev => ({ ...prev, items: [...prev.items, { product_id: '', quantity: '', unit_cost: '' }] }))
-  }
-
- const updatePoItem = (idx, field, val) => {
-  setPoForm(prev => {
-    const items = [...prev.items]
-    items[idx] = { ...items[idx], [field]: val }
-    
-    // Auto-fill unit cost when product is selected
-    if (field === 'product_id' && val) {
-      const selectedProduct = products.find(p => p.id === Number(val))
-      if (selectedProduct && selectedProduct.cost) {
-        items[idx].unit_cost = selectedProduct.cost
-      }
-    }
-    
-    return { ...prev, items }
-  })
-}
-
-  const removePoItem = (idx) => {
-    setPoForm(prev => ({ ...prev, items: prev.items.filter((_, i) => i !== idx) }))
-  }
-
-  // ── Cancel PO ──
-  const handleCancelPO = async (id) => {
-    clearMessages()
-    if (!confirm('Cancel this purchase order?')) return
-    try {
-      await api.post(`/purchase-orders/${id}/cancel`)
-      showMsg('Purchase order cancelled')
-      fetchPOs()
-    } catch (err) { setError(err?.response?.data?.error || 'Cancel PO failed') }
   }
 
   // ── Product CRUD ──
@@ -1254,9 +1148,6 @@ export default function Inventory() {
   const barcodeProductOptions = barcodeReadyProducts.map((p) =>
     React.createElement('option', { key: `barcode-${p.id}`, value: p.id }, `${p.sku ? `${p.sku} - ` : ''}${p.name} (${normalizeScanCode(p.barcode)})`)
   )
-  const supplierOptions = suppliers.map(s =>
-    React.createElement('option', { key: s.id, value: s.id }, s.name)
-  )
   const employeeOptions = employees.map(e =>
     React.createElement('option', { key: e.id, value: e.id }, e.name)
   )
@@ -1288,7 +1179,7 @@ export default function Inventory() {
     React.createElement('div', { className: 'page-header' },
       React.createElement('div', null,
         React.createElement('h1', { className: 'page-title' }, 'Inventory Management'),
-        React.createElement('p', { className: 'page-subtitle' }, 'Track stock-in, stock-out, supplier returns, damages, and purchase orders. Use Purchase Orders for replenishment.')
+        React.createElement('p', { className: 'page-subtitle' }, 'Track stock-in, stock-out, damages, low-stock alerts, shrinkage, and product inventory updates.')
       )
     ),
 
@@ -1394,7 +1285,7 @@ export default function Inventory() {
             )
           ),
           React.createElement('p', { style: { marginTop: 6, fontSize: 12, color: 'var(--text-light)' } },
-            'Direct Stock-In is an emergency/manual fallback. For normal replenishment, use Purchase Orders so supplier, expected date, and unit cost are tracked before receiving.'
+            'Record stock received directly into inventory. Use the reference field for receipts, delivery notes, or manual adjustment context when needed.'
           ),
           React.createElement('button', { type: 'submit', className: 'btn btn-primary', style: { marginTop: 12 } }, 'Record Stock In')
         )
@@ -1505,136 +1396,6 @@ export default function Inventory() {
             )
           ),
           React.createElement('button', { type: 'submit', className: 'btn btn-danger' }, 'Record Damage')
-        )
-      )
-    ),
-
-    // ═══════════════ RETURNS ═══════════════
-    tab === 'returns' && React.createElement('div', null,
-      React.createElement('div', { className: 'card' },
-        React.createElement('h3', { style: { marginBottom: 16 } }, 'Supplier Return (Inventory Out Only)'),
-        React.createElement('form', { onSubmit: handleReturn },
-          React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 } },
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Scan Barcode'),
-              React.createElement('input', {
-                className: 'form-input',
-                value: returnBarcode,
-                onChange: (e) => setReturnBarcode(e.target.value),
-                onKeyDown: (e) => {
-                  if (e.key !== 'Enter') return
-                  e.preventDefault()
-                  handleFormBarcodeScan(e.currentTarget.value, setReturnBarcode, setReturnForm)
-                },
-                placeholder: 'Scan barcode then press Enter'
-              })
-            ),
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Product *'),
-              React.createElement('select', {
-                className: 'form-input',
-                value: returnForm.product_id,
-                onChange: (e) => {
-                  const nextProductId = e.target.value
-                  setReturnForm((f) => ({ ...f, product_id: nextProductId }))
-                  const selected = products.find((p) => String(p.id) === String(nextProductId))
-                  setReturnBarcode(selected?.barcode || '')
-                },
-                required: true
-              },
-                React.createElement('option', { value: '' }, '— Select product —'),
-                ...productOptions
-              )
-            ),
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Quantity *'),
-              React.createElement('input', { className: 'form-input', type: 'number', min: 1, value: returnForm.quantity, onChange: e => setReturnForm(f => ({ ...f, quantity: e.target.value })), required: true })
-            ),
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Reason'),
-              React.createElement('input', { className: 'form-input', value: returnForm.reason, onChange: e => setReturnForm(f => ({ ...f, reason: e.target.value })), placeholder: 'Reason for return...' })
-            )
-          ),
-          React.createElement('p', { style: { marginTop: 6, marginBottom: 10, fontSize: 12, color: 'var(--text-light)' } },
-            'This tab is for supplier returns only and will reduce stock. Customer returns must be processed in Sales > Returns using receipt lookup and return handling.'
-          ),
-          React.createElement('button', { type: 'submit', className: 'btn btn-primary', style: { marginTop: 12 } }, 'Process Return')
-        )
-      )
-    ),
-
-    // ═══════════════ PURCHASE ORDERS ═══════════════
-    tab === 'purchase-orders' && React.createElement('div', null,
-      React.createElement('div', { className: 'card', style: { marginBottom: 20 } },
-        React.createElement('h3', { style: { marginBottom: 16 } }, 'Create New Purchase Order'),
-        React.createElement('p', { style: { marginTop: -4, marginBottom: 12, fontSize: 12, color: 'var(--text-light)' } },
-          'Recommended for replenishment: creating a PO does not increase stock yet. Stock is added only after clicking Receive on an OPEN PO.'
-        ),
-        React.createElement('button', { type: 'button', className: 'btn btn-secondary', style: { marginBottom: 12 }, onClick: fetchSuppliers }, 'Refresh Supplier List'),
-        React.createElement('form', { onSubmit: handleCreatePO },
-          React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 } },
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Supplier *'),
-              React.createElement('select', { className: 'form-input', value: poForm.supplier_id, onChange: e => setPoForm(f => ({ ...f, supplier_id: e.target.value })), required: true },
-                React.createElement('option', { value: '' }, '— Select supplier —'),
-                ...supplierOptions
-              )
-            ),
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Expected Delivery Date'),
-React.createElement('input', { className: 'form-input', type: 'date', value: poForm.expected_date, onChange: e => setPoForm(f => ({ ...f, expected_date: e.target.value })), required: true })            )
-          ),
-          React.createElement('h4', { style: { marginTop: 12, marginBottom: 8, fontSize: 14 } }, 'Items'),
-          poForm.items.map((item, idx) =>
-            React.createElement('div', { key: idx, style: { display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: 8, marginBottom: 8 } },
-              React.createElement('select', { className: 'form-input', value: item.product_id, onChange: e => updatePoItem(idx, 'product_id', e.target.value) },
-                React.createElement('option', { value: '' }, '— Product —'),
-                ...productOptions
-              ),
-              React.createElement('input', { className: 'form-input', type: 'number', min: 1, placeholder: 'Qty', value: item.quantity, onChange: e => updatePoItem(idx, 'quantity', e.target.value) }),
-              React.createElement('input', { className: 'form-input', type: 'number', step: '0.01', placeholder: 'Unit cost', value: item.unit_cost, onChange: e => updatePoItem(idx, 'unit_cost', e.target.value) }),
-              React.createElement('button', { type: 'button', className: 'btn btn-danger', onClick: () => removePoItem(idx), style: { padding: '8px 12px' } }, '✕')
-            )
-          ),
-          React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: addPoItem, style: { marginBottom: 12 } }, '+ Add Item'),
-          React.createElement('br'),
-          React.createElement('button', { type: 'submit', className: 'btn btn-primary' }, 'Create Purchase Order')
-        )
-      ),
-      React.createElement('div', { className: 'card' },
-        React.createElement('h3', { style: { marginBottom: 12 } }, 'Purchase Orders'),
-        React.createElement('div', { className: 'table-wrap' },
-          React.createElement('table', null,
-            React.createElement('thead', null,
-              React.createElement('tr', null,
-                React.createElement('th', null, 'PO #'),
-                React.createElement('th', null, 'Supplier'),
-                React.createElement('th', null, 'Status'),
-                React.createElement('th', null, 'Expected'),
-                React.createElement('th', null, 'Total'),
-                React.createElement('th', null, 'Items'),
-                React.createElement('th', null, 'Actions')
-              )
-            ),
-            React.createElement('tbody', null,
-              purchaseOrders.map(po => React.createElement('tr', { key: po.id },
-                React.createElement('td', { style: { fontWeight: 500 } }, po.po_number),
-                React.createElement('td', null, po.supplier_name || '—'),
-                React.createElement('td', null,
-                  React.createElement('span', { className: `badge ${po.status === 'RECEIVED' ? 'badge-success' : po.status === 'CANCELLED' ? 'badge-danger' : 'badge-warning'}` }, po.status)
-                ),
-                React.createElement('td', null, po.expected_date ? new Date(po.expected_date).toLocaleDateString() : '—'),
-                React.createElement('td', null, fmt(po.total)),
-                React.createElement('td', null, po.items?.map(i => `${i.product_name || 'Product'} x${i.quantity}`).join(', ')),
-                React.createElement('td', null,
-                  po.status === 'OPEN' && React.createElement(React.Fragment, null,
-                    React.createElement('button', { className: 'btn btn-primary', style: { marginRight: 6, padding: '4px 10px', fontSize: 12 }, onClick: () => handleReceivePO(po.id) }, 'Receive'),
-                    React.createElement('button', { className: 'btn btn-danger', style: { padding: '4px 10px', fontSize: 12 }, onClick: () => handleCancelPO(po.id) }, 'Cancel')
-                  )
-                )
-              ))
-            )
-          )
         )
       )
     ),

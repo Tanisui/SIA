@@ -51,20 +51,6 @@ async function createMissingTables() {
     `)
     console.log('✓ damaged_inventory table created/verified')
 
-    // Check and create purchase_items table
-    await db.pool.query(`
-      CREATE TABLE IF NOT EXISTS purchase_items (
-        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        purchase_order_id BIGINT UNSIGNED NOT NULL,
-        product_id BIGINT,
-        quantity INT NOT NULL,
-        unit_cost DECIMAL(12,2) DEFAULT 0.00,
-        FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id) ON DELETE CASCADE,
-        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    `)
-    console.log('✓ purchase_items table created/verified')
-
     console.log('\n✓ All missing tables have been created!')
     process.exit(0)
   } catch (err) {

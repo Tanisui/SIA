@@ -11,7 +11,6 @@ const rolesRoutes = require('./src/routes/roles')
 const productsRoutes = require('./src/routes/products')
 const suppliersRoutes = require('./src/routes/suppliers')
 const inventoryRoutes = require('./src/routes/inventory')
-const purchaseOrdersRoutes = require('./src/routes/purchaseOrders')
 const balePurchasesRoutes = require('./src/routes/balePurchases')
 const salesRoutes = require('./src/routes/sales')
 const employeesRoutes = require('./src/routes/employees')
@@ -47,7 +46,6 @@ app.use('/products', productsRoutes)
 app.use('/api/products', productsRoutes)
 app.use('/suppliers', suppliersRoutes)
 app.use('/inventory', inventoryRoutes)
-app.use('/purchase-orders', purchaseOrdersRoutes)
 app.use('/bale-purchases', balePurchasesRoutes)
 app.use('/sales', salesRoutes)
 app.use('/api/sales', salesRoutes)
@@ -83,7 +81,6 @@ app.get('/health', async (req, res) => {
 
 const server = app.listen(PORT, () => {
   console.log(`\nBackend initialized successfully!\n`)
-  console.log("Database has been initialized")
 })
 
 server.on('error', (err) => {

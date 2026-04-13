@@ -5,16 +5,8 @@ import api from '../api/api.js'
 import Badge from '../components/Badge.js'
 
 const PAYMENT_STATUSES = ['PAID', 'PARTIAL', 'UNPAID']
-const PURCHASING_TAB_KEYS = new Set(['bale-purchases', 'bale-breakdowns', 'purchase-orders'])
+const PURCHASING_TAB_KEYS = new Set(['bale-purchases', 'bale-breakdowns'])
 const DEFAULT_PURCHASING_TAB = 'bale-purchases'
-
-function createDefaultPoForm() {
-  return {
-    supplier_id: '',
-    expected_date: '',
-    items: [{ product_id: '', quantity: '', unit_cost: '' }]
-  }
-}
 
 function createDefaultBaleForm() {
   return {
@@ -117,9 +109,6 @@ export default function Purchasing() {
       : JSON.parse(localStorage.getItem('permissions') || '[]')
   )
 
-  const [suppliers, setSuppliers] = useState([])
-  const [products, setProducts] = useState([])
-  const [orders, setOrders] = useState([])
   const [bales, setBales] = useState([])
   const [breakdowns, setBreakdowns] = useState([])
   const [loading, setLoading] = useState(false)
@@ -127,7 +116,6 @@ export default function Purchasing() {
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
 
-  const [poForm, setPoForm] = useState(createDefaultPoForm)
   const [baleForm, setBaleForm] = useState(createDefaultBaleForm)
   const [breakdownForm, setBreakdownForm] = useState(createDefaultBreakdownForm)
   const [editingBaleId, setEditingBaleId] = useState(null)
@@ -141,25 +129,17 @@ export default function Purchasing() {
     return DEFAULT_PURCHASING_TAB
   }, [location.hash, location.search])
 
-  const canCreatePO = Array.isArray(permissions)
-    ? permissions.includes('admin.*') || permissions.includes('purchase.create')
-    : false
-
-  const canViewPO = Array.isArray(permissions)
-    ? permissions.includes('admin.*') || permissions.includes('purchase.view') || permissions.includes('products.view') || permissions.includes('purchase.create')
-    : false
-
   const canManageBales = Array.isArray(permissions)
-    ? permissions.includes('admin.*') || permissions.includes('purchase.create')
+    ? permissions.includes('admin.*') || permissions.includes('inventory.receive')
     : false
 
   const canViewBales = Array.isArray(permissions)
     ? permissions.includes('admin.*')
-      || permissions.includes('purchase.view')
+      || permissions.includes('inventory.view')
+      || permissions.includes('inventory.receive')
       || permissions.includes('products.view')
       || permissions.includes('reports.view')
       || permissions.includes('finance.reports.view')
-      || permissions.includes('purchase.create')
     : false
 
   const clearMessages = useCallback(() => {
@@ -180,35 +160,6 @@ export default function Purchasing() {
     params.set('tab', nextTab)
     navigate(`/purchasing?${params.toString()}`, { replace, preventScrollReset: true })
   }, [location.hash, location.search, navigate])
-
-  const fetchPOs = useCallback(async () => {
-    if (!canViewPO) {
-      setOrders([])
-      return
-    }
-    const response = await api.get('/purchase-orders')
-    setOrders(Array.isArray(response?.data) ? response.data : [])
-  }, [canViewPO])
-
-  const fetchLookups = useCallback(async () => {
-    const [supplierRes, productRes] = await Promise.allSettled([
-      api.get('/suppliers'),
-      api.get('/products')
-    ])
-
-    if (supplierRes.status === 'fulfilled') {
-      setSuppliers(Array.isArray(supplierRes.value?.data) ? supplierRes.value.data : [])
-    } else {
-      setSuppliers([])
-    }
-
-    if (productRes.status === 'fulfilled') {
-      setProducts(Array.isArray(productRes.value?.data) ? productRes.value.data : [])
-    } else {
-      setProducts([])
-    }
-  }, [])
-
   const fetchBales = useCallback(async (filters = baleFilters) => {
     if (!canViewBales && !canManageBales) {
       setBales([])
@@ -245,17 +196,15 @@ export default function Purchasing() {
       clearMessages()
       setLoading(true)
       await Promise.all([
-        fetchLookups(),
-        fetchPOs(),
         fetchBales(),
         fetchBreakdowns()
       ])
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to load purchasing workspace data')
+      setError(err?.response?.data?.error || 'Failed to load bale workflow data')
     } finally {
       setLoading(false)
     }
-  }, [clearMessages, fetchBales, fetchBreakdowns, fetchLookups, fetchPOs])
+  }, [clearMessages, fetchBales, fetchBreakdowns])
 
   useEffect(() => {
     refreshAll()
@@ -265,16 +214,6 @@ export default function Purchasing() {
     if (location.pathname !== '/purchasing') return
     goToTab(activeTab, { replace: true })
   }, [location.pathname, activeTab, goToTab])
-
-  const supplierOptions = useMemo(
-    () => suppliers.map((row) => ({ value: String(row.id), label: row.name || 'Unnamed Supplier' })),
-    [suppliers]
-  )
-
-  const poTotalPreview = useMemo(() => {
-    return poForm.items.reduce((sum, item) => sum + ((Number(item.quantity) || 0) * (Number(item.unit_cost) || 0)), 0)
-  }, [poForm.items])
-
   const baleTotalPreview = useMemo(() => {
     return Number(baleForm.bale_cost) || 0
   }, [baleForm.bale_cost])
@@ -301,69 +240,6 @@ export default function Purchasing() {
     setBreakdownForm(createDefaultBreakdownForm())
   }
 
-  function addPoItem() {
-    setPoForm((prev) => ({ ...prev, items: [...prev.items, { product_id: '', quantity: '', unit_cost: '' }] }))
-  }
-
-  function removePoItem(index) {
-    setPoForm((prev) => {
-      if (prev.items.length <= 1) return prev
-      return { ...prev, items: prev.items.filter((_, itemIndex) => itemIndex !== index) }
-    })
-  }
-
-  function updatePoItem(index, field, value) {
-    setPoForm((prev) => {
-      const items = [...prev.items]
-      items[index] = { ...items[index], [field]: value }
-      if (field === 'product_id' && value) {
-        const product = products.find((row) => String(row.id) === String(value))
-        if (product && product.cost !== null && product.cost !== undefined) {
-          items[index].unit_cost = String(product.cost)
-        }
-      }
-      return { ...prev, items }
-    })
-  }
-
-  async function createPO(event) {
-    event.preventDefault()
-    clearMessages()
-
-    if (!poForm.supplier_id) {
-      setError('Supplier is required for purchase orders.')
-      return
-    }
-
-    const items = poForm.items
-      .filter((row) => row.product_id && Number(row.quantity) > 0)
-      .map((row) => ({
-        product_id: Number(row.product_id),
-        quantity: Number(row.quantity),
-        unit_cost: Number(row.unit_cost) || 0
-      }))
-
-    if (!items.length) {
-      setError('Add at least one valid item to create a purchase order.')
-      return
-    }
-
-    try {
-      setSubmitting(true)
-      await api.post('/purchase-orders', {
-        supplier_id: Number(poForm.supplier_id),
-        expected_date: poForm.expected_date || undefined,
-        items
-      })
-      setPoForm(createDefaultPoForm())
-      await fetchPOs()
-      showMsg('Purchase order created successfully.')
-    } catch (err) {
-      setError(err?.response?.data?.error || 'Create purchase order failed.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
   async function refreshBaleData(event) {
     if (event) event.preventDefault()
     clearMessages()
@@ -555,9 +431,9 @@ export default function Purchasing() {
     <div className="page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Purchasing & Bale Workflow</h1>
+          <h1 className="page-title">Bale Workflow</h1>
           <p className="page-subtitle">
-            Manage bale purchases, bale breakdown encoding, and expense planning in one workspace.
+            Manage bale purchases, breakdown encoding, and inventory cost tracking in one workspace.
           </p>
         </div>
       </div>
@@ -567,147 +443,22 @@ export default function Purchasing() {
         <div className="success-msg" style={{ marginBottom: 16 }}>{success}</div>
       ) : null}
 
-      {activeTab === 'purchase-orders' ? (
-        <>
-          {canCreatePO ? (
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-header">
-                <h3>Create Purchase Order</h3>
-                <button className="btn btn-secondary btn-sm" type="button" onClick={fetchLookups} disabled={loading || submitting}>
-                  Refresh Suppliers & Products
-                </button>
-              </div>
-
-              <form onSubmit={createPO}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Supplier *</label>
-                    <select
-                      className="form-input"
-                      required
-                      value={poForm.supplier_id}
-                      onChange={(event) => setPoForm((prev) => ({ ...prev, supplier_id: event.target.value }))}
-                    >
-                      <option value="">Select supplier</option>
-                      {supplierOptions.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Expected Delivery Date</label>
-                    <input
-                      className="form-input"
-                      type="date"
-                      value={poForm.expected_date}
-                      onChange={(event) => setPoForm((prev) => ({ ...prev, expected_date: event.target.value }))}
-                    />
-                  </div>
-                </div>
-
-                <h4 style={{ margin: '14px 0 8px' }}>Items</h4>
-                {poForm.items.map((item, index) => (
-                  <div
-                    key={`po-item-${index}`}
-                    style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: 8, marginBottom: 8 }}
-                  >
-                    <select
-                      className="form-input"
-                      value={item.product_id}
-                      onChange={(event) => updatePoItem(index, 'product_id', event.target.value)}
-                    >
-                      <option value="">Select product</option>
-                      {products.map((product) => (
-                        <option key={product.id} value={product.id}>
-                          {`${product.sku ? `${product.sku} - ` : ''}${product.name || 'Unnamed Product'}`}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      className="form-input"
-                      type="number"
-                      min={1}
-                      placeholder="Qty"
-                      value={item.quantity}
-                      onChange={(event) => updatePoItem(index, 'quantity', event.target.value)}
-                    />
-                    <input
-                      className="form-input"
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      placeholder="Unit cost"
-                      value={item.unit_cost}
-                      onChange={(event) => updatePoItem(index, 'unit_cost', event.target.value)}
-                    />
-                    <button
-                      className="btn btn-danger btn-sm"
-                      type="button"
-                      onClick={() => removePoItem(index)}
-                      disabled={poForm.items.length <= 1}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-                  <div style={{ color: 'var(--text-mid)', fontSize: 14 }}>
-                    Estimated PO Total: <strong>{fmtCurrency(poTotalPreview)}</strong>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button type="button" className="btn btn-secondary" onClick={addPoItem} disabled={submitting}>+ Add Item</button>
-                    <button type="submit" className="btn btn-primary" disabled={submitting}>
-                      {submitting ? 'Saving...' : 'Create Purchase Order'}
-                    </button>
-                  </div>
-                </div>
-              </form>
-            </div>
-          ) : (
-            <div className="card" style={{ marginBottom: 16, color: 'var(--text-light)' }}>
-              You can view purchase data but your account cannot create purchase orders.
-            </div>
-          )}
-
-          <div className="card">
-            <div className="card-header">
-              <h3>{loading ? 'Purchase Orders (loading...)' : 'Purchase Orders'}</h3>
-              <button className="btn btn-secondary btn-sm" type="button" onClick={fetchPOs} disabled={loading}>Refresh</button>
-            </div>
-            <div className="table-wrap responsive">
-              <table>
-                <thead>
-                  <tr>
-                    <th>PO #</th>
-                    <th>Supplier</th>
-                    <th>Status</th>
-                    <th>Expected</th>
-                    <th>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {orders.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-light)' }}>
-                        {loading ? 'Loading purchase orders...' : 'No purchase orders yet.'}
-                      </td>
-                    </tr>
-                  ) : orders.map((po) => (
-                    <tr key={po.id}>
-                      <td style={{ fontWeight: 700 }}>{po.po_number}</td>
-                      <td>{po.supplier_name || '-'}</td>
-                      <td>{po.status || 'OPEN'}</td>
-                      <td>{po.expected_date ? fmtDate(po.expected_date) : '-'}</td>
-                      <td>{fmtCurrency(po.total)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
-      ) : null}
+      <div className="purchase-tabs">
+        <button
+          className={`purchase-tab ${activeTab === 'bale-purchases' ? 'purchase-tab-active' : ''}`}
+          onClick={() => goToTab('bale-purchases')}
+          type="button"
+        >
+          Bale Purchases
+        </button>
+        <button
+          className={`purchase-tab ${activeTab === 'bale-breakdowns' ? 'purchase-tab-active' : ''}`}
+          onClick={() => goToTab('bale-breakdowns')}
+          type="button"
+        >
+          Bale Breakdown
+        </button>
+      </div>
 
       {activeTab === 'bale-purchases' ? (
         <>

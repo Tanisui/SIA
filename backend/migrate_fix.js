@@ -105,35 +105,6 @@ async function run() {
   `)
   console.log('Ensured suppliers table exists')
 
-  // ── 6. Ensure purchase_orders table exists ──
-  await conn.query(`
-    CREATE TABLE IF NOT EXISTS purchase_orders (
-      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-      po_number VARCHAR(100) UNIQUE,
-      supplier_id BIGINT UNSIGNED,
-      status ENUM('OPEN','RECEIVED','CANCELLED') DEFAULT 'OPEN',
-      expected_date DATE,
-      total DECIMAL(12,2) DEFAULT 0.00,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `)
-  console.log('Ensured purchase_orders table exists')
-
-  // ── 7. Ensure purchase_items table exists ──
-  await conn.query(`
-    CREATE TABLE IF NOT EXISTS purchase_items (
-      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-      purchase_order_id BIGINT UNSIGNED NOT NULL,
-      product_id BIGINT UNSIGNED NOT NULL,
-      quantity INT NOT NULL,
-      unit_cost DECIMAL(12,2) DEFAULT 0.00,
-      FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id) ON DELETE CASCADE,
-      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `)
-  console.log('Ensured purchase_items table exists')
-
   // ── 8. Ensure sales table exists ──
   await conn.query(`
     CREATE TABLE IF NOT EXISTS sales (
@@ -189,8 +160,6 @@ async function run() {
 
   // ── 10. Seed missing permissions ──
   const newPermissions = [
-    'purchase.update',
-    'purchase.delete',
     'inventory.create',
     'inventory.update'
   ]

@@ -17,8 +17,6 @@ const NAV_ITEMS = [
       { to: '/inventory', tab: 'overview', label: 'Overview' },
       { to: '/inventory', tab: 'stock-in', label: 'Stock In' },
       { to: '/inventory', tab: 'stock-out', label: 'Stock Out' },
-      { to: '/inventory', tab: 'returns', label: 'Supplier Returns' },
-      { to: '/inventory', tab: 'purchase-orders', label: 'Purchase Orders' },
       { to: '/inventory', tab: 'products', label: 'Products' },
       { to: '/inventory', tab: 'barcode-labels', label: 'Barcode Labels' },
       { to: '/inventory', tab: 'transactions', label: 'Transactions' },
@@ -32,12 +30,11 @@ const NAV_ITEMS = [
   {
     to: '/purchasing',
     label: 'Purchasing',
-    icon: 'PO',
-    perm: 'purchase.view',
+    icon: 'BL',
+    perm: ['inventory.view', 'inventory.receive', 'reports.view', 'finance.reports.view'],
     children: [
       { to: '/purchasing', tab: 'bale-purchases', label: 'Bale Purchases' },
-      { to: '/purchasing', tab: 'bale-breakdowns', label: 'Bale Breakdown' },
-      { to: '/purchasing', tab: 'purchase-orders', label: 'Purchase Orders' }
+      { to: '/purchasing', tab: 'bale-breakdowns', label: 'Bale Breakdown' }
     ]
   },
   { section: 'Finance' },

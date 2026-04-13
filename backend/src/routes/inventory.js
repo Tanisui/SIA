@@ -37,7 +37,7 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
     if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
     if (supplier_id) {
       await conn.rollback(); conn.release()
-      return res.status(400).json({ error: 'Direct purchase must not include supplier. Use Purchase Order flow when supplier is selected.' })
+      return res.status(400).json({ error: 'Direct stock-in does not accept supplier details. Record supplier activity outside this inventory flow.' })
     }
 
     const [prod] = await conn.query('SELECT stock_quantity, cost AS old_cost FROM products WHERE id = ? FOR UPDATE', [product_id])
@@ -60,44 +60,6 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
     conn.release()
     console.error(err)
     res.status(500).json({ error: 'stock-in failed' })
-  }
-})
-
-// ─── Stock In: Receive from Purchase Order ───
-router.post('/stock-in/receive-po', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
-  const conn = await db.pool.getConnection()
-  try {
-    await conn.beginTransaction()
-    const { purchase_order_id, reference } = req.body
-    if (!purchase_order_id) return res.status(400).json({ error: 'purchase_order_id required' })
-
-    const [po] = await conn.query('SELECT * FROM purchase_orders WHERE id = ? FOR UPDATE', [purchase_order_id])
-    if (!po.length) { await conn.rollback(); conn.release(); return res.status(404).json({ error: 'purchase order not found' }) }
-    if (po[0].status === 'RECEIVED') { await conn.rollback(); conn.release(); return res.status(400).json({ error: 'purchase order already received' }) }
-    if (po[0].status === 'CANCELLED') { await conn.rollback(); conn.release(); return res.status(400).json({ error: 'purchase order is cancelled' }) }
-
-    const [items] = await conn.query('SELECT * FROM purchase_items WHERE purchase_order_id = ?', [purchase_order_id])
-    for (const item of items) {
-      const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [item.product_id])
-      if (!prod.length) continue
-      const newQty = prod[0].stock_quantity + item.quantity
-      await conn.query('UPDATE products SET stock_quantity = ?, cost = ? WHERE id = ?', [newQty, item.unit_cost, item.product_id])
-      await conn.query(
-        `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after)
-         VALUES (?, 'IN', ?, ?, ?, ?, ?)`,
-        [item.product_id, item.quantity, reference || po[0].po_number, req.auth.id, `Received from PO #${po[0].po_number}`, newQty]
-      )
-    }
-
-    await conn.query("UPDATE purchase_orders SET status = 'RECEIVED' WHERE id = ?", [purchase_order_id])
-    await conn.commit()
-    conn.release()
-    res.json({ success: true, items_received: items.length })
-  } catch (err) {
-    await conn.rollback()
-    conn.release()
-    console.error(err)
-    res.status(500).json({ error: 'receive PO failed' })
   }
 })
 
@@ -194,45 +156,6 @@ router.post('/stock-out/damage', express.json(), verifyToken, authorize('invento
     conn.release()
     console.error(err)
     res.status(500).json({ error: 'damage record failed' })
-  }
-})
-
-// ─── Returns ───
-router.post('/returns', express.json(), verifyToken, authorize('inventory.adjust'), async (req, res) => {
-  const conn = await db.pool.getConnection()
-  try {
-    await conn.beginTransaction()
-    const { product_id, quantity, return_type, reason, sale_id } = req.body
-    if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
-
-    if (return_type === 'customer') {
-      await conn.rollback()
-      conn.release()
-      return res.status(400).json({
-        error: 'Customer returns must be processed through the sales receipt return flow.'
-      })
-    } else if (return_type === 'supplier') {
-      const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [product_id])
-      if (!prod.length) { await conn.rollback(); conn.release(); return res.status(404).json({ error: 'product not found' }) }
-      const newQty = Math.max(0, prod[0].stock_quantity - Number(quantity))
-      await conn.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [newQty, product_id])
-      await conn.query(
-        `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, user_id, reason, balance_after)
-         VALUES (?, 'RETURN', ?, ?, ?, ?)`,
-        [product_id, -quantity, req.auth.id, `Supplier return: ${reason || ''}`, newQty]
-      )
-      await conn.commit()
-      conn.release()
-      return res.json({ success: true, new_quantity: newQty })
-    }
-    await conn.rollback()
-    conn.release()
-    res.status(400).json({ error: 'return_type must be customer or supplier' })
-  } catch (err) {
-    await conn.rollback()
-    conn.release()
-    console.error(err)
-    res.status(500).json({ error: 'return failed' })
   }
 })
 

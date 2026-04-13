@@ -11,6 +11,9 @@ const {
   DB_PASSWORD
 } = process.env;
 
+const hasExplicitDbPassword = Object.prototype.hasOwnProperty.call(process.env, 'DB_PASSWORD')
+const resolvedDbPassword = hasExplicitDbPassword ? DB_PASSWORD : ''
+
 if (!DB_HOST || !DB_DATABASE || !DB_USERNAME) {
   console.warn('Missing DB configuration in .env — database connection may fail.')
 }
@@ -19,7 +22,7 @@ const pool = mysql.createPool({
   host: DB_HOST || 'localhost',
   port: DB_PORT ? Number(DB_PORT) : 3306,
   user: DB_USERNAME || 'root',
-  password: DB_PASSWORD || '',
+  password: resolvedDbPassword,
   database: DB_DATABASE || "cecilles_nstyle_db",
   waitForConnections: true,
   connectionLimit: 10,
@@ -27,16 +30,21 @@ const pool = mysql.createPool({
 })
 
 async function testConnection() {
+  const conn = await pool.getConnection()
   try {
-    const conn = await pool.getConnection()
     await conn.ping()
+  } finally {
     conn.release()
-  } catch (err) {
-    console.error('Database connection error:', err.message || err)
   }
 }
 
 testConnection()
+  .then(() => {
+    console.log('Database connection established')
+  })
+  .catch((err) => {
+    console.error('Database connection error:', err.message || err)
+  })
 
 module.exports = {
   pool,
