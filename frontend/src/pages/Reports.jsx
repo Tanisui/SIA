@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/api.js'
 import Badge from '../components/Badge.js'
 import Pagination, { PaginationInfo } from '../components/Pagination.js'
@@ -51,6 +52,8 @@ const REPORT_TABS = [
     description: 'Opening inventory, added pieces, sold pieces, damage/loss, and computed ending inventory.'
   }
 ]
+const REPORT_TAB_KEYS = new Set(REPORT_TABS.map((tab) => tab.key))
+const DEFAULT_REPORT_TAB = REPORT_TABS[0].key
 
 function toDateOnly(value) {
   return value.toISOString().slice(0, 10)
@@ -139,13 +142,15 @@ function TablePagination({ sectionKey, rows, pages, setPages }) {
 }
 
 export default function Reports() {
+  const location = useLocation()
+  const navigate = useNavigate()
+
   const initialRange = defaultDateRange()
   const [from, setFrom] = useState(initialRange.from)
   const [to, setTo] = useState(initialRange.to)
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [activeTab, setActiveTab] = useState(REPORT_TABS[0].key)
   const [pages, setPages] = useState({
     balePurchases: 1,
     baleBreakdowns: 1,
@@ -174,12 +179,30 @@ export default function Reports() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const activeTab = useMemo(() => {
+    const params = new URLSearchParams(location.search)
+    const searchTab = String(params.get('tab') || '').trim()
+    const hashTab = String(location.hash || '').replace(/^#/, '')
+    if (REPORT_TAB_KEYS.has(searchTab)) return searchTab
+    if (REPORT_TAB_KEYS.has(hashTab)) return hashTab
+    return DEFAULT_REPORT_TAB
+  }, [location.hash, location.search])
+
   useEffect(() => {
     setPages((prev) => ({
       ...prev,
       [activeTab]: 1
     }))
   }, [activeTab])
+
+  useEffect(() => {
+    if (location.pathname !== '/reports') return
+    const params = new URLSearchParams(location.search)
+    const currentTab = String(params.get('tab') || '').trim()
+    if (currentTab === activeTab && !location.hash) return
+    params.set('tab', activeTab)
+    navigate(`/reports?${params.toString()}`, { replace: true, preventScrollReset: true })
+  }, [location.pathname, location.search, location.hash, activeTab, navigate])
 
   const activeTabMeta = useMemo(() => {
     return REPORT_TABS.find((tab) => tab.key === activeTab) || REPORT_TABS[0]
@@ -526,18 +549,6 @@ export default function Reports() {
             />
           ) : (
             <>
-              <div className="reports-tabs">
-                {REPORT_TABS.map((tab) => (
-                  <button
-                    key={tab.key}
-                    className={`reports-tab ${activeTab === tab.key ? 'reports-tab-active' : ''}`}
-                    onClick={() => setActiveTab(tab.key)}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-
               <div className="card reports-section-card">
                 <SectionHeader title={activeTabMeta.label} description={activeTabMeta.description} />
                 {renderSection()}

@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSelector } from 'react-redux'
+import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/api.js'
 import Badge from '../components/Badge.js'
 
 const PAYMENT_STATUSES = ['PAID', 'PARTIAL', 'UNPAID']
+const PURCHASING_TAB_KEYS = new Set(['bale-purchases', 'bale-breakdowns', 'purchase-orders'])
+const DEFAULT_PURCHASING_TAB = 'bale-purchases'
 
 function createDefaultPoForm() {
   return {
@@ -105,13 +108,15 @@ function mapBreakdownToForm(row) {
 }
 
 export default function Purchasing() {
+  const location = useLocation()
+  const navigate = useNavigate()
+
   const permissions = useSelector((state) =>
     state.auth && state.auth.permissions
       ? state.auth.permissions
       : JSON.parse(localStorage.getItem('permissions') || '[]')
   )
 
-  const [activeTab, setActiveTab] = useState('bale-purchases')
   const [suppliers, setSuppliers] = useState([])
   const [products, setProducts] = useState([])
   const [orders, setOrders] = useState([])
@@ -127,6 +132,14 @@ export default function Purchasing() {
   const [breakdownForm, setBreakdownForm] = useState(createDefaultBreakdownForm)
   const [editingBaleId, setEditingBaleId] = useState(null)
   const [baleFilters, setBaleFilters] = useState({ from: '', to: '', payment_status: '', search: '' })
+  const activeTab = useMemo(() => {
+    const params = new URLSearchParams(location.search)
+    const searchTab = String(params.get('tab') || '').trim()
+    const hashTab = String(location.hash || '').replace(/^#/, '')
+    if (PURCHASING_TAB_KEYS.has(searchTab)) return searchTab
+    if (PURCHASING_TAB_KEYS.has(hashTab)) return hashTab
+    return DEFAULT_PURCHASING_TAB
+  }, [location.hash, location.search])
 
   const canCreatePO = Array.isArray(permissions)
     ? permissions.includes('admin.*') || permissions.includes('purchase.create')
@@ -158,6 +171,15 @@ export default function Purchasing() {
     setSuccess(message)
     setTimeout(() => setSuccess(null), 4200)
   }, [])
+
+  const goToTab = useCallback((nextTab, { replace = false } = {}) => {
+    if (!PURCHASING_TAB_KEYS.has(nextTab)) return
+    const params = new URLSearchParams(location.search)
+    const currentTab = String(params.get('tab') || '').trim()
+    if (currentTab === nextTab && !location.hash) return
+    params.set('tab', nextTab)
+    navigate(`/purchasing?${params.toString()}`, { replace, preventScrollReset: true })
+  }, [location.hash, location.search, navigate])
 
   const fetchPOs = useCallback(async () => {
     if (!canViewPO) {
@@ -238,6 +260,11 @@ export default function Purchasing() {
   useEffect(() => {
     refreshAll()
   }, [refreshAll])
+
+  useEffect(() => {
+    if (location.pathname !== '/purchasing') return
+    goToTab(activeTab, { replace: true })
+  }, [location.pathname, activeTab, goToTab])
 
   const supplierOptions = useMemo(
     () => suppliers.map((row) => ({ value: String(row.id), label: row.name || 'Unnamed Supplier' })),
@@ -376,7 +403,7 @@ export default function Purchasing() {
       payment_status: row.payment_status || 'UNPAID',
       notes: row.notes || ''
     })
-    setActiveTab('bale-purchases')
+    goToTab('bale-purchases')
     clearMessages()
   }
 
@@ -458,7 +485,7 @@ export default function Purchasing() {
         breakdown_date: prev.breakdown_date || todayDateInput()
       }))
     }
-    setActiveTab('bale-breakdowns')
+    goToTab('bale-breakdowns')
     clearMessages()
   }
 
@@ -539,23 +566,6 @@ export default function Purchasing() {
       {success ? (
         <div className="success-msg" style={{ marginBottom: 16 }}>{success}</div>
       ) : null}
-
-      <div className="purchase-tabs">
-        <button
-          className={`purchase-tab ${activeTab === 'bale-purchases' ? 'purchase-tab-active' : ''}`}
-          onClick={() => setActiveTab('bale-purchases')}
-          type="button"
-        >
-          Bale Purchases
-        </button>
-        <button
-          className={`purchase-tab ${activeTab === 'bale-breakdowns' ? 'purchase-tab-active' : ''}`}
-          onClick={() => setActiveTab('bale-breakdowns')}
-          type="button"
-        >
-          Bale Breakdown
-        </button>
-      </div>
 
       {activeTab === 'purchase-orders' ? (
         <>
@@ -1088,7 +1098,7 @@ export default function Purchasing() {
                           type="button"
                           onClick={() => {
                             setBreakdownForm(mapBreakdownToForm(row))
-                            setActiveTab('bale-breakdowns')
+                            goToTab('bale-breakdowns')
                             clearMessages()
                           }}
                         >

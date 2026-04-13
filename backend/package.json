@@ -4,8 +4,12 @@
   "description": "Node.JS",
   "main": "server.js",
   "scripts": {
+    "dev": "node server.js",
+    "migrate": "node migrate_inventory.js && node src/migrations/migrate_scanner.js",
+    "migrate:scanner": "node src/migrations/migrate_scanner.js",
     "start": "node server.js",
     "seed": "node src/migrations/seed.js",
+    "test": "node test/run-tests.js",
     "db:sync-team": "powershell -ExecutionPolicy Bypass -File scripts/sync-team-sql.ps1",
     "db:sync-team:seed": "powershell -ExecutionPolicy Bypass -File scripts/sync-team-sql.ps1 -Seed"
   },
@@ -18,6 +22,7 @@
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.0",
-    "mysql2": "^3.6.0"
+    "mysql2": "^3.6.0",
+    "qrcode": "^1.5.4"
   }
 }

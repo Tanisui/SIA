@@ -1,9 +1,78 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import JsBarcode from 'jsbarcode'
+import QRCode from 'qrcode'
+import { jsPDF } from 'jspdf'
+import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/api.js'
 
 // ─── Helpers ───
 const fmt = (n) => Number(n || 0).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
+const normalizeScanCode = (v) => String(v || '').trim().toUpperCase()
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function createCode128SvgMarkup(value) {
+  const normalizedValue = normalizeScanCode(value)
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  JsBarcode(svg, normalizedValue, {
+    format: 'CODE128',
+    displayValue: false,
+    margin: 0,
+    height: 36,
+    width: 1.25
+  })
+  return svg.outerHTML
+}
+
+async function createQrDataUrl(value) {
+  const normalizedValue = normalizeScanCode(value)
+  return QRCode.toDataURL(normalizedValue, {
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 112
+  })
+}
+
+function resolveQrImageSrc(pathValue) {
+  const rawValue = String(pathValue || '').trim()
+  if (!rawValue) return ''
+  if (/^https?:\/\//i.test(rawValue) || rawValue.startsWith('data:')) return rawValue
+  const baseUrl = String(api.defaults?.baseURL || '').replace(/\/+$/, '')
+  const normalizedPath = rawValue.startsWith('/') ? rawValue : `/${rawValue}`
+  return `${baseUrl}${normalizedPath}`
+}
+
+function sanitizePdfToken(value) {
+  return normalizeScanCode(value)
+    .replace(/[^A-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase()
+}
+
+const INVENTORY_TAB_KEYS = new Set([
+  'overview',
+  'stock-in',
+  'stock-out',
+  'returns',
+  'purchase-orders',
+  'products',
+  'barcode-labels',
+  'transactions',
+  'damaged',
+  'low-stock',
+  'shrinkage',
+  'reports'
+])
+const DEFAULT_INVENTORY_TAB = 'overview'
 
 function parseReferenceMeta(rawValue) {
   const value = String(rawValue || '').trim()
@@ -131,9 +200,57 @@ const infoTip = (text) => React.createElement('span', {
   }
 }, 'i')
 
+function qrActionIcon() {
+  return React.createElement('svg', {
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.8,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    'aria-hidden': 'true'
+  },
+  React.createElement('rect', { x: 3, y: 3, width: 7, height: 7, rx: 1 }),
+  React.createElement('rect', { x: 14, y: 3, width: 7, height: 7, rx: 1 }),
+  React.createElement('rect', { x: 3, y: 14, width: 7, height: 7, rx: 1 }),
+  React.createElement('path', { d: 'M15 14h2v2h-2zM19 14h2v2h-2zM15 18h2v2h-2zM17 16h2v2h-2zM19 18h2v2h-2z' })
+  )
+}
+
+function editActionIcon() {
+  return React.createElement('svg', {
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.8,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    'aria-hidden': 'true'
+  },
+  React.createElement('path', { d: 'M12 20h9' }),
+  React.createElement('path', { d: 'M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z' })
+  )
+}
+
+function deleteActionIcon() {
+  return React.createElement('svg', {
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.8,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    'aria-hidden': 'true'
+  },
+  React.createElement('path', { d: 'M3 6h18' }),
+  React.createElement('path', { d: 'M8 6V4h8v2' }),
+  React.createElement('path', { d: 'M19 6l-1 14H6L5 6' }),
+  React.createElement('path', { d: 'M10 11v6M14 11v6' })
+  )
+}
+
 export default function Inventory() {
   // ── state ──
-  const [tab, setTab] = useState('overview')
   const [products, setProducts] = useState([])
   const [suppliers, setSuppliers] = useState([])
   const [employees, setEmployees] = useState([])
@@ -147,19 +264,44 @@ export default function Inventory() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
+  const location = useLocation()
+  const navigate = useNavigate()
 
   // forms
   const [stockInForm, setStockInForm] = useState({ product_id: '', quantity: '', reference: '', date: '' })
   const [adjustForm, setAdjustForm] = useState({ product_id: '', quantity: '', reason: '', employee_id: '' })
   const [damageForm, setDamageForm] = useState({ product_id: '', quantity: '', reason: '', employee_id: '' })
   const [returnForm, setReturnForm] = useState({ product_id: '', quantity: '', return_type: 'supplier', reason: '' })
+  const [stockInBarcode, setStockInBarcode] = useState('')
+  const [adjustBarcode, setAdjustBarcode] = useState('')
+  const [damageBarcode, setDamageBarcode] = useState('')
+  const [returnBarcode, setReturnBarcode] = useState('')
   const [poForm, setPoForm] = useState({ supplier_id: '', expected_date: '', items: [{ product_id: '', quantity: '', unit_cost: '' }] })
   const [productForm, setProductForm] = useState({ sku: '', name: '', brand: '', description: '', category_id: '', price: '', cost: '', stock_quantity: '', low_stock_threshold: '10', size: '', color: '', barcode: '' })
   const [editingProduct, setEditingProduct] = useState(null)
   const [showProductModal, setShowProductModal] = useState(false)
+  const [qrPreviewProduct, setQrPreviewProduct] = useState(null)
+  const [qrPreviewSrc, setQrPreviewSrc] = useState('')
+  const [qrPreviewLoading, setQrPreviewLoading] = useState(false)
+  const [qrPreviewScanValue, setQrPreviewScanValue] = useState('')
   const [filterType, setFilterType] = useState('')
   const [categorySearch, setCategorySearch] = useState('')
   const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false)
+  const [labelProductId, setLabelProductId] = useState('')
+  const [labelScanValue, setLabelScanValue] = useState('')
+  const [labelCopies, setLabelCopies] = useState('1')
+  const [labelQueue, setLabelQueue] = useState([])
+  const labelScanInputRef = useRef(null)
+  const qrPreviewScanInputRef = useRef(null)
+  const qrPreviewScanTimerRef = useRef(null)
+  const tab = useMemo(() => {
+    const params = new URLSearchParams(location.search)
+    const searchTab = String(params.get('tab') || '').trim()
+    const hashTab = String(location.hash || '').replace(/^#/, '')
+    if (INVENTORY_TAB_KEYS.has(searchTab)) return searchTab
+    if (INVENTORY_TAB_KEYS.has(hashTab)) return hashTab
+    return DEFAULT_INVENTORY_TAB
+  }, [location.hash, location.search])
 
   // ── data fetchers ──
   const fetchAll = useCallback(async () => {
@@ -229,8 +371,659 @@ export default function Inventory() {
     if (tab === 'overview') { fetchSummary(); fetchLowStock() }
   }, [tab, fetchTransactions, fetchDamaged, fetchLowStock, fetchShrinkage, fetchSummary, fetchPOs, fetchSuppliers])
 
+  useEffect(() => {
+    if (location.pathname !== '/inventory') return
+    const params = new URLSearchParams(location.search)
+    const currentTab = String(params.get('tab') || '').trim()
+    if (currentTab === tab && !location.hash) return
+    params.set('tab', tab)
+    navigate(`/inventory?${params.toString()}`, { replace: true, preventScrollReset: true })
+  }, [location.pathname, location.search, location.hash, tab, navigate])
+
+  useEffect(() => {
+    if (tab !== 'barcode-labels') return undefined
+
+    const focusScanInput = () => {
+      const input = labelScanInputRef.current
+      if (input && document.activeElement !== input) input.focus()
+    }
+
+    const frameId = window.requestAnimationFrame(focusScanInput)
+    window.addEventListener('focus', focusScanInput)
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      window.removeEventListener('focus', focusScanInput)
+    }
+  }, [tab])
+
   const clearMessages = () => { setError(null); setSuccess(null) }
   const showMsg = (msg) => { setSuccess(msg); setTimeout(() => setSuccess(null), 4000) }
+
+  const focusQrPreviewScanInput = useCallback(() => {
+    const input = qrPreviewScanInputRef.current
+    if (input && document.activeElement !== input) input.focus()
+  }, [])
+
+  const clearQrPreviewScanTimer = useCallback(() => {
+    if (!qrPreviewScanTimerRef.current) return
+    window.clearTimeout(qrPreviewScanTimerRef.current)
+    qrPreviewScanTimerRef.current = null
+  }, [])
+
+  const closeQrPreview = useCallback(() => {
+    clearQrPreviewScanTimer()
+    setQrPreviewProduct(null)
+    setQrPreviewSrc('')
+    setQrPreviewLoading(false)
+    setQrPreviewScanValue('')
+  }, [clearQrPreviewScanTimer])
+
+  useEffect(() => {
+    if (!qrPreviewProduct) return undefined
+
+    const restoreScanFocus = () => focusQrPreviewScanInput()
+    const frameId = window.requestAnimationFrame(restoreScanFocus)
+    window.addEventListener('focus', restoreScanFocus)
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      window.removeEventListener('focus', restoreScanFocus)
+      clearQrPreviewScanTimer()
+      setQrPreviewScanValue('')
+    }
+  }, [qrPreviewProduct, focusQrPreviewScanInput, clearQrPreviewScanTimer])
+
+  const openQrPreview = useCallback(async (product) => {
+    if (!product?.barcode) {
+      setError('Selected product has no barcode/QR code yet')
+      return
+    }
+
+    clearMessages()
+    setQrPreviewProduct(product)
+    setQrPreviewSrc('')
+    setQrPreviewLoading(true)
+    setQrPreviewScanValue('')
+
+    try {
+      const previewSrc = resolveQrImageSrc(product.qr_image_path) || await createQrDataUrl(product.barcode)
+      setQrPreviewSrc(previewSrc)
+    } catch (err) {
+      setQrPreviewProduct(null)
+      setQrPreviewSrc('')
+      setError('Failed to load digital QR preview')
+    } finally {
+      setQrPreviewLoading(false)
+    }
+  }, [])
+
+  const exportQrPdf = useCallback(async (items, fileNamePrefix = 'qr-products') => {
+    const normalizedItems = (Array.isArray(items) ? items : [])
+      .filter((item) => normalizeScanCode(item?.barcode))
+      .map((item) => ({
+        name: item.name || 'Unnamed product',
+        sku: item.sku || '',
+        barcode: normalizeScanCode(item.barcode)
+      }))
+
+    if (!normalizedItems.length) {
+      setError('No QR products available to export')
+      return
+    }
+
+    clearMessages()
+
+    try {
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+
+      for (let index = 0; index < normalizedItems.length; index += 1) {
+        const item = normalizedItems[index]
+        if (index > 0) pdf.addPage()
+
+        const qrDataUrl = await createQrDataUrl(item.barcode)
+        const titleLines = pdf.splitTextToSize(item.name, 160)
+        const skuLine = item.sku ? `SKU: ${item.sku}` : 'SKU: -'
+
+        pdf.setFillColor(249, 245, 237)
+        pdf.rect(15, 15, 180, 267, 'F')
+
+        pdf.setTextColor(15, 23, 42)
+        pdf.setFont('helvetica', 'bold')
+        pdf.setFontSize(20)
+        pdf.text(titleLines, 105, 35, { align: 'center' })
+
+        pdf.setFont('helvetica', 'normal')
+        pdf.setFontSize(11)
+        pdf.setTextColor(100, 116, 139)
+        pdf.text(skuLine, 105, 48, { align: 'center' })
+
+        pdf.setFillColor(255, 255, 255)
+        pdf.roundedRect(47.5, 60, 115, 115, 8, 8, 'F')
+        pdf.addImage(qrDataUrl, 'PNG', 57.5, 70, 95, 95)
+
+        pdf.setFont('courier', 'bold')
+        pdf.setFontSize(18)
+        pdf.setTextColor(15, 23, 42)
+        pdf.text(item.barcode, 105, 192, { align: 'center' })
+
+        pdf.setFont('helvetica', 'normal')
+        pdf.setFontSize(11)
+        pdf.setTextColor(71, 85, 105)
+        pdf.text('Scan this QR in Sales POS to add the product automatically.', 105, 208, { align: 'center' })
+      }
+
+      const suffix = normalizedItems.length === 1
+        ? sanitizePdfToken(normalizedItems[0].barcode || normalizedItems[0].sku || normalizedItems[0].name)
+        : new Date().toISOString().slice(0, 10)
+      pdf.save(`${fileNamePrefix}-${suffix}.pdf`)
+      showMsg(`QR PDF exported for ${normalizedItems.length} product${normalizedItems.length > 1 ? 's' : ''}`)
+    } catch (err) {
+      setError('Failed to export QR PDF')
+    }
+  }, [])
+
+  const downloadPreviewQrPdf = useCallback(() => {
+    if (!qrPreviewProduct) {
+      setError('Open a QR preview first')
+      return
+    }
+    exportQrPdf([qrPreviewProduct], 'product-qr')
+  }, [qrPreviewProduct, exportQrPdf])
+
+  const productAvailableForPos = useCallback((product) => {
+    const availableStock = Number(product?.stock_quantity || 0)
+    if (availableStock > 0) return true
+
+    const productName = String(product?.name || product?.barcode || 'Selected product').trim()
+    clearMessages()
+    setError(`0 stock: ${productName} will not be sent to Sales`)
+    return false
+  }, [])
+
+  const sendProductToPos = useCallback((product) => {
+    const normalizedCode = normalizeScanCode(product?.barcode)
+    if (!normalizedCode) {
+      setError('Selected product has no barcode/QR code yet')
+      return false
+    }
+    if (!productAvailableForPos(product)) return false
+
+    closeQrPreview()
+    navigate(`/sales?scan=${encodeURIComponent(normalizedCode)}`, { preventScrollReset: true })
+    return true
+  }, [closeQrPreview, navigate, productAvailableForPos])
+
+  const submitQrPreviewScan = useCallback((rawValue) => {
+    clearQrPreviewScanTimer()
+    const normalizedCode = normalizeScanCode(rawValue)
+    const previewCode = normalizeScanCode(qrPreviewProduct?.barcode)
+
+    if (!normalizedCode) {
+      setQrPreviewScanValue('')
+      focusQrPreviewScanInput()
+      return
+    }
+
+    if (!previewCode || normalizedCode !== previewCode) {
+      setQrPreviewScanValue('')
+      setError(`Scanned code ${normalizedCode} does not match the previewed product`)
+      focusQrPreviewScanInput()
+      return
+    }
+
+    setQrPreviewScanValue('')
+    if (sendProductToPos(qrPreviewProduct)) {
+      showMsg(`Scanned ${qrPreviewProduct?.name || 'product'} from the digital QR preview`)
+    } else {
+      focusQrPreviewScanInput()
+    }
+  }, [clearQrPreviewScanTimer, focusQrPreviewScanInput, qrPreviewProduct, sendProductToPos])
+
+  const scheduleQrPreviewScanSubmit = useCallback((rawValue) => {
+    clearQrPreviewScanTimer()
+    if (!normalizeScanCode(rawValue)) return
+    qrPreviewScanTimerRef.current = window.setTimeout(() => {
+      submitQrPreviewScan(rawValue)
+    }, 180)
+  }, [clearQrPreviewScanTimer, submitQrPreviewScan])
+
+  const renderQrPreviewModal = () => (
+    qrPreviewProduct && React.createElement('div', {
+      className: 'modal-backdrop',
+      onClick: closeQrPreview
+    },
+    React.createElement('div', {
+      className: 'modal',
+      style: { maxWidth: 560, position: 'relative' },
+      onClick: (e) => e.stopPropagation()
+    },
+    React.createElement('input', {
+      ref: qrPreviewScanInputRef,
+      type: 'text',
+      value: qrPreviewScanValue,
+      onChange: (e) => {
+        const nextValue = e.target.value
+        setQrPreviewScanValue(nextValue)
+        scheduleQrPreviewScanSubmit(nextValue)
+      },
+      onKeyDown: (e) => {
+        if (e.key !== 'Enter' && e.key !== 'Tab') return
+        e.preventDefault()
+        submitQrPreviewScan(e.currentTarget.value)
+      },
+      autoComplete: 'off',
+      'aria-hidden': 'true',
+      tabIndex: -1,
+      style: {
+        position: 'absolute',
+        width: 1,
+        height: 1,
+        padding: 0,
+        border: 0,
+        opacity: 0,
+        pointerEvents: 'none'
+      }
+    }),
+    React.createElement('div', { className: 'modal-header' },
+      React.createElement('h2', null, 'Digital QR Preview'),
+      React.createElement('button', { type: 'button', className: 'modal-close', onClick: closeQrPreview }, '×')
+    ),
+    React.createElement('div', { className: 'modal-body' },
+      React.createElement('div', { style: { display: 'grid', gap: 16, justifyItems: 'center', textAlign: 'center' } },
+        React.createElement('div', null,
+          React.createElement('div', { style: { fontSize: 22, fontWeight: 700, color: 'var(--text-dark)' } }, qrPreviewProduct.name || 'Unnamed product'),
+          React.createElement('div', { style: { marginTop: 6, color: 'var(--text-light)', fontSize: 13 } }, qrPreviewProduct.sku ? `SKU: ${qrPreviewProduct.sku}` : 'No SKU'),
+          React.createElement('div', { style: { color: 'var(--text-light)', fontSize: 13, fontFamily: 'monospace' } }, `Code: ${qrPreviewProduct.barcode}`)
+        ),
+        React.createElement('div', {
+          style: {
+            width: 280,
+            minHeight: 280,
+            padding: 20,
+            borderRadius: 20,
+            border: '1px solid var(--border)',
+            background: '#ffffff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxSizing: 'border-box'
+          }
+        },
+        qrPreviewLoading
+          ? React.createElement('div', { style: { color: 'var(--text-light)' } }, 'Loading QR...')
+          : qrPreviewSrc
+            ? React.createElement('img', {
+              src: qrPreviewSrc,
+              alt: `QR for ${qrPreviewProduct.barcode}`,
+              style: { width: '100%', height: 'auto', display: 'block' }
+            })
+            : React.createElement('div', { style: { color: 'var(--text-light)' } }, 'QR preview unavailable')
+        ),
+        React.createElement('div', {
+          style: {
+            width: '100%',
+            padding: '12px 14px',
+            borderRadius: 12,
+            background: '#f8fafc',
+            color: 'var(--text-mid)',
+            fontSize: 13,
+            lineHeight: 1.5
+          }
+        }, 'Use this digital QR on screen for scanning. It contains the same product code used by the POS barcode lookup, and scanning it here sends the product straight into the Sales draft cart.'),
+        qrPreviewSrc && React.createElement('a', {
+          className: 'btn btn-secondary',
+          href: qrPreviewSrc,
+          target: '_blank',
+          rel: 'noreferrer',
+          download: `${normalizeScanCode(qrPreviewProduct.barcode || qrPreviewProduct.sku || qrPreviewProduct.name || 'product')}-qr.png`
+        }, 'Open QR Image')
+      )
+    ),
+      React.createElement('div', { className: 'modal-footer' },
+        React.createElement('button', { type: 'button', className: 'btn btn-primary', onClick: () => sendProductToPos(qrPreviewProduct) }, 'Send to POS'),
+        React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: downloadPreviewQrPdf }, 'Download QR PDF'),
+        React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: closeQrPreview }, 'Close')
+      )))
+  )
+
+  const findProductByBarcode = useCallback((rawBarcode) => {
+    const normalizedCode = normalizeScanCode(rawBarcode)
+    if (!normalizedCode) return null
+    return products.find((product) => normalizeScanCode(product?.barcode) === normalizedCode) || null
+  }, [products])
+
+  const handleLabelProductScan = useCallback(async (rawValue) => {
+    clearMessages()
+    const normalizedCode = normalizeScanCode(rawValue)
+    if (!normalizedCode) {
+      setError('Scan a barcode or QR first')
+      return false
+    }
+
+    try {
+      const response = await api.get(`/products/by-code/${encodeURIComponent(normalizedCode)}`)
+      const product = response?.data || null
+
+      if (!product?.barcode) {
+        setLabelScanValue('')
+        setError('Code not registered')
+        return false
+      }
+      if (!productAvailableForPos(product)) {
+        setLabelScanValue('')
+        return false
+      }
+
+      setLabelProductId(String(product.id))
+      setLabelCopies('1')
+      setLabelScanValue('')
+      sendProductToPos(product)
+      return true
+    } catch (err) {
+      setLabelScanValue('')
+      const apiError = String(err?.response?.data?.error || '').trim()
+      if (apiError === 'unknown product' || apiError === 'invalid code') {
+        setError('Code not registered')
+      } else {
+        setError('Failed to look up scanned product')
+      }
+      return false
+    }
+  }, [productAvailableForPos, sendProductToPos])
+
+  const handleFormBarcodeScan = useCallback((barcodeValue, setBarcodeState, setFormState) => {
+    clearMessages()
+    const normalizedCode = normalizeScanCode(barcodeValue)
+    if (!normalizedCode) {
+      setError('Scan a barcode first')
+      return false
+    }
+
+    const product = findProductByBarcode(normalizedCode)
+    if (!product) {
+      setError(`Barcode ${normalizedCode} was not found in products`)
+      return false
+    }
+
+    setFormState((prev) => ({ ...prev, product_id: String(product.id) }))
+    setBarcodeState(product.barcode || normalizedCode)
+    showMsg(`Selected ${product.name} from barcode scan`)
+    return true
+  }, [findProductByBarcode])
+
+  const buildLabelRows = useCallback(() => (
+    labelQueue
+      .map((entry) => {
+        const product = products.find((item) => Number(item.id) === Number(entry.product_id))
+        if (!product || !product.barcode) return null
+        return {
+          product_id: product.id,
+          sku: product.sku || '',
+          name: product.name || '',
+          barcode: normalizeScanCode(product.barcode),
+          price: Number(product.price || 0),
+          stock_quantity: Number(product.stock_quantity || 0),
+          copies: Math.max(1, Number(entry.copies) || 1)
+        }
+      })
+      .filter(Boolean)
+  ), [labelQueue, products])
+
+  const addProductToLabelQueue = () => {
+    clearMessages()
+    const productId = Number(labelProductId)
+    const copies = Math.max(1, Number(labelCopies) || 1)
+    const product = products.find((item) => Number(item.id) === productId)
+
+    if (!product) return setError('Select a product for labels')
+    if (!product.barcode) return setError('Selected product has no barcode')
+
+    setLabelQueue((prev) => {
+      const existingIndex = prev.findIndex((entry) => Number(entry.product_id) === productId)
+      if (existingIndex === -1) return [...prev, { product_id: productId, copies }]
+      return prev.map((entry, idx) => (
+        idx === existingIndex ? { ...entry, copies: Math.max(1, Number(entry.copies || 1) + copies) } : entry
+      ))
+    })
+    setLabelProductId('')
+    setLabelCopies('1')
+  }
+
+  const updateLabelQueueCopies = (productId, nextCopies) => {
+    const copies = Math.max(1, Number(nextCopies) || 1)
+    setLabelQueue((prev) => prev.map((entry) => (
+      Number(entry.product_id) === Number(productId) ? { ...entry, copies } : entry
+    )))
+  }
+
+  const removeFromLabelQueue = (productId) => {
+    setLabelQueue((prev) => prev.filter((entry) => Number(entry.product_id) !== Number(productId)))
+  }
+
+  const downloadBarcodeCsv = () => {
+    clearMessages()
+    const rows = buildLabelRows()
+    if (!rows.length) return setError('Add at least one product to export labels')
+
+    const header = ['product_id', 'sku', 'name', 'barcode', 'price', 'stock_quantity', 'copies']
+    const csvLines = [
+      header.join(','),
+      ...rows.map((row) => ([
+        row.product_id,
+        `"${String(row.sku).replace(/"/g, '""')}"`,
+        `"${String(row.name).replace(/"/g, '""')}"`,
+        `"${String(row.barcode).replace(/"/g, '""')}"`,
+        row.price,
+        row.stock_quantity,
+        row.copies
+      ].join(',')))
+    ]
+    const csvBlob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const csvUrl = URL.createObjectURL(csvBlob)
+    const link = document.createElement('a')
+    link.href = csvUrl
+    link.download = `barcode-labels-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(csvUrl)
+  }
+
+  const printBarcodeLabels = () => {
+    clearMessages()
+    const rows = buildLabelRows()
+    if (!rows.length) return setError('Add at least one product to print labels')
+
+    const expanded = rows.flatMap((row) => Array.from({ length: row.copies }, () => row))
+    const labelsPerPage = 24
+    const pages = []
+    for (let idx = 0; idx < expanded.length; idx += labelsPerPage) {
+      pages.push(expanded.slice(idx, idx + labelsPerPage))
+    }
+
+    const pageMarkup = pages.map((page) => {
+      const filledCells = page.map((item) => `
+        <div class="label-cell">
+          <div class="label-name">${escapeHtml(item.name)}</div>
+          <div class="label-sku">${escapeHtml(item.sku || '-')}</div>
+          <div class="label-barcode">${createCode128SvgMarkup(item.barcode)}</div>
+          <div class="label-code">${escapeHtml(item.barcode)}</div>
+        </div>
+      `).join('')
+      const emptyCount = Math.max(labelsPerPage - page.length, 0)
+      const emptyCells = Array.from({ length: emptyCount }, () => '<div class="label-cell"></div>').join('')
+      return `<section class="sheet">${filledCells}${emptyCells}</section>`
+    }).join('')
+
+    const popup = window.open('', '_blank', 'width=1200,height=860')
+    if (!popup) return setError('Allow pop-ups to print labels')
+
+    popup.document.write(`
+      <html>
+        <head>
+          <title>Barcode Labels</title>
+          <style>
+            @page { size: A4 portrait; margin: 10mm; }
+            body { margin: 0; font-family: Arial, sans-serif; color: #0f172a; }
+            .sheet {
+              width: 100%;
+              min-height: calc(297mm - 20mm);
+              display: grid;
+              grid-template-columns: repeat(3, 1fr);
+              grid-template-rows: repeat(8, minmax(0, 1fr));
+              gap: 4mm;
+              page-break-after: always;
+              box-sizing: border-box;
+            }
+            .sheet:last-child { page-break-after: auto; }
+            .label-cell {
+              border: 1px dashed #cbd5e1;
+              border-radius: 4px;
+              padding: 4mm 3mm;
+              display: flex;
+              flex-direction: column;
+              justify-content: center;
+              align-items: center;
+              overflow: hidden;
+              box-sizing: border-box;
+            }
+            .label-name {
+              font-size: 10px;
+              font-weight: 700;
+              line-height: 1.2;
+              text-align: center;
+              margin-bottom: 2px;
+              width: 100%;
+              max-height: 24px;
+              overflow: hidden;
+            }
+            .label-sku {
+              font-size: 9px;
+              color: #475569;
+              margin-bottom: 3px;
+              text-align: center;
+            }
+            .label-barcode svg { width: 100%; max-height: 36px; }
+            .label-code {
+              margin-top: 3px;
+              font-size: 9px;
+              letter-spacing: 0.5px;
+              text-align: center;
+            }
+          </style>
+        </head>
+        <body>${pageMarkup}</body>
+      </html>
+    `)
+    popup.document.close()
+    popup.focus()
+    popup.print()
+  }
+
+  const printQrLabels = async () => {
+    clearMessages()
+    const rows = buildLabelRows()
+    if (!rows.length) return setError('Add at least one product to print labels')
+
+    const expanded = rows.flatMap((row) => Array.from({ length: row.copies }, () => row))
+    const labelsPerPage = 24
+
+    const withQr = await Promise.all(
+      expanded.map(async (item) => ({
+        ...item,
+        qrDataUrl: await createQrDataUrl(item.barcode)
+      }))
+    )
+
+    const pages = []
+    for (let idx = 0; idx < withQr.length; idx += labelsPerPage) {
+      pages.push(withQr.slice(idx, idx + labelsPerPage))
+    }
+
+    const pageMarkup = pages.map((page) => {
+      const filledCells = page.map((item) => `
+        <div class="label-cell">
+          <div class="label-name">${escapeHtml(item.name)}</div>
+          <div class="label-sku">${escapeHtml(item.sku || '-')}</div>
+          <div class="label-qr"><img src="${item.qrDataUrl}" alt="QR ${escapeHtml(item.barcode)}" /></div>
+          <div class="label-code">${escapeHtml(item.barcode)}</div>
+        </div>
+      `).join('')
+      const emptyCount = Math.max(labelsPerPage - page.length, 0)
+      const emptyCells = Array.from({ length: emptyCount }, () => '<div class="label-cell"></div>').join('')
+      return `<section class="sheet">${filledCells}${emptyCells}</section>`
+    }).join('')
+
+    const popup = window.open('', '_blank', 'width=1200,height=860')
+    if (!popup) return setError('Allow pop-ups to print labels')
+
+    popup.document.write(`
+      <html>
+        <head>
+          <title>QR Labels</title>
+          <style>
+            @page { size: A4 portrait; margin: 10mm; }
+            body { margin: 0; font-family: Arial, sans-serif; color: #0f172a; }
+            .sheet {
+              width: 100%;
+              min-height: calc(297mm - 20mm);
+              display: grid;
+              grid-template-columns: repeat(3, 1fr);
+              grid-template-rows: repeat(8, minmax(0, 1fr));
+              gap: 4mm;
+              page-break-after: always;
+              box-sizing: border-box;
+            }
+            .sheet:last-child { page-break-after: auto; }
+            .label-cell {
+              border: 1px dashed #cbd5e1;
+              border-radius: 4px;
+              padding: 4mm 3mm;
+              display: flex;
+              flex-direction: column;
+              justify-content: center;
+              align-items: center;
+              overflow: hidden;
+              box-sizing: border-box;
+            }
+            .label-name {
+              font-size: 10px;
+              font-weight: 700;
+              line-height: 1.2;
+              text-align: center;
+              margin-bottom: 2px;
+              width: 100%;
+              max-height: 24px;
+              overflow: hidden;
+            }
+            .label-sku {
+              font-size: 9px;
+              color: #475569;
+              margin-bottom: 3px;
+              text-align: center;
+            }
+            .label-qr img {
+              width: 82px;
+              height: 82px;
+              object-fit: contain;
+              image-rendering: pixelated;
+            }
+            .label-code {
+              margin-top: 4px;
+              font-size: 9px;
+              letter-spacing: 0.5px;
+              text-align: center;
+            }
+          </style>
+        </head>
+        <body>${pageMarkup}</body>
+      </html>
+    `)
+    popup.document.close()
+    popup.focus()
+    popup.print()
+  }
 
   // ── Stock In ──
   const handleStockIn = async (e) => {
@@ -259,6 +1052,7 @@ export default function Inventory() {
         date: stockInForm.date || undefined
       })
       setStockInForm({ product_id: '', quantity: '', reference: '', date: '' })
+      setStockInBarcode('')
       showMsg('Stock in recorded successfully')
       fetchAll()
     } catch (err) { setError(err?.response?.data?.error || 'Stock in failed') }
@@ -296,6 +1090,7 @@ export default function Inventory() {
         employee_id: adjustForm.employee_id ? Number(adjustForm.employee_id) : undefined
       })
       setAdjustForm({ product_id: '', quantity: '', reason: '', employee_id: '' })
+      setAdjustBarcode('')
       showMsg('Adjustment recorded')
       fetchAll()
     } catch (err) { setError(err?.response?.data?.error || 'Adjustment failed') }
@@ -322,6 +1117,7 @@ export default function Inventory() {
         employee_id: damageForm.employee_id ? Number(damageForm.employee_id) : undefined
       })
       setDamageForm({ product_id: '', quantity: '', reason: '', employee_id: '' })
+      setDamageBarcode('')
       showMsg('Damage recorded')
       fetchAll()
     } catch (err) { setError(err?.response?.data?.error || 'Damage record failed') }
@@ -338,6 +1134,7 @@ export default function Inventory() {
         reason: returnForm.reason
       })
       setReturnForm({ product_id: '', quantity: '', return_type: 'supplier', reason: '' })
+      setReturnBarcode('')
       showMsg('Return processed')
       fetchAll()
     } catch (err) { setError(err?.response?.data?.error || 'Return failed') }
@@ -450,8 +1247,12 @@ export default function Inventory() {
   }
 
   // ── Select helper ──
+  const barcodeReadyProducts = products.filter((p) => normalizeScanCode(p.barcode))
   const productOptions = products.map(p =>
     React.createElement('option', { key: p.id, value: p.id }, `${p.sku ? p.sku + ' — ' : ''}${p.name} (Stock: ${p.stock_quantity})`)
+  )
+  const barcodeProductOptions = barcodeReadyProducts.map((p) =>
+    React.createElement('option', { key: `barcode-${p.id}`, value: p.id }, `${p.sku ? `${p.sku} - ` : ''}${p.name} (${normalizeScanCode(p.barcode)})`)
   )
   const supplierOptions = suppliers.map(s =>
     React.createElement('option', { key: s.id, value: s.id }, s.name)
@@ -461,19 +1262,27 @@ export default function Inventory() {
   )
 
   // ── Tabs ──
-  const tabs = [
-    { key: 'overview', label: 'Overview' },
-    { key: 'stock-in', label: 'Stock In' },
-    { key: 'stock-out', label: 'Stock Out' },
-    { key: 'returns', label: 'Supplier Returns' },
-    { key: 'purchase-orders', label: 'Purchase Orders' },
-    { key: 'products', label: 'Products' },
-    { key: 'transactions', label: 'Transactions' },
-    { key: 'damaged', label: 'Damaged' },
-    { key: 'low-stock', label: 'Low Stock Alerts' },
-    { key: 'shrinkage', label: 'Shrinkage' },
-    { key: 'reports', label: 'Reports' }
-  ]
+  const resolvedLabelRows = buildLabelRows()
+  const totalLabelCopies = resolvedLabelRows.reduce((sum, row) => sum + (Number(row.copies) || 0), 0)
+  const previewQueuedQr = () => {
+    const preferredProductId = Number(labelProductId) || Number(resolvedLabelRows[0]?.product_id)
+    const product = products.find((item) => Number(item.id) === preferredProductId)
+    if (!product) return setError('Select or queue a product first')
+    openQrPreview(product)
+  }
+  const downloadQueuedQrPdf = () => {
+    const rows = buildLabelRows()
+    if (!rows.length) return setError('Add at least one product to export QR PDF')
+
+    const expanded = rows.flatMap((row) => Array.from({ length: Math.max(Number(row.copies) || 0, 1) }, () => row))
+    exportQrPdf(expanded, 'qr-labels')
+  }
+  const sendQueuedQrToPos = () => {
+    const preferredProductId = Number(labelProductId) || Number(resolvedLabelRows[0]?.product_id)
+    const product = products.find((item) => Number(item.id) === preferredProductId)
+    if (!product) return setError('Select or queue a product first')
+    sendProductToPos(product)
+  }
 
   return React.createElement('div', { className: 'page' },
     React.createElement('div', { className: 'page-header' },
@@ -486,21 +1295,6 @@ export default function Inventory() {
     // Messages
     error && React.createElement('div', { className: 'error-msg', style: { marginBottom: 16 } }, error),
     success && React.createElement('div', { style: { background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d', padding: '10px 14px', borderRadius: 6, marginBottom: 16, fontSize: '13.5px' } }, success),
-
-    // Tab bar
-    React.createElement('div', { className: 'inv-tabs', style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 20, borderBottom: '2px solid var(--border)', paddingBottom: 0 } },
-      tabs.map(t => React.createElement('button', {
-        key: t.key,
-        onClick: () => { setTab(t.key); clearMessages() },
-        className: `inv-tab ${tab === t.key ? 'inv-tab-active' : ''}`,
-        style: {
-          padding: '10px 18px', border: 'none', borderBottom: tab === t.key ? '2px solid var(--gold)' : '2px solid transparent',
-          background: 'transparent', color: tab === t.key ? 'var(--gold-dark)' : 'var(--text-mid)',
-          fontWeight: tab === t.key ? 600 : 400, cursor: 'pointer', fontSize: '13.5px', marginBottom: -2,
-          transition: 'all 0.15s'
-        }
-      }, t.label))
-    ),
 
     loading && React.createElement('div', null, 'Loading...'),
 
@@ -556,8 +1350,32 @@ export default function Inventory() {
         React.createElement('form', { onSubmit: handleStockIn },
           React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 } },
             React.createElement('div', { className: 'form-group' },
+              React.createElement('label', { className: 'form-label' }, 'Scan Barcode'),
+              React.createElement('input', {
+                className: 'form-input',
+                value: stockInBarcode,
+                onChange: (e) => setStockInBarcode(e.target.value),
+                onKeyDown: (e) => {
+                  if (e.key !== 'Enter') return
+                  e.preventDefault()
+                  handleFormBarcodeScan(e.currentTarget.value, setStockInBarcode, setStockInForm)
+                },
+                placeholder: 'Scan barcode then press Enter'
+              })
+            ),
+            React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Product *'),
-              React.createElement('select', { className: 'form-input', value: stockInForm.product_id, onChange: e => setStockInForm(f => ({ ...f, product_id: e.target.value })), required: true },
+              React.createElement('select', {
+                className: 'form-input',
+                value: stockInForm.product_id,
+                onChange: (e) => {
+                  const nextProductId = e.target.value
+                  setStockInForm((f) => ({ ...f, product_id: nextProductId }))
+                  const selected = products.find((p) => String(p.id) === String(nextProductId))
+                  setStockInBarcode(selected?.barcode || '')
+                },
+                required: true
+              },
                 React.createElement('option', { value: '' }, '— Select product —'),
                 ...productOptions
               )
@@ -589,8 +1407,32 @@ export default function Inventory() {
         React.createElement('h3', { style: { marginBottom: 16 } }, 'Net Adjustment (Shrinkage/Lost)'),
         React.createElement('form', { onSubmit: handleAdjust },
           React.createElement('div', { className: 'form-group' },
+            React.createElement('label', { className: 'form-label' }, 'Scan Barcode'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: adjustBarcode,
+              onChange: (e) => setAdjustBarcode(e.target.value),
+              onKeyDown: (e) => {
+                if (e.key !== 'Enter') return
+                e.preventDefault()
+                handleFormBarcodeScan(e.currentTarget.value, setAdjustBarcode, setAdjustForm)
+              },
+              placeholder: 'Scan barcode then press Enter'
+            })
+          ),
+          React.createElement('div', { className: 'form-group' },
             React.createElement('label', { className: 'form-label' }, 'Product *'),
-            React.createElement('select', { className: 'form-input', value: adjustForm.product_id, onChange: e => setAdjustForm(f => ({ ...f, product_id: e.target.value })), required: true },
+            React.createElement('select', {
+              className: 'form-input',
+              value: adjustForm.product_id,
+              onChange: (e) => {
+                const nextProductId = e.target.value
+                setAdjustForm((f) => ({ ...f, product_id: nextProductId }))
+                const selected = products.find((p) => String(p.id) === String(nextProductId))
+                setAdjustBarcode(selected?.barcode || '')
+              },
+              required: true
+            },
               React.createElement('option', { value: '' }, '— Select product —'),
               ...productOptions
             )
@@ -617,8 +1459,32 @@ export default function Inventory() {
         React.createElement('h3', { style: { marginBottom: 16 } }, 'Record Damage'),
         React.createElement('form', { onSubmit: handleDamage },
           React.createElement('div', { className: 'form-group' },
+            React.createElement('label', { className: 'form-label' }, 'Scan Barcode'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: damageBarcode,
+              onChange: (e) => setDamageBarcode(e.target.value),
+              onKeyDown: (e) => {
+                if (e.key !== 'Enter') return
+                e.preventDefault()
+                handleFormBarcodeScan(e.currentTarget.value, setDamageBarcode, setDamageForm)
+              },
+              placeholder: 'Scan barcode then press Enter'
+            })
+          ),
+          React.createElement('div', { className: 'form-group' },
             React.createElement('label', { className: 'form-label' }, 'Product *'),
-            React.createElement('select', { className: 'form-input', value: damageForm.product_id, onChange: e => setDamageForm(f => ({ ...f, product_id: e.target.value })), required: true },
+            React.createElement('select', {
+              className: 'form-input',
+              value: damageForm.product_id,
+              onChange: (e) => {
+                const nextProductId = e.target.value
+                setDamageForm((f) => ({ ...f, product_id: nextProductId }))
+                const selected = products.find((p) => String(p.id) === String(nextProductId))
+                setDamageBarcode(selected?.barcode || '')
+              },
+              required: true
+            },
               React.createElement('option', { value: '' }, '— Select product —'),
               ...productOptions
             )
@@ -650,8 +1516,32 @@ export default function Inventory() {
         React.createElement('form', { onSubmit: handleReturn },
           React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 } },
             React.createElement('div', { className: 'form-group' },
+              React.createElement('label', { className: 'form-label' }, 'Scan Barcode'),
+              React.createElement('input', {
+                className: 'form-input',
+                value: returnBarcode,
+                onChange: (e) => setReturnBarcode(e.target.value),
+                onKeyDown: (e) => {
+                  if (e.key !== 'Enter') return
+                  e.preventDefault()
+                  handleFormBarcodeScan(e.currentTarget.value, setReturnBarcode, setReturnForm)
+                },
+                placeholder: 'Scan barcode then press Enter'
+              })
+            ),
+            React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Product *'),
-              React.createElement('select', { className: 'form-input', value: returnForm.product_id, onChange: e => setReturnForm(f => ({ ...f, product_id: e.target.value })), required: true },
+              React.createElement('select', {
+                className: 'form-input',
+                value: returnForm.product_id,
+                onChange: (e) => {
+                  const nextProductId = e.target.value
+                  setReturnForm((f) => ({ ...f, product_id: nextProductId }))
+                  const selected = products.find((p) => String(p.id) === String(nextProductId))
+                  setReturnBarcode(selected?.barcode || '')
+                },
+                required: true
+              },
                 React.createElement('option', { value: '' }, '— Select product —'),
                 ...productOptions
               )
@@ -896,16 +1786,183 @@ React.createElement('input', { className: 'form-input', type: 'date', value: poF
               React.createElement('td', { style: { fontWeight: 600, color: p.stock_quantity <= (p.low_stock_threshold || 10) ? 'var(--error)' : 'var(--success)' } }, p.stock_quantity),
               React.createElement('td', null, p.low_stock_threshold || 10),
               React.createElement('td', null,
-                React.createElement('button', { className: 'btn btn-secondary', style: { padding: '4px 10px', fontSize: 12, marginRight: 4 }, onClick: () => startEditProduct(p) }, 'Edit'),
-                React.createElement('button', { className: 'btn btn-danger', style: { padding: '4px 10px', fontSize: 12 }, onClick: () => deleteProduct(p.id) }, 'Delete')
+                React.createElement('div', { className: 'product-table-actions' },
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'product-action-icon',
+                    title: 'View QR',
+                    'aria-label': `View QR for ${p.name}`,
+                    onClick: () => openQrPreview(p)
+                  }, qrActionIcon()),
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'product-action-icon',
+                    title: 'Edit product',
+                    'aria-label': `Edit ${p.name}`,
+                    onClick: () => startEditProduct(p)
+                  }, editActionIcon()),
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'product-action-icon product-action-icon--danger',
+                    title: 'Delete product',
+                    'aria-label': `Delete ${p.name}`,
+                    onClick: () => deleteProduct(p.id)
+                  }, deleteActionIcon())
+                )
               )
             ))
           )
         )
+      ),
+
+      false && qrPreviewProduct && React.createElement('div', {
+        className: 'modal-backdrop',
+        onClick: closeQrPreview
+      },
+      React.createElement('div', {
+        className: 'modal',
+        style: { maxWidth: 560 },
+        onClick: (e) => e.stopPropagation()
+      },
+      React.createElement('div', { className: 'modal-header' },
+        React.createElement('h2', null, 'Digital QR Preview'),
+        React.createElement('button', { type: 'button', className: 'modal-close', onClick: closeQrPreview }, '×')
+      ),
+      React.createElement('div', { className: 'modal-body' },
+        React.createElement('div', { style: { display: 'grid', gap: 16, justifyItems: 'center', textAlign: 'center' } },
+          React.createElement('div', null,
+            React.createElement('div', { style: { fontSize: 22, fontWeight: 700, color: 'var(--text-dark)' } }, qrPreviewProduct.name || 'Unnamed product'),
+            React.createElement('div', { style: { marginTop: 6, color: 'var(--text-light)', fontSize: 13 } }, qrPreviewProduct.sku ? `SKU: ${qrPreviewProduct.sku}` : 'No SKU'),
+            React.createElement('div', { style: { color: 'var(--text-light)', fontSize: 13, fontFamily: 'monospace' } }, `Code: ${qrPreviewProduct.barcode}`)
+          ),
+          React.createElement('div', {
+            style: {
+              width: 280,
+              minHeight: 280,
+              padding: 20,
+              borderRadius: 20,
+              border: '1px solid var(--border)',
+              background: '#ffffff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxSizing: 'border-box'
+            }
+          },
+          qrPreviewLoading
+            ? React.createElement('div', { style: { color: 'var(--text-light)' } }, 'Loading QR...')
+            : qrPreviewSrc
+              ? React.createElement('img', {
+                src: qrPreviewSrc,
+                alt: `QR for ${qrPreviewProduct.barcode}`,
+                style: { width: '100%', height: 'auto', display: 'block' }
+              })
+              : React.createElement('div', { style: { color: 'var(--text-light)' } }, 'QR preview unavailable')
+          ),
+          React.createElement('div', {
+            style: {
+              width: '100%',
+              padding: '12px 14px',
+              borderRadius: 12,
+              background: '#f8fafc',
+              color: 'var(--text-mid)',
+              fontSize: 13,
+              lineHeight: 1.5
+            }
+          }, 'Use this digital QR on screen for scanning. It contains the same product code used by the POS barcode lookup.'),
+          qrPreviewSrc && React.createElement('a', {
+            className: 'btn btn-secondary',
+            href: qrPreviewSrc,
+            target: '_blank',
+            rel: 'noreferrer',
+            download: `${normalizeScanCode(qrPreviewProduct.barcode || qrPreviewProduct.sku || qrPreviewProduct.name || 'product')}-qr.png`
+          }, 'Open QR Image')
+        )
+      ),
+      React.createElement('div', { className: 'modal-footer' },
+        React.createElement('button', { type: 'button', className: 'btn btn-primary', onClick: () => sendProductToPos(qrPreviewProduct) }, 'Send to POS'),
+        React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: closeQrPreview }, 'Close')
+      )))
+    ),
+
+    // ═══════════════ BARCODE LABELS ═══════════════
+    tab === 'barcode-labels' && React.createElement('div', null,
+      React.createElement('div', { className: 'card', style: { marginBottom: 20 } },
+        React.createElement('h3', { style: { marginBottom: 10 } }, 'Barcode Labels (Code 128)'),
+        React.createElement('p', { style: { marginTop: 0, marginBottom: 14, color: 'var(--text-light)', fontSize: 12 } }, 'Scan a product here to send it straight to Sales POS automatically, or use the manual controls for label printing and exports.'),
+        React.createElement('div', { className: 'form-group', style: { marginBottom: 14 } },
+          React.createElement('label', { className: 'form-label' }, 'Scan Product To Send To POS'),
+          React.createElement('input', {
+            ref: labelScanInputRef,
+            className: 'form-input',
+            value: labelScanValue,
+            placeholder: 'Scan barcode or QR, then press Enter',
+            onChange: (e) => setLabelScanValue(e.target.value),
+            onKeyDown: (e) => {
+              if (e.key !== 'Enter') return
+              e.preventDefault()
+              handleLabelProductScan(e.currentTarget.value)
+            }
+          }),
+          React.createElement('div', { style: { marginTop: 8, color: 'var(--text-light)', fontSize: 12 } }, 'When a registered code is scanned here, the product is looked up automatically and sent to Sales POS.')
+        ),
+        React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 140px auto', gap: 12, alignItems: 'end' } },
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Product'),
+            React.createElement('select', { className: 'form-input', value: labelProductId, onChange: (e) => setLabelProductId(e.target.value) },
+              React.createElement('option', { value: '' }, 'Select product with barcode'),
+              ...barcodeProductOptions
+            )
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Copies'),
+            React.createElement('input', { className: 'form-input', type: 'number', min: 1, value: labelCopies, onChange: (e) => setLabelCopies(e.target.value) })
+          ),
+          React.createElement('button', { type: 'button', className: 'btn btn-primary', onClick: addProductToLabelQueue }, 'Add')
+        ),
+        React.createElement('div', { style: { display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' } },
+          React.createElement('button', { type: 'button', className: 'btn btn-primary', onClick: printBarcodeLabels, disabled: !resolvedLabelRows.length }, 'Print A4 (3x8)'),
+          React.createElement('button', { type: 'button', className: 'btn btn-primary', onClick: sendQueuedQrToPos, disabled: !(resolvedLabelRows.length || labelProductId) }, 'Send to POS'),
+          React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: previewQueuedQr, disabled: !(resolvedLabelRows.length || labelProductId) }, 'View Digital QR'),
+          React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: downloadQueuedQrPdf, disabled: !resolvedLabelRows.length }, 'Download QR PDF'),
+          React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: printQrLabels, disabled: !resolvedLabelRows.length }, 'Print QR A4 (3x8)'),
+          React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: downloadBarcodeCsv, disabled: !resolvedLabelRows.length }, 'Download CSV'),
+          React.createElement('div', { style: { marginLeft: 'auto', color: 'var(--text-light)', fontSize: 12, alignSelf: 'center' } }, `Products queued: ${resolvedLabelRows.length} | Total labels: ${totalLabelCopies}`)
+        )
+      ),
+      React.createElement('div', { className: 'card' },
+        React.createElement('h3', { style: { marginBottom: 12 } }, 'Queued Label Items'),
+        resolvedLabelRows.length === 0
+          ? React.createElement('div', { style: { color: 'var(--text-light)', fontSize: 13 } }, 'No products queued yet.')
+          : React.createElement('div', { className: 'table-wrap' },
+              React.createElement('table', null,
+                React.createElement('thead', null,
+                  React.createElement('tr', null,
+                    React.createElement('th', null, 'Product'),
+                    React.createElement('th', null, 'SKU'),
+                    React.createElement('th', null, 'Barcode'),
+                    React.createElement('th', null, 'Copies'),
+                    React.createElement('th', null, 'Actions')
+                  )
+                ),
+                React.createElement('tbody', null,
+                  resolvedLabelRows.map((row) => React.createElement('tr', { key: `label-${row.product_id}` },
+                    React.createElement('td', null, row.name),
+                    React.createElement('td', null, row.sku || 'â€”'),
+                    React.createElement('td', { style: { fontFamily: 'monospace', fontWeight: 600 } }, row.barcode),
+                    React.createElement('td', null,
+                      React.createElement('input', { type: 'number', min: 1, value: row.copies, onChange: (e) => updateLabelQueueCopies(row.product_id, e.target.value), style: { width: 80 } })
+                    ),
+                    React.createElement('td', null,
+                      React.createElement('button', { type: 'button', className: 'btn btn-danger', style: { padding: '4px 10px', fontSize: 12 }, onClick: () => removeFromLabelQueue(row.product_id) }, 'Remove')
+                    )
+                  ))
+                )
+              )
+            )
       )
     ),
 
-    // ═══════════════ TRANSACTIONS ═══════════════
     tab === 'transactions' && React.createElement('div', { className: 'card' },
       React.createElement('div', { style: { marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 } },
         React.createElement('h3', { style: { flex: 1, margin: 0 } }, 'Inventory Transactions'),
@@ -1093,6 +2150,8 @@ React.createElement('input', { className: 'form-input', type: 'date', value: poF
           )
         )
       )
-    )
+    ),
+
+    renderQrPreviewModal()
   )
 }

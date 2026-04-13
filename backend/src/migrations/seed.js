@@ -117,6 +117,27 @@ async function seed() {
 		}
 	}
 
+	await conn.execute(`
+		CREATE TABLE IF NOT EXISTS configs (
+			config_key VARCHAR(255) PRIMARY KEY,
+			config_value TEXT,
+			last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+	`)
+
+	const runtimeConfigs = [
+		['scanner.debounce_ms', '250'],
+		['sales.currency', 'PHP'],
+		['sales.tax_rate', '0']
+	]
+
+	for (const [configKey, configValue] of runtimeConfigs) {
+		await conn.execute(
+			`INSERT IGNORE INTO configs (config_key, config_value) VALUES (?, ?)`,
+			[configKey, configValue]
+		)
+	}
+
 	const adminEmail = process.env.BOOTSTRAP_ADMIN_EMAIL || 'admin@cecillenstyles.com'
 	const adminUser = process.env.BOOTSTRAP_ADMIN_USER || 'admin'
 	const adminPass = process.env.BOOTSTRAP_ADMIN_PASS || 'admin123'

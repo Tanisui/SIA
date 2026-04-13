@@ -1,0 +1,147 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@10.9.2
+2 info using node@v22.15.1
+3 silly config load:file:C:\Program Files\nodejs\node_modules\npm\npmrc
+4 silly config load:file:c:\Users\acer\SIA\.codex_pdf_tools\.npmrc
+5 silly config load:file:C:\Users\acer\.npmrc
+6 silly config load:file:c:\Users\acer\SIA\.codex_pdf_tools\etc\npmrc
+7 verbose title npm install pdf-parse
+8 verbose argv "install" "pdf-parse" "--prefix" "c:\\Users\\acer\\SIA\\.codex_pdf_tools" "--cache" "c:\\Users\\acer\\SIA\\.npm-cache"
+9 verbose logfile logs-max:10 dir:c:\Users\acer\SIA\.npm-cache\_logs\2026-04-06T08_33_03_223Z-
+10 verbose logfile c:\Users\acer\SIA\.npm-cache\_logs\2026-04-06T08_33_03_223Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4345298944 maxSize:1086324736 maxEntrySize:543162368
+13 silly idealTree buildDeps
+14 silly fetch manifest pdf-parse@*
+15 silly packumentCache full:https://registry.npmjs.org/pdf-parse cache-miss
+16 http fetch GET 200 https://registry.npmjs.org/pdf-parse 500ms (cache miss)
+17 silly packumentCache full:https://registry.npmjs.org/pdf-parse set size:undefined disposed:false
+18 silly placeDep ROOT pdf-parse@2.4.5 OK for:  want: *
+19 silly fetch manifest pdfjs-dist@5.4.296
+20 silly packumentCache full:https://registry.npmjs.org/pdfjs-dist cache-miss
+21 silly fetch manifest @napi-rs/canvas@0.1.80
+22 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas cache-miss
+23 http fetch GET 200 https://registry.npmjs.org/pdfjs-dist 357ms (cache miss)
+24 silly packumentCache full:https://registry.npmjs.org/pdfjs-dist set size:undefined disposed:false
+25 http fetch GET 200 https://registry.npmjs.org/@napi-rs%2fcanvas 462ms (cache miss)
+26 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas set size:undefined disposed:false
+27 silly placeDep ROOT @napi-rs/canvas@0.1.80 OK for: pdf-parse@2.4.5 want: 0.1.80
+28 silly placeDep ROOT pdfjs-dist@5.4.296 OK for: pdf-parse@2.4.5 want: 5.4.296
+29 silly fetch manifest @napi-rs/canvas-darwin-x64@0.1.80
+30 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-darwin-x64 cache-miss
+31 silly fetch manifest @napi-rs/canvas-darwin-arm64@0.1.80
+32 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-darwin-arm64 cache-miss
+33 silly fetch manifest @napi-rs/canvas-android-arm64@0.1.80
+34 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-android-arm64 cache-miss
+35 silly fetch manifest @napi-rs/canvas-linux-x64-gnu@0.1.80
+36 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-linux-x64-gnu cache-miss
+37 silly fetch manifest @napi-rs/canvas-linux-x64-musl@0.1.80
+38 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-linux-x64-musl cache-miss
+39 silly fetch manifest @napi-rs/canvas-win32-x64-msvc@0.1.80
+40 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-win32-x64-msvc cache-miss
+41 silly fetch manifest @napi-rs/canvas-linux-arm64-gnu@0.1.80
+42 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-linux-arm64-gnu cache-miss
+43 silly fetch manifest @napi-rs/canvas-linux-arm64-musl@0.1.80
+44 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-linux-arm64-musl cache-miss
+45 silly fetch manifest @napi-rs/canvas-linux-riscv64-gnu@0.1.80
+46 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-linux-riscv64-gnu cache-miss
+47 silly fetch manifest @napi-rs/canvas-linux-arm-gnueabihf@0.1.80
+48 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-linux-arm-gnueabihf cache-miss
+49 http fetch GET 200 https://registry.npmjs.org/@napi-rs%2fcanvas-linux-arm64-gnu 500ms (cache miss)
+50 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-linux-arm64-gnu set size:undefined disposed:false
+51 http fetch GET 200 https://registry.npmjs.org/@napi-rs%2fcanvas-win32-x64-msvc 533ms (cache miss)
+52 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-win32-x64-msvc set size:undefined disposed:false
+53 http fetch GET 200 https://registry.npmjs.org/@napi-rs%2fcanvas-linux-x64-musl 537ms (cache miss)
+54 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-linux-x64-musl set size:undefined disposed:false
+55 http fetch GET 200 https://registry.npmjs.org/@napi-rs%2fcanvas-darwin-arm64 540ms (cache miss)
+56 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-darwin-arm64 set size:undefined disposed:false
+57 http fetch GET 200 https://registry.npmjs.org/@napi-rs%2fcanvas-darwin-x64 550ms (cache miss)
+58 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-darwin-x64 set size:undefined disposed:false
+59 http fetch GET 200 https://registry.npmjs.org/@napi-rs%2fcanvas-linux-x64-gnu 667ms (cache miss)
+60 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-linux-x64-gnu set size:undefined disposed:false
+61 http fetch GET 200 https://registry.npmjs.org/@napi-rs%2fcanvas-linux-riscv64-gnu 806ms (cache miss)
+62 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-linux-riscv64-gnu set size:undefined disposed:false
+63 http fetch GET 200 https://registry.npmjs.org/@napi-rs%2fcanvas-linux-arm-gnueabihf 817ms (cache miss)
+64 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-linux-arm-gnueabihf set size:undefined disposed:false
+65 http fetch GET 200 https://registry.npmjs.org/@napi-rs%2fcanvas-linux-arm64-musl 842ms (cache miss)
+66 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-linux-arm64-musl set size:undefined disposed:false
+67 http fetch GET 200 https://registry.npmjs.org/@napi-rs%2fcanvas-android-arm64 1318ms (cache miss)
+68 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2fcanvas-android-arm64 set size:undefined disposed:false
+69 silly placeDep ROOT @napi-rs/canvas-android-arm64@0.1.80 OK for: @napi-rs/canvas@0.1.80 want: 0.1.80
+70 silly placeDep ROOT @napi-rs/canvas-darwin-arm64@0.1.80 OK for: @napi-rs/canvas@0.1.80 want: 0.1.80
+71 silly placeDep ROOT @napi-rs/canvas-darwin-x64@0.1.80 OK for: @napi-rs/canvas@0.1.80 want: 0.1.80
+72 silly placeDep ROOT @napi-rs/canvas-linux-arm-gnueabihf@0.1.80 OK for: @napi-rs/canvas@0.1.80 want: 0.1.80
+73 silly placeDep ROOT @napi-rs/canvas-linux-arm64-gnu@0.1.80 OK for: @napi-rs/canvas@0.1.80 want: 0.1.80
+74 silly placeDep ROOT @napi-rs/canvas-linux-arm64-musl@0.1.80 OK for: @napi-rs/canvas@0.1.80 want: 0.1.80
+75 silly placeDep ROOT @napi-rs/canvas-linux-riscv64-gnu@0.1.80 OK for: @napi-rs/canvas@0.1.80 want: 0.1.80
+76 silly placeDep ROOT @napi-rs/canvas-linux-x64-gnu@0.1.80 OK for: @napi-rs/canvas@0.1.80 want: 0.1.80
+77 silly placeDep ROOT @napi-rs/canvas-linux-x64-musl@0.1.80 OK for: @napi-rs/canvas@0.1.80 want: 0.1.80
+78 silly placeDep ROOT @napi-rs/canvas-win32-x64-msvc@0.1.80 OK for: @napi-rs/canvas@0.1.80 want: 0.1.80
+79 silly reify moves {}
+80 verbose reify failed optional dependency c:\Users\acer\SIA\.codex_pdf_tools\node_modules\@napi-rs\canvas-linux-x64-musl
+81 silly reify mark deleted [
+81 silly reify   'c:\\Users\\acer\\SIA\\.codex_pdf_tools\\node_modules\\@napi-rs\\canvas-linux-x64-musl'
+81 silly reify ]
+82 verbose reify failed optional dependency c:\Users\acer\SIA\.codex_pdf_tools\node_modules\@napi-rs\canvas-linux-x64-gnu
+83 silly reify mark deleted [
+83 silly reify   'c:\\Users\\acer\\SIA\\.codex_pdf_tools\\node_modules\\@napi-rs\\canvas-linux-x64-gnu'
+83 silly reify ]
+84 verbose reify failed optional dependency c:\Users\acer\SIA\.codex_pdf_tools\node_modules\@napi-rs\canvas-linux-riscv64-gnu
+85 silly reify mark deleted [
+85 silly reify   'c:\\Users\\acer\\SIA\\.codex_pdf_tools\\node_modules\\@napi-rs\\canvas-linux-riscv64-gnu'
+85 silly reify ]
+86 verbose reify failed optional dependency c:\Users\acer\SIA\.codex_pdf_tools\node_modules\@napi-rs\canvas-linux-arm64-musl
+87 silly reify mark deleted [
+87 silly reify   'c:\\Users\\acer\\SIA\\.codex_pdf_tools\\node_modules\\@napi-rs\\canvas-linux-arm64-musl'
+87 silly reify ]
+88 verbose reify failed optional dependency c:\Users\acer\SIA\.codex_pdf_tools\node_modules\@napi-rs\canvas-linux-arm64-gnu
+89 silly reify mark deleted [
+89 silly reify   'c:\\Users\\acer\\SIA\\.codex_pdf_tools\\node_modules\\@napi-rs\\canvas-linux-arm64-gnu'
+89 silly reify ]
+90 verbose reify failed optional dependency c:\Users\acer\SIA\.codex_pdf_tools\node_modules\@napi-rs\canvas-linux-arm-gnueabihf
+91 silly reify mark deleted [
+91 silly reify   'c:\\Users\\acer\\SIA\\.codex_pdf_tools\\node_modules\\@napi-rs\\canvas-linux-arm-gnueabihf'
+91 silly reify ]
+92 verbose reify failed optional dependency c:\Users\acer\SIA\.codex_pdf_tools\node_modules\@napi-rs\canvas-darwin-x64
+93 silly reify mark deleted [
+93 silly reify   'c:\\Users\\acer\\SIA\\.codex_pdf_tools\\node_modules\\@napi-rs\\canvas-darwin-x64'
+93 silly reify ]
+94 verbose reify failed optional dependency c:\Users\acer\SIA\.codex_pdf_tools\node_modules\@napi-rs\canvas-darwin-arm64
+95 silly reify mark deleted [
+95 silly reify   'c:\\Users\\acer\\SIA\\.codex_pdf_tools\\node_modules\\@napi-rs\\canvas-darwin-arm64'
+95 silly reify ]
+96 verbose reify failed optional dependency c:\Users\acer\SIA\.codex_pdf_tools\node_modules\@napi-rs\canvas-android-arm64
+97 silly reify mark deleted [
+97 silly reify   'c:\\Users\\acer\\SIA\\.codex_pdf_tools\\node_modules\\@napi-rs\\canvas-android-arm64'
+97 silly reify ]
+98 http cache @napi-rs/canvas-win32-x64-msvc@https://registry.npmjs.org/@napi-rs/canvas-win32-x64-msvc/-/canvas-win32-x64-msvc-0.1.80.tgz 0ms (cache hit)
+99 http cache pdfjs-dist@https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-5.4.296.tgz 0ms (cache hit)
+100 silly tarball no local data for @napi-rs/canvas-win32-x64-msvc@https://registry.npmjs.org/@napi-rs/canvas-win32-x64-msvc/-/canvas-win32-x64-msvc-0.1.80.tgz. Extracting by manifest.
+101 silly tarball no local data for pdfjs-dist@https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-5.4.296.tgz. Extracting by manifest.
+102 http cache @napi-rs/canvas@https://registry.npmjs.org/@napi-rs/canvas/-/canvas-0.1.80.tgz 0ms (cache hit)
+103 silly tarball no local data for @napi-rs/canvas@https://registry.npmjs.org/@napi-rs/canvas/-/canvas-0.1.80.tgz. Extracting by manifest.
+104 http cache pdf-parse@https://registry.npmjs.org/pdf-parse/-/pdf-parse-2.4.5.tgz 0ms (cache hit)
+105 silly tarball no local data for pdf-parse@https://registry.npmjs.org/pdf-parse/-/pdf-parse-2.4.5.tgz. Extracting by manifest.
+106 http fetch GET 200 https://registry.npmjs.org/@napi-rs/canvas/-/canvas-0.1.80.tgz 611ms (cache miss)
+107 http fetch GET 200 https://registry.npmjs.org/pdf-parse/-/pdf-parse-2.4.5.tgz 2999ms (cache miss)
+108 http fetch GET 200 https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-5.4.296.tgz 6591ms (cache miss)
+109 http fetch GET 200 https://registry.npmjs.org/@napi-rs/canvas-win32-x64-msvc/-/canvas-win32-x64-msvc-0.1.80.tgz 7715ms (cache miss)
+110 silly ADD node_modules/@napi-rs/canvas-win32-x64-msvc
+111 silly ADD
+112 silly ADD
+113 silly ADD
+114 silly ADD
+115 silly ADD
+116 silly ADD
+117 silly ADD
+118 silly ADD
+119 silly ADD
+120 silly ADD node_modules/pdfjs-dist
+121 silly ADD node_modules/@napi-rs/canvas
+122 silly ADD node_modules/pdf-parse
+123 verbose cwd C:\Users\acer\SIA
+124 verbose os Windows_NT 10.0.26200
+125 verbose node v22.15.1
+126 verbose npm  v10.9.2
+127 verbose exit 0
+128 info ok

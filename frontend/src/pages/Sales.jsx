@@ -1,14 +1,23 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useSelector } from 'react-redux'
+import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/api.js'
 
-const fmt = (n) => Number(n || 0).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })
+const formatMoney = (currency, value) => {
+  const normalizedCurrency = String(currency || 'PHP').trim() || 'PHP'
+  try {
+    return Number(value || 0).toLocaleString('en-PH', { style: 'currency', currency: normalizedCurrency })
+  } catch {
+    return Number(value || 0).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })
+  }
+}
 const fmtDate = (d) => d ? new Date(d).toLocaleString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'
 const round = (n) => Math.round((Number(n) || 0) * 100) / 100
 const num = (v, fallback = 0) => Number.isFinite(Number(v)) ? Number(v) : fallback
 const pct = (v) => Math.min(Math.max(num(v), 0), 100)
 const text = (value) => String(value || '').trim()
 const normalizeText = (value) => text(value).toLowerCase()
+const normalizeScannedCode = (value) => String(value || '').replace(/[\r\n]+/g, '').trim().toUpperCase()
 const productLabel = (p) => `${p?.sku ? `${p.sku} - ` : ''}${p?.name || 'Unnamed product'}`
 const extractScannedReceiptId = (rawValue) => {
   const raw = String(rawValue || '').trim()
@@ -28,6 +37,10 @@ const extractScannedReceiptId = (rawValue) => {
   return compact
 }
 const DEFAULT_SALES_CONFIG = {
+  currency: 'PHP',
+  tax_rate: 0,
+  tax_rate_percentage: 0,
+  scanner_debounce_ms: 250,
   payment_methods: ['cash', 'mobile_bank_transfer'],
   allow_discount: false,
   allow_price_override: false
@@ -55,9 +68,122 @@ function StatCard({ label, value, style }) {
   )
 }
 
+function getCatalogUnitPrice(products, productId, fallbackValue = 0) {
+  const product = (Array.isArray(products) ? products : []).find((item) => String(item.id) === String(productId))
+  return round(product?.price ?? fallbackValue)
+}
+
+function mapSaleToCartItems(sale, products) {
+  const saleItems = Array.isArray(sale?.items) ? sale.items : []
+  return saleItems.map((item) => ({
+    id: item.id,
+    product_id: item.product_id,
+    name: item.product_name || item.productName || 'Item',
+    sku: item.sku || null,
+    barcode: item.barcode || null,
+    unit_price: round(item.unit_price),
+    catalog_unit_price: getCatalogUnitPrice(products, item.product_id, item.unit_price),
+    quantity: num(item.qty ?? item.quantity, 1),
+    line_total: round(item.line_total)
+  }))
+}
+
+function isScannerCaptureTab(value) {
+  return value === 'pos' || value === 'payment'
+}
+
+function buildPendingOrderSnapshot({
+  cart,
+  draftSaleId,
+  orderNote,
+  paymentMethod,
+  discountPercentage,
+  subtotal,
+  discountAmount,
+  taxAmount,
+  taxRatePercentage,
+  total
+}) {
+  const items = Array.isArray(cart) ? cart : []
+  if (!draftSaleId || !items.length) return null
+
+  const trimmedOrderNote = text(orderNote)
+  return {
+    items: items.map((item) => ({ ...item })),
+    draft_sale_id: draftSaleId,
+    order_note: trimmedOrderNote || undefined,
+    payment_method: paymentMethod,
+    discount_percentage: discountPercentage,
+    subtotal,
+    discount_amount: discountAmount,
+    tax_amount: taxAmount,
+    tax_rate_percentage: taxRatePercentage,
+    total
+  }
+}
+
+function pendingOrderItemsMatch(leftItems, rightItems) {
+  const currentItems = Array.isArray(leftItems) ? leftItems : []
+  const nextItems = Array.isArray(rightItems) ? rightItems : []
+  if (currentItems.length !== nextItems.length) return false
+
+  return currentItems.every((item, index) => {
+    const other = nextItems[index]
+    if (!other) return false
+    return (
+      String(item.id || '') === String(other.id || '')
+      && String(item.product_id || '') === String(other.product_id || '')
+      && String(item.name || '') === String(other.name || '')
+      && String(item.sku || '') === String(other.sku || '')
+      && String(item.barcode || '') === String(other.barcode || '')
+      && round(item.unit_price) === round(other.unit_price)
+      && round(item.catalog_unit_price) === round(other.catalog_unit_price)
+      && num(item.quantity) === num(other.quantity)
+      && round(item.line_total) === round(other.line_total)
+    )
+  })
+}
+
+function pendingOrdersEqual(currentOrder, nextOrder) {
+  if (!currentOrder && !nextOrder) return true
+  if (!currentOrder || !nextOrder) return false
+
+  return (
+    String(currentOrder.draft_sale_id || '') === String(nextOrder.draft_sale_id || '')
+    && String(currentOrder.order_note || '') === String(nextOrder.order_note || '')
+    && String(currentOrder.payment_method || '') === String(nextOrder.payment_method || '')
+    && round(currentOrder.discount_percentage) === round(nextOrder.discount_percentage)
+    && round(currentOrder.subtotal) === round(nextOrder.subtotal)
+    && round(currentOrder.discount_amount) === round(nextOrder.discount_amount)
+    && round(currentOrder.tax_amount) === round(nextOrder.tax_amount)
+    && round(currentOrder.tax_rate_percentage) === round(nextOrder.tax_rate_percentage)
+    && round(currentOrder.total) === round(nextOrder.total)
+    && pendingOrderItemsMatch(currentOrder.items, nextOrder.items)
+  )
+}
+
+function shouldResetPaymentAmount(currentValue, previousTotal, nextTotal) {
+  const rawValue = String(currentValue || '').trim()
+  if (!rawValue) return true
+
+  const normalizedAmount = Number(rawValue)
+  if (!Number.isFinite(normalizedAmount)) return true
+
+  return round(normalizedAmount) === round(previousTotal) || round(normalizedAmount) === round(nextTotal)
+}
+
 export default function Sales() {
   const permissions = useSelector((state) => state.auth?.permissions || JSON.parse(localStorage.getItem('permissions') || '[]'))
   const receiptRef = useRef(null)
+  const scanInputRef = useRef(null)
+  const scanSubmitTimerRef = useRef(null)
+  const globalScanTimerRef = useRef(null)
+  const globalScanBufferRef = useRef('')
+  const globalScanLastKeyAtRef = useRef(0)
+  const lastScanRef = useRef({ code: '', at: 0 })
+  const routeScanRef = useRef('')
+  const location = useLocation()
+  const navigate = useNavigate()
 
   const [tab, setTab] = useState('pos')
   const [products, setProducts] = useState([])
@@ -69,6 +195,15 @@ export default function Sales() {
   const [success, setSuccess] = useState(null)
   const [loading, setLoading] = useState(false)
   const [cart, setCart] = useState([])
+  const [draftSaleId, setDraftSaleId] = useState(null)
+  const [scanValue, setScanValue] = useState('')
+  const [, setScannerDebug] = useState({
+    raw: '',
+    normalized: '',
+    source: 'Waiting for scan',
+    status: 'No scanner input captured yet',
+    updatedAt: null
+  })
   const [search, setSearch] = useState('')
   const [selectedProduct, setSelectedProduct] = useState('')
   const [isProductPickerOpen, setIsProductPickerOpen] = useState(false)
@@ -109,6 +244,10 @@ export default function Sales() {
 
   const allowDiscount = Boolean(config.allow_discount)
   const allowPriceOverride = Boolean(config.allow_price_override)
+  const currency = String(config.currency || 'PHP').trim() || 'PHP'
+  const taxRate = num(config.tax_rate, 0) > 1 ? num(config.tax_rate, 0) / 100 : num(config.tax_rate, 0)
+  const taxRatePercentage = num(config.tax_rate_percentage, round(taxRate * 100))
+  const fmt = (value) => formatMoney(currency, value)
   const filteredProducts = products.filter((product) => {
     const needle = normalizeText(search)
     if (!needle) return true
@@ -123,7 +262,9 @@ export default function Sales() {
   const subtotal = round(cart.reduce((sum, item) => sum + num(item.unit_price) * num(item.quantity), 0))
   const discountPct = allowDiscount ? pct(discountPercentage) : 0
   const discountAmount = round(subtotal * (discountPct / 100))
-  const total = round(Math.max(subtotal - discountAmount, 0))
+  const taxableBase = Math.max(subtotal - discountAmount, 0)
+  const taxAmount = round(taxableBase * taxRate)
+  const total = round(taxableBase + taxAmount)
   const tendered = num(paymentAmount)
   const requiresBankTransferFields = String(pendingOrder?.payment_method || '') === 'mobile_bank_transfer'
   const isAmountValid = pendingOrder ? (requiresBankTransferFields ? round(tendered) === round(num(pendingOrder.total)) : tendered >= num(pendingOrder.total)) : false
@@ -135,6 +276,34 @@ export default function Sales() {
   useEffect(() => {
     if (!tabs.some(([key]) => key === tab) && tabs[0]) setTab(tabs[0][0])
   }, [tab, tabs])
+
+  useEffect(() => {
+    if (tab !== 'pos') return
+    const timeoutId = window.setTimeout(() => scanInputRef.current?.focus(), 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [tab, draftSaleId, cart.length])
+
+  useEffect(() => {
+    if (tab !== 'pos') return undefined
+
+    const refocusScanInput = () => {
+      window.setTimeout(() => scanInputRef.current?.focus(), 0)
+    }
+
+    window.addEventListener('focus', refocusScanInput)
+    return () => window.removeEventListener('focus', refocusScanInput)
+  }, [tab])
+
+  useEffect(() => () => {
+    if (scanSubmitTimerRef.current) {
+      window.clearTimeout(scanSubmitTimerRef.current)
+      scanSubmitTimerRef.current = null
+    }
+    if (globalScanTimerRef.current) {
+      window.clearTimeout(globalScanTimerRef.current)
+      globalScanTimerRef.current = null
+    }
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -176,10 +345,115 @@ export default function Sales() {
     if (String(discountPercentage).trim()) setDiscountPercentage('')
   }, [config.allow_discount, discountPercentage])
 
+  useEffect(() => {
+    setCart((prev) => prev.map((item) => ({
+      ...item,
+      catalog_unit_price: getCatalogUnitPrice(products, item.product_id, item.catalog_unit_price)
+    })))
+  }, [products])
+
+  useEffect(() => {
+    const nextPendingOrder = buildPendingOrderSnapshot({
+      cart,
+      draftSaleId,
+      orderNote,
+      paymentMethod,
+      discountPercentage: discountPct,
+      subtotal,
+      discountAmount,
+      taxAmount,
+      taxRatePercentage,
+      total
+    })
+
+    setPendingOrder((currentOrder) => {
+      if (!nextPendingOrder) return currentOrder ? null : currentOrder
+      return pendingOrdersEqual(currentOrder, nextPendingOrder) ? currentOrder : nextPendingOrder
+    })
+
+    if (!nextPendingOrder) return
+
+    setPaymentAmount((currentValue) => (
+      shouldResetPaymentAmount(currentValue, pendingOrder?.total, nextPendingOrder.total)
+        ? String(round(nextPendingOrder.total).toFixed(2))
+        : currentValue
+    ))
+  }, [
+    cart,
+    draftSaleId,
+    orderNote,
+    paymentMethod,
+    discountPct,
+    subtotal,
+    discountAmount,
+    taxAmount,
+    taxRatePercentage,
+    total,
+    pendingOrder?.total
+  ])
+
+  useEffect(() => {
+    if (location.pathname !== '/sales') return
+
+    const params = new URLSearchParams(location.search)
+    const requestedCode = normalizeScannedCode(params.get('scan'))
+    if (!requestedCode) {
+      routeScanRef.current = ''
+      return
+    }
+    if (routeScanRef.current === requestedCode) return
+
+    routeScanRef.current = requestedCode
+    setTab('pos')
+
+    let active = true
+    ;(async () => {
+      clearMsg()
+      try {
+        setLoading(true)
+        const response = await postDraftItem({ code: requestedCode, quantity: 1 })
+        if (!active) return
+
+        lastScanRef.current = { code: requestedCode, at: Date.now() }
+        setScanValue('')
+        if (response?.duplicate_scan || response?.ignored) {
+          flash('Duplicate scan ignored.')
+        } else {
+          flash('Product added to cart from Inventory QR.')
+        }
+      } catch (err) {
+        if (!active) return
+        setError(salesErrorMessage(err, 'Failed to add product from Inventory QR'))
+        setScanValue('')
+      } finally {
+        if (!active) return
+        setLoading(false)
+        clearRouteScanParam()
+        focusScanInput()
+      }
+    })()
+
+    return () => { active = false }
+  }, [location.pathname, location.search])
+
   function clearMsg() { setError(null); setSuccess(null) }
   function flash(message) { setSuccess(message); setTimeout(() => setSuccess(null), 4000) }
   function stock(productId) { return num(products.find((item) => String(item.id) === String(productId))?.stock_quantity) }
   function cartQty(productId, skip = -1) { return cart.reduce((sum, item, index) => index === skip ? sum : (String(item.product_id) === String(productId) ? sum + num(item.quantity) : sum), 0) }
+  function updateScannerDebug(rawValue, source, status) {
+    const raw = String(rawValue || '')
+    setScannerDebug({
+      raw,
+      normalized: normalizeScannedCode(raw),
+      source: String(source || 'Scanner'),
+      status: String(status || ''),
+      updatedAt: Date.now()
+    })
+  }
+  function syncCartFromSale(sale) {
+    setDraftSaleId(sale?.id || null)
+    setCart(mapSaleToCartItems(sale, products))
+  }
 
   function selectProductOption(product) {
     if (!product?.id) return
@@ -219,6 +493,151 @@ export default function Sales() {
 
   async function refreshProducts() { setProducts(await loadPosProducts()) }
   async function fetchSales() { try { setLoading(true); setSales((await api.get('/sales')).data || []) } catch (err) { setError(err?.response?.data?.error || 'Failed to load sales') } finally { setLoading(false) } }
+
+  function focusScanInput() {
+    if (tab !== 'pos') return
+    window.setTimeout(() => scanInputRef.current?.focus(), 0)
+  }
+
+  function clearBufferedScanSubmit() {
+    if (!scanSubmitTimerRef.current) return
+    window.clearTimeout(scanSubmitTimerRef.current)
+    scanSubmitTimerRef.current = null
+  }
+
+  function scheduleBufferedScanSubmit(rawValue) {
+    clearBufferedScanSubmit()
+    const normalizedCode = normalizeScannedCode(rawValue)
+    if (!normalizedCode) return
+
+    const submitDelay = Math.max(0, num(config.scanner_debounce_ms, DEFAULT_SALES_CONFIG.scanner_debounce_ms))
+    scanSubmitTimerRef.current = window.setTimeout(() => {
+      handleScanSubmit(rawValue)
+    }, submitDelay)
+  }
+
+  function clearGlobalScanBuffer() {
+    if (globalScanTimerRef.current) {
+      window.clearTimeout(globalScanTimerRef.current)
+      globalScanTimerRef.current = null
+    }
+    globalScanBufferRef.current = ''
+    globalScanLastKeyAtRef.current = 0
+  }
+
+  function scheduleGlobalScanSubmit() {
+    if (!isScannerCaptureTab(tab)) return
+    if (globalScanTimerRef.current) {
+      window.clearTimeout(globalScanTimerRef.current)
+      globalScanTimerRef.current = null
+    }
+
+    const bufferedValue = globalScanBufferRef.current
+    if (!normalizeScannedCode(bufferedValue)) return
+
+    const submitDelay = Math.max(0, num(config.scanner_debounce_ms, DEFAULT_SALES_CONFIG.scanner_debounce_ms))
+    globalScanTimerRef.current = window.setTimeout(() => {
+      const scannedValue = globalScanBufferRef.current
+      clearGlobalScanBuffer()
+      if (!normalizeScannedCode(scannedValue)) return
+      setScanValue(scannedValue)
+      handleScanSubmit(scannedValue, 'Global page capture')
+    }, submitDelay)
+  }
+
+  function isEditableEventTarget(target) {
+    if (!(target instanceof Element)) return false
+    if (scanInputRef.current && target === scanInputRef.current) return false
+    return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
+  }
+
+  useEffect(() => {
+    if (!isScannerCaptureTab(tab)) {
+      clearGlobalScanBuffer()
+      return undefined
+    }
+
+    const handleGlobalScannerKeyDown = (event) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return
+      if (isEditableEventTarget(event.target)) return
+
+      const key = String(event.key || '')
+      if (!key) return
+
+      if (key === 'Enter' || key === 'Tab') {
+        const bufferedValue = globalScanBufferRef.current
+        if (!normalizeScannedCode(bufferedValue)) return
+        event.preventDefault()
+        clearGlobalScanBuffer()
+        setScanValue(bufferedValue)
+        handleScanSubmit(bufferedValue, 'Global page capture')
+        return
+      }
+
+      if (key.length !== 1) return
+
+      const now = Date.now()
+      const resetWindowMs = Math.max(0, num(config.scanner_debounce_ms, DEFAULT_SALES_CONFIG.scanner_debounce_ms))
+      if (!globalScanLastKeyAtRef.current || (now - globalScanLastKeyAtRef.current) > resetWindowMs) {
+        globalScanBufferRef.current = ''
+      }
+
+      globalScanLastKeyAtRef.current = now
+      globalScanBufferRef.current += key
+      setScanValue(globalScanBufferRef.current)
+      updateScannerDebug(globalScanBufferRef.current, 'Global page capture', 'Receiving scanner input')
+      scheduleGlobalScanSubmit()
+    }
+
+    window.addEventListener('keydown', handleGlobalScannerKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleGlobalScannerKeyDown)
+      clearGlobalScanBuffer()
+    }
+  }, [tab, config.scanner_debounce_ms, handleScanSubmit])
+
+  function clearRouteScanParam() {
+    if (location.pathname !== '/sales') return
+    const params = new URLSearchParams(location.search)
+    if (!params.has('scan')) return
+    params.delete('scan')
+    const nextSearch = params.toString()
+    navigate(nextSearch ? `${location.pathname}?${nextSearch}` : location.pathname, {
+      replace: true,
+      preventScrollReset: true
+    })
+  }
+
+  function salesErrorMessage(err, fallbackMessage) {
+    const apiMessage = String(err?.response?.data?.error || '').trim()
+    if (apiMessage === 'unknown product') return 'Code not registered'
+    if (apiMessage === 'invalid code') return 'Invalid scan code'
+    if (apiMessage === 'out of stock') return 'Product is out of stock'
+    return apiMessage || fallbackMessage
+  }
+
+  async function ensureDraftSaleReady(forceNew = false) {
+    if (!forceNew && draftSaleId) return draftSaleId
+    const res = await api.post('/sales/drafts', forceNew || !draftSaleId ? {} : { sale_id: draftSaleId })
+    syncCartFromSale(res.data)
+    return res.data?.id
+  }
+
+  async function postDraftItem(payload) {
+    try {
+      const saleId = await ensureDraftSaleReady()
+      const res = await api.post(`/sales/${saleId}/items`, payload)
+      syncCartFromSale(res.data?.sale)
+      return res.data
+    } catch (err) {
+      if (String(err?.response?.data?.error || '').trim() !== 'draft sale not found') throw err
+      setDraftSaleId(null)
+      const saleId = await ensureDraftSaleReady(true)
+      const res = await api.post(`/sales/${saleId}/items`, payload)
+      syncCartFromSale(res.data?.sale)
+      return res.data
+    }
+  }
 
   function buildFallbackTransactions(rows, filters = {}) {
     const typeFilter = String(filters.type || '').trim()
@@ -268,8 +687,10 @@ export default function Sales() {
   }
 
   function resetDraft() {
+    setDraftSaleId(null)
     setPendingOrder(null)
     setCart([])
+    setScanValue('')
     setSearch('')
     setSelectedProduct('')
     setIsProductPickerOpen(false)
@@ -281,38 +702,144 @@ export default function Sales() {
     setPaymentAmount('')
     setBankAppUsed('')
     setReferenceNumber('')
+    clearBufferedScanSubmit()
+    clearGlobalScanBuffer()
+    lastScanRef.current = { code: '', at: 0 }
   }
 
-  function addToCart() {
+  async function handleScanSubmit(rawValue = scanValue, source = 'Scan input field') {
+    clearBufferedScanSubmit()
+    clearMsg()
+    const normalizedCode = normalizeScannedCode(rawValue)
+    if (!normalizedCode) {
+      updateScannerDebug(rawValue, source, 'Ignored empty scan')
+      focusScanInput()
+      return
+    }
+
+    updateScannerDebug(rawValue, source, 'Submitting scanned code')
+
+    const now = Date.now()
+    const clientDebounceMs = Math.max(0, num(config.scanner_debounce_ms, 250))
+    if (lastScanRef.current.code === normalizedCode && (now - lastScanRef.current.at) < clientDebounceMs) {
+      setScanValue('')
+      updateScannerDebug(rawValue, source, 'Duplicate scan ignored on client debounce')
+      flash('Duplicate scan ignored.')
+      focusScanInput()
+      return
+    }
+
+    try {
+      setLoading(true)
+      const response = await postDraftItem({ code: normalizedCode, quantity: 1 })
+      lastScanRef.current = { code: normalizedCode, at: Date.now() }
+      setScanValue('')
+      if (response?.duplicate_scan || response?.ignored) {
+        updateScannerDebug(rawValue, source, 'Duplicate scan ignored by server')
+        flash('Duplicate scan ignored.')
+      } else {
+        updateScannerDebug(rawValue, source, 'Product added to cart')
+      }
+    } catch (err) {
+      updateScannerDebug(rawValue, source, salesErrorMessage(err, 'Failed to scan product'))
+      setError(salesErrorMessage(err, 'Failed to scan product'))
+      setScanValue('')
+    } finally {
+      setLoading(false)
+      focusScanInput()
+    }
+  }
+
+  async function addToCart() {
     clearMsg()
     const product = products.find((item) => String(item.id) === String(selectedProduct))
     if (!product) return setError('Select a product')
-    const err = qtyError(qty, selectedProduct)
+    const requestedPrice = allowPriceOverride ? (price === '' ? product.price : price) : undefined
+    const err = qtyError(qty, product.id)
     if (err) return setError(err)
-    const unitPrice = allowPriceOverride ? (price === '' ? num(product.price) : num(price, NaN)) : num(product.price)
-    if (!Number.isFinite(unitPrice) || unitPrice < 0) return setError('Price must be zero or greater')
-    setCart((prev) => [...prev, { product_id: product.id, name: product.name, sku: product.sku, unit_price: round(unitPrice), catalog_unit_price: round(product.price), quantity: Math.max(1, num(qty, 1)) }])
-    setSelectedProduct('')
-    setSearch('')
-    setIsProductPickerOpen(false)
-    setPrice('')
-    setQty('1')
+
+    try {
+      setLoading(true)
+      await postDraftItem({
+        product_id: product.id,
+        quantity: Math.max(1, num(qty, 1)),
+        unit_price: requestedPrice
+      })
+      setSelectedProduct('')
+      setSearch('')
+      setIsProductPickerOpen(false)
+      setPrice('')
+      setQty('1')
+    } catch (err) {
+      setError(salesErrorMessage(err, 'Failed to add product to cart'))
+    } finally {
+      setLoading(false)
+      focusScanInput()
+    }
   }
 
-  function updateCartQty(index, nextQty) {
-    const item = cart[index]
-    if (!item) return
-    const err = qtyError(nextQty, item.product_id, index)
-    if (err) setError(err)
-    const maxAllowed = Math.max(stock(item.product_id) - cartQty(item.product_id, index), 1)
-    setCart((prev) => prev.map((entry, i) => i !== index ? entry : { ...entry, quantity: Math.min(Math.max(1, num(nextQty, 1)), maxAllowed) }))
+  async function updateCartQty(itemId, nextQty) {
+    const itemIndex = cart.findIndex((entry) => String(entry.id) === String(itemId))
+    const item = itemIndex >= 0 ? cart[itemIndex] : null
+    if (!item || !draftSaleId) return
+
+    const err = qtyError(nextQty, item.product_id, itemIndex)
+    if (err) return setError(err)
+
+    try {
+      clearMsg()
+      setLoading(true)
+      const res = await api.put(`/sales/${draftSaleId}/items/${item.id}`, {
+        quantity: Math.max(1, num(nextQty, 1))
+      })
+      syncCartFromSale(res.data?.sale)
+    } catch (err) {
+      setError(salesErrorMessage(err, 'Failed to update cart quantity'))
+    } finally {
+      setLoading(false)
+      focusScanInput()
+    }
   }
 
-  function updateCartPrice(index, nextPrice) {
+  async function updateCartPrice(itemId, nextPrice) {
     if (!allowPriceOverride) return
     const value = num(nextPrice, NaN)
     if (!Number.isFinite(value) || value < 0) return setError('Price must be zero or greater')
-    setCart((prev) => prev.map((entry, i) => i === index ? { ...entry, unit_price: round(value) } : entry))
+
+    const item = cart.find((entry) => String(entry.id) === String(itemId))
+    if (!item || !draftSaleId) return
+
+    try {
+      clearMsg()
+      setLoading(true)
+      const res = await api.put(`/sales/${draftSaleId}/items/${item.id}`, {
+        quantity: item.quantity,
+        unit_price: round(value)
+      })
+      syncCartFromSale(res.data?.sale)
+    } catch (err) {
+      setError(salesErrorMessage(err, 'Failed to update item price'))
+    } finally {
+      setLoading(false)
+      focusScanInput()
+    }
+  }
+
+  async function removeCartItem(itemId) {
+    const item = cart.find((entry) => String(entry.id) === String(itemId))
+    if (!item || !draftSaleId) return
+
+    try {
+      clearMsg()
+      setLoading(true)
+      const res = await api.delete(`/sales/${draftSaleId}/items/${item.id}`)
+      syncCartFromSale(res.data?.sale)
+    } catch (err) {
+      setError(salesErrorMessage(err, 'Failed to remove cart item'))
+    } finally {
+      setLoading(false)
+      focusScanInput()
+    }
   }
 
   function startPayment() {
@@ -320,16 +847,28 @@ export default function Sales() {
     if (!cart.length) return setError('Add items to cart first')
     if (cart.some((item, index) => !!qtyError(item.quantity, item.product_id, index))) return setError('Resolve cart stock issues first')
     if (cartHasLockedPriceOverride) return setError('This draft contains price overrides that require manager permission before checkout')
+    if (!draftSaleId) return setError('Draft sale was not prepared. Add an item again.')
     if (total <= 0) return setError('Total must be greater than 0')
-    const trimmedOrderNote = String(orderNote || '').trim()
-    setPendingOrder({
-      items: cart.map((item) => ({ ...item })),
-      order_note: trimmedOrderNote || undefined,
-      payment_method: paymentMethod,
-      discount_percentage: discountPct,
+    const nextPendingOrder = buildPendingOrderSnapshot({
+      cart,
+      draftSaleId,
+      orderNote,
+      paymentMethod,
+      discountPercentage: discountPct,
+      subtotal,
+      discountAmount,
+      taxAmount,
+      taxRatePercentage,
       total
     })
-    setPaymentAmount(String(total.toFixed(2)))
+    if (!nextPendingOrder) return setError('Add items to cart first')
+
+    setPendingOrder(nextPendingOrder)
+    setPaymentAmount((currentValue) => (
+      shouldResetPaymentAmount(currentValue, pendingOrder?.total, nextPendingOrder.total)
+        ? String(round(nextPendingOrder.total).toFixed(2))
+        : currentValue
+    ))
     setBankAppUsed('')
     setReferenceNumber('')
     setTab('payment')
@@ -344,6 +883,7 @@ export default function Sales() {
     try {
       setLoading(true)
       const res = await api.post('/sales', {
+        draft_sale_id: pendingOrder.draft_sale_id,
         items: pendingOrder.items.map((item) => ({ product_id: item.product_id, quantity: item.quantity, unit_price: item.unit_price })),
         order_note: pendingOrder.order_note,
         payment_method: pendingOrder.payment_method,
@@ -527,6 +1067,49 @@ export default function Sales() {
           <div>
             <div className="card" style={{ marginBottom: 16 }}>
               <h3 style={{ marginBottom: 12 }}>Build Order</h3>
+              <div className="form-group">
+                <label className="form-label">Scan Barcode / QR</label>
+                <input
+                  ref={scanInputRef}
+                  className="form-input"
+                  value={scanValue}
+                  onChange={(e) => {
+                    const nextValue = e.target.value
+                    setScanValue(nextValue)
+                    updateScannerDebug(nextValue, 'Scan input field', 'Receiving scanner input')
+                    scheduleBufferedScanSubmit(nextValue)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' && e.key !== 'Tab') return
+                    e.preventDefault()
+                    handleScanSubmit(e.currentTarget.value, 'Scan input field')
+                  }}
+                  placeholder="Scan barcode or QR, then press Enter"
+                />
+                <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 8 }}>
+                  Scan anywhere on the POS page. The matched product is added automatically with quantity 1, even if the scanner sends Tab or no suffix.
+                </div>
+                {/* Scanner debug panel kept commented out after the QR-to-POS flow was stabilized.
+                <div style={{ marginTop: 10, padding: '12px 14px', borderRadius: 10, border: '1px dashed #d3c1a4', background: '#faf6ef' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--gold-dark)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Scanner Debug</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-light)' }}>
+                    Use this to confirm what the scanner is sending into the POS.
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '110px minmax(0,1fr)', gap: '8px 12px', marginTop: 10, fontSize: 12, alignItems: 'start' }}>
+                    <div style={{ color: 'var(--text-light)', fontWeight: 600 }}>Source</div>
+                    <div>{scannerDebug.source || '—'}</div>
+                    <div style={{ color: 'var(--text-light)', fontWeight: 600 }}>Status</div>
+                    <div>{scannerDebug.status || '—'}</div>
+                    <div style={{ color: 'var(--text-light)', fontWeight: 600 }}>Raw</div>
+                    <div style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{scannerDebug.raw || '—'}</div>
+                    <div style={{ color: 'var(--text-light)', fontWeight: 600 }}>Normalized</div>
+                    <div style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{scannerDebug.normalized || '—'}</div>
+                    <div style={{ color: 'var(--text-light)', fontWeight: 600 }}>Updated</div>
+                    <div>{scannerDebug.updatedAt ? new Date(scannerDebug.updatedAt).toLocaleTimeString('en-PH') : '—'}</div>
+                  </div>
+                </div>
+                */}
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.6fr) 140px 100px', gap: 12, alignItems: 'end' }}>
                 <div className="form-group" style={{ marginBottom: 0, position: 'relative' }}>
                   <label className="form-label">Product Search</label>
@@ -538,12 +1121,13 @@ export default function Sales() {
                     onBlur={() => window.setTimeout(() => setIsProductPickerOpen(false), 120)}
                     onKeyDown={(e) => {
                       if (e.key !== 'Enter') return
+                      e.preventDefault()
+                      clearMsg()
                       if (!selectedProduct && filteredProducts.length === 1) {
-                        e.preventDefault()
                         selectProductOption(filteredProducts[0])
                       }
                     }}
-                    placeholder="Search and select by name, SKU, or barcode"
+                    placeholder="Search products by name, SKU, or barcode"
                   />
                   {isProductPickerOpen && (
                     <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, zIndex: 30, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 12px 30px rgba(15, 23, 42, 0.08)', maxHeight: 260, overflowY: 'auto' }}>
@@ -582,12 +1166,12 @@ export default function Sales() {
                   <thead><tr><th>Product</th><th>Price</th><th>Qty</th><th>Subtotal</th><th /></tr></thead>
                   <tbody>
                     {cart.length === 0 ? <tr><td colSpan="5" style={{ textAlign: 'center', color: 'var(--text-light)', padding: 24 }}>No items in cart yet.</td></tr> : cart.map((item, index) => (
-                      <tr key={`${item.product_id}-${index}`}>
+                      <tr key={item.id || `${item.product_id}-${index}`}>
                         <td><div style={{ fontWeight: 600 }}>{item.name}</div>{item.sku && <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{item.sku}</div>}</td>
-                        <td>{allowPriceOverride ? <input type="number" min="0" step="0.01" value={item.unit_price} onChange={(e) => updateCartPrice(index, e.target.value)} style={{ width: 90 }} /> : fmt(item.unit_price)}</td>
-                        <td><input type="number" min="1" value={item.quantity} onChange={(e) => updateCartQty(index, e.target.value)} style={{ width: 70 }} /></td>
+                        <td>{allowPriceOverride ? <input type="number" min="0" step="0.01" value={item.unit_price} onChange={(e) => updateCartPrice(item.id, e.target.value)} style={{ width: 90 }} /> : fmt(item.unit_price)}</td>
+                        <td><input type="number" min="1" value={item.quantity} onChange={(e) => updateCartQty(item.id, e.target.value)} style={{ width: 70 }} /></td>
                         <td style={{ fontWeight: 600 }}>{fmt(num(item.unit_price) * num(item.quantity))}</td>
-                        <td><button className="btn btn-danger" onClick={() => setCart((prev) => prev.filter((_, i) => i !== index))} style={{ padding: '4px 8px', fontSize: 12 }}>X</button></td>
+                        <td><button className="btn btn-danger" onClick={() => removeCartItem(item.id)} style={{ padding: '4px 8px', fontSize: 12 }}>X</button></td>
                       </tr>
                     ))}
                   </tbody>
@@ -607,6 +1191,7 @@ export default function Sales() {
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Subtotal</span><span>{fmt(subtotal)}</span></div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Discount</span><span>-{fmt(discountAmount)}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Tax ({taxRatePercentage.toFixed(2)}%)</span><span>{fmt(taxAmount)}</span></div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 20, marginTop: 8 }}><span>Total</span><span>{fmt(total)}</span></div>
             </div>
             {cartHasLockedPriceOverride && <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, color: '#9a3412', fontSize: 12 }}>This cart includes manager-set price overrides. A cashier without price override permission cannot complete it.</div>}
@@ -621,8 +1206,14 @@ export default function Sales() {
             <div className="card" style={{ marginBottom: 16 }}>
               <h3 style={{ marginBottom: 12 }}>Accept Payment</h3>
               {!pendingOrder ? <p style={{ color: 'var(--text-light)' }}>No pending order. Build one in POS first.</p> : <>
-                <div className="table-wrap" style={{ marginBottom: 16 }}><table><thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Subtotal</th></tr></thead><tbody>{pendingOrder.items.map((item, index) => <tr key={`${item.product_id}-${index}`}><td>{item.name}</td><td>{item.quantity}</td><td>{fmt(item.unit_price)}</td><td style={{ fontWeight: 600 }}>{fmt(item.unit_price * item.quantity)}</td></tr>)}</tbody></table></div>
+                <div className="table-wrap" style={{ marginBottom: 16 }}><table><thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Subtotal</th></tr></thead><tbody>{pendingOrder.items.map((item, index) => <tr key={item.id || `${item.product_id}-${index}`}><td>{item.name}</td><td>{item.quantity}</td><td>{fmt(item.unit_price)}</td><td style={{ fontWeight: 600 }}>{fmt(item.unit_price * item.quantity)}</td></tr>)}</tbody></table></div>
                 <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text-mid)' }}>Order Note: {pendingOrder.order_note || '-'}</div>
+                <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 8, background: '#f8fafc', color: 'var(--text-mid)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Subtotal</span><strong>{fmt(pendingOrder.subtotal)}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Discount</span><strong>-{fmt(pendingOrder.discount_amount)}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Tax ({num(pendingOrder.tax_rate_percentage, taxRatePercentage).toFixed(2)}%)</span><strong>{fmt(pendingOrder.tax_amount)}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}><span>Total Due</span><strong>{fmt(pendingOrder.total)}</strong></div>
+                </div>
                 <div className="form-group"><label className="form-label">Amount Received</label><input className="form-input" type="number" min="0.01" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} /></div>
                 {requiresBankTransferFields && <div className="form-group"><label className="form-label">Bank App Used *</label><select className="form-input" value={bankAppUsed} onChange={(e) => setBankAppUsed(e.target.value)}><option value="">Select mobile banking app</option>{MOBILE_BANK_APPS.map((name) => <option key={name} value={name}>{name}</option>)}</select></div>}
                 {requiresBankTransferFields && <div className="form-group"><label className="form-label">Reference Number *</label><input className="form-input" value={referenceNumber} onChange={(e) => setReferenceNumber(e.target.value)} /></div>}
@@ -638,7 +1229,7 @@ export default function Sales() {
                 <div>Payment: {lastReceipt.payment_method}</div>
                 <div>Order Note: {lastReceipt.order_note || '-'}</div>
                 <div>Bank App Used: {lastReceipt.bank_app_used || '-'}</div><div>Reference Number: {lastReceipt.reference_number || lastReceipt.payment_reference || '-'}</div>
-                <div>Subtotal: {fmt(lastReceipt.subtotal)}</div><div>Discount: {fmt(lastReceipt.discount)}</div>
+                <div>Subtotal: {fmt(lastReceipt.subtotal)}</div><div>Discount: {fmt(lastReceipt.discount)}</div><div>Tax: {fmt(lastReceipt.tax)}</div>
                 <div>Received: {fmt(lastReceipt.amount_received)}</div><div>Change: {fmt(lastReceipt.change_amount)}</div>
                 {(lastReceipt.items || []).map((item, index) => <div key={`${item.id || index}`}>{item.product_name || item.productName || 'Item'} x{item.quantity || item.qty} - {fmt(item.line_total || item.lineTotal)}</div>)}
                 <div style={{ marginTop: 8, fontWeight: 700 }}>TOTAL: {fmt(lastReceipt.total)}</div>

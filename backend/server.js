@@ -1,6 +1,7 @@
 require('dotenv').config()
 const cors = require('cors')
 const express = require('express')
+const path = require('path')
 const app = express()
 const database = require('./src/database')
 const rbacRoutes = require('./src/routes/rbac')
@@ -28,6 +29,7 @@ const PORT = process.env.PORT || 3000
 
 app.use(cors())
 app.use(express.json())
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
 
 app.use((req, res, next) => {
   res.setHeader(
@@ -42,11 +44,13 @@ app.use('/auth', express.json(), authRoutes)
 app.use('/users', usersRoutes)
 app.use('/roles', rolesRoutes)
 app.use('/products', productsRoutes)
+app.use('/api/products', productsRoutes)
 app.use('/suppliers', suppliersRoutes)
 app.use('/inventory', inventoryRoutes)
 app.use('/purchase-orders', purchaseOrdersRoutes)
 app.use('/bale-purchases', balePurchasesRoutes)
 app.use('/sales', salesRoutes)
+app.use('/api/sales', salesRoutes)
 app.use('/employees', employeesRoutes)
 app.use('/audit', auditRoutes)
 app.use('/settings', settingsRoutes)
@@ -98,3 +102,5 @@ app.get('/health/database', async (req, res) => {
     res.status(500).json({ database: 'error', message: err.message })
   }
 })
+
+module.exports = { app, server }

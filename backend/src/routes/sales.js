@@ -19,6 +19,20 @@ const {
   getSaleByReceipt,
   processSaleReturn
 } = require('../utils/salesSupport')
+const { normalizeScannedCode } = require('../utils/scannerSupport')
+const { getRuntimeConfig } = require('../services/runtimeConfigService')
+const { ensureScannerSchema } = require('../services/scannerSchemaService')
+const {
+  ensureDraftSale,
+  getLockedDraftSale,
+  addDraftSaleItem,
+  updateDraftSaleItem,
+  removeDraftSaleItem,
+  findRecentScanEvent,
+  recordScanEvent,
+  prepareDraftSaleForCheckout,
+  applyDraftSaleInventoryChanges
+} = require('../services/draftSaleService')
 
 function createHttpError(statusCode, message) {
   const err = new Error(message)
@@ -57,8 +71,8 @@ function hasOwn(payload, key) {
 
 async function getLockedSale(conn, { saleId, receiptNo }) {
   const [rows] = saleId
-    ? await conn.query('SELECT id FROM sales WHERE id = ? FOR UPDATE', [saleId])
-    : await conn.query('SELECT id FROM sales WHERE receipt_no = ? FOR UPDATE', [String(receiptNo || '').trim()])
+    ? await conn.query("SELECT id FROM sales WHERE id = ? AND status <> 'DRAFT' FOR UPDATE", [saleId])
+    : await conn.query("SELECT id FROM sales WHERE receipt_no = ? AND status <> 'DRAFT' FOR UPDATE", [String(receiptNo || '').trim()])
 
   if (!rows.length) return null
   return getSaleById(conn, rows[0].id)
@@ -67,11 +81,15 @@ async function getLockedSale(conn, { saleId, receiptNo }) {
 router.get('/config', verifyToken, authorize(['sales.view', 'sales.create']), async (req, res) => {
   try {
     await ensureSalesSchema()
+    await ensureScannerSchema()
     const permissions = Array.isArray(req.auth?.permissions) ? req.auth.permissions : []
+    const runtimeConfig = await getRuntimeConfig()
     res.json({
       discount_type: 'percentage',
-      tax_rate: 0,
-      tax_rate_percentage: 0,
+      currency: runtimeConfig.currency,
+      tax_rate: runtimeConfig.taxRate,
+      tax_rate_percentage: roundMoney(runtimeConfig.taxRate * 100),
+      scanner_debounce_ms: runtimeConfig.scannerDebounceMs,
       payment_methods: PAYMENT_METHODS,
       allow_discount: hasPermission(permissions, 'sales.discount'),
       allow_price_override: hasPermission(permissions, 'sales.price_override'),
@@ -86,6 +104,7 @@ router.get('/config', verifyToken, authorize(['sales.view', 'sales.create']), as
 
 router.get('/products', verifyToken, authorize(['sales.view', 'sales.create', 'products.view']), async (req, res) => {
   try {
+    await ensureScannerSchema()
     const [rows] = await db.pool.query(`
       SELECT p.*, c.name AS category
       FROM products p
@@ -102,6 +121,7 @@ router.get('/products', verifyToken, authorize(['sales.view', 'sales.create', 'p
 router.get('/reports/summary', verifyToken, authorize(['sales.view', 'reports.view', 'finance.reports.view']), async (req, res) => {
   try {
     await ensureSalesSchema()
+    await ensureScannerSchema()
     const { from, to } = req.query
 
     const totalsParams = []
@@ -116,7 +136,7 @@ router.get('/reports/summary', verifyToken, authorize(['sales.view', 'reports.vi
         COALESCE(SUM(s.total), 0) AS total_revenue,
         SUM(CASE WHEN s.status = 'REFUNDED' THEN 1 ELSE 0 END) AS refunded_sales
       FROM sales s
-      WHERE 1=1${totalsDateFilter}
+      WHERE s.status <> 'DRAFT'${totalsDateFilter}
     `, totalsParams)
 
     const returnsParams = []
@@ -128,7 +148,7 @@ router.get('/reports/summary', verifyToken, authorize(['sales.view', 'reports.vi
         COALESCE(SUM(sri.quantity * sri.unit_price), 0) AS total_returns
       FROM sale_return_items sri
       JOIN sales s ON s.id = sri.sale_id
-      WHERE 1=1${returnsDateFilter}
+      WHERE s.status <> 'DRAFT'${returnsDateFilter}
     `, returnsParams)
 
     const paymentParams = []
@@ -142,7 +162,7 @@ router.get('/reports/summary', verifyToken, authorize(['sales.view', 'reports.vi
         COALESCE(SUM(sp.change_amount), 0) AS change_given
       FROM sales s
       LEFT JOIN sales_payments sp ON sp.sale_id = s.id
-      WHERE 1=1${paymentDateFilter}
+      WHERE s.status <> 'DRAFT'${paymentDateFilter}
       GROUP BY s.payment_method
       ORDER BY total DESC
     `, paymentParams)
@@ -166,7 +186,7 @@ router.get('/reports/summary', verifyToken, authorize(['sales.view', 'reports.vi
         FROM sale_return_items
         GROUP BY sale_item_id
       ) ret ON ret.sale_item_id = si.id
-      WHERE 1=1${topProductDateFilter}
+      WHERE s.status <> 'DRAFT'${topProductDateFilter}
       GROUP BY si.product_id, p.name, p.sku
       ORDER BY net_sales DESC
       LIMIT 10
@@ -213,6 +233,7 @@ router.get('/reports/summary', verifyToken, authorize(['sales.view', 'reports.vi
 router.get('/transactions', verifyToken, authorize('sales.view'), async (req, res) => {
   try {
     await ensureSalesSchema()
+    await ensureScannerSchema()
     const { from, to, type, receipt_no } = req.query
 
     const paymentParams = []
@@ -308,6 +329,7 @@ router.get('/transactions', verifyToken, authorize('sales.view'), async (req, re
 router.get('/receipt/:receiptNo', verifyToken, authorize(['sales.view', 'sales.refund']), async (req, res) => {
   try {
     await ensureSalesSchema()
+    await ensureScannerSchema()
     const sale = await getSaleByReceipt(db.pool, req.params.receiptNo)
     if (!sale) return res.status(404).json({ error: 'receipt not found' })
     res.json(sale)
@@ -320,6 +342,7 @@ router.get('/receipt/:receiptNo', verifyToken, authorize(['sales.view', 'sales.r
 router.get('/', verifyToken, authorize('sales.view'), async (req, res) => {
   try {
     await ensureSalesSchema()
+    await ensureScannerSchema()
     const { status, from, to, payment_method, receipt_no } = req.query
 
     let sql = `
@@ -352,7 +375,7 @@ router.get('/', verifyToken, authorize('sales.view'), async (req, res) => {
         FROM sale_return_items
         GROUP BY sale_id
       ) ret ON ret.sale_id = s.id
-      WHERE 1=1
+      WHERE s.status <> 'DRAFT'
     `
     const params = []
     if (status) {
@@ -385,9 +408,140 @@ router.get('/', verifyToken, authorize('sales.view'), async (req, res) => {
   }
 })
 
+router.post('/drafts', express.json(), verifyToken, authorize('sales.create'), async (req, res) => {
+  const conn = await db.pool.getConnection()
+  try {
+    await conn.beginTransaction()
+    await ensureSalesSchema()
+    await ensureScannerSchema(conn)
+
+    const saleId = Number(req.body?.sale_id)
+    const sale = await ensureDraftSale(conn, {
+      saleId: Number.isFinite(saleId) && saleId > 0 ? saleId : null,
+      clerkId: req.auth.id
+    })
+
+    await conn.commit()
+    res.json(sale)
+  } catch (err) {
+    await conn.rollback().catch(() => {})
+    console.error(err)
+    res.status(getErrorStatus(err)).json({ error: getErrorMessage(err, 'failed to prepare draft sale') })
+  } finally {
+    conn.release()
+  }
+})
+
+router.post('/:saleId/items', express.json(), verifyToken, authorize('sales.create'), async (req, res) => {
+  const conn = await db.pool.getConnection()
+  try {
+    await conn.beginTransaction()
+    await ensureSalesSchema()
+    await ensureScannerSchema(conn)
+
+    const saleId = Number(req.params.saleId)
+    const draftSale = await getLockedDraftSale(conn, saleId)
+    if (!draftSale) throw createHttpError(404, 'draft sale not found')
+
+    const runtimeConfig = await getRuntimeConfig(conn)
+    const rawCode = req.body?.code
+    const normalizedCode = rawCode !== undefined ? normalizeScannedCode(rawCode) : null
+    if (rawCode !== undefined && (!normalizedCode || !normalizedCode.length)) {
+      throw createHttpError(400, 'invalid code')
+    }
+
+    if (normalizedCode) {
+      const recentScan = await findRecentScanEvent(conn, saleId, normalizedCode, runtimeConfig.scannerDebounceMs)
+      if (recentScan) {
+        const sale = await getSaleById(conn, saleId)
+        await conn.commit()
+        return res.json({
+          sale,
+          ignored: true,
+          duplicate_scan: true,
+          scanner_debounce_ms: runtimeConfig.scannerDebounceMs
+        })
+      }
+    }
+
+    const { sale } = await addDraftSaleItem(conn, saleId, req.body, {
+      allowPriceOverride: hasPermission(req.auth?.permissions, 'sales.price_override')
+    })
+
+    if (normalizedCode) {
+      await recordScanEvent(conn, saleId, normalizedCode)
+    }
+
+    await conn.commit()
+    res.json({
+      sale,
+      ignored: false,
+      duplicate_scan: false,
+      scanner_debounce_ms: runtimeConfig.scannerDebounceMs
+    })
+  } catch (err) {
+    await conn.rollback().catch(() => {})
+    console.error(err)
+    res.status(getErrorStatus(err)).json({ error: getErrorMessage(err, 'failed to add sale item') })
+  } finally {
+    conn.release()
+  }
+})
+
+router.put('/:saleId/items/:itemId', express.json(), verifyToken, authorize('sales.create'), async (req, res) => {
+  const conn = await db.pool.getConnection()
+  try {
+    await conn.beginTransaction()
+    await ensureSalesSchema()
+    await ensureScannerSchema(conn)
+
+    const saleId = Number(req.params.saleId)
+    const draftSale = await getLockedDraftSale(conn, saleId)
+    if (!draftSale) throw createHttpError(404, 'draft sale not found')
+
+    const sale = await updateDraftSaleItem(conn, saleId, req.params.itemId, req.body, {
+      allowPriceOverride: hasPermission(req.auth?.permissions, 'sales.price_override')
+    })
+
+    await conn.commit()
+    res.json({ sale })
+  } catch (err) {
+    await conn.rollback().catch(() => {})
+    console.error(err)
+    res.status(getErrorStatus(err)).json({ error: getErrorMessage(err, 'failed to update sale item') })
+  } finally {
+    conn.release()
+  }
+})
+
+router.delete('/:saleId/items/:itemId', verifyToken, authorize('sales.create'), async (req, res) => {
+  const conn = await db.pool.getConnection()
+  try {
+    await conn.beginTransaction()
+    await ensureSalesSchema()
+    await ensureScannerSchema(conn)
+
+    const saleId = Number(req.params.saleId)
+    const draftSale = await getLockedDraftSale(conn, saleId)
+    if (!draftSale) throw createHttpError(404, 'draft sale not found')
+
+    const sale = await removeDraftSaleItem(conn, saleId, req.params.itemId)
+
+    await conn.commit()
+    res.json({ sale })
+  } catch (err) {
+    await conn.rollback().catch(() => {})
+    console.error(err)
+    res.status(getErrorStatus(err)).json({ error: getErrorMessage(err, 'failed to remove sale item') })
+  } finally {
+    conn.release()
+  }
+})
+
 router.get('/:id', verifyToken, authorize('sales.view'), async (req, res) => {
   try {
     await ensureSalesSchema()
+    await ensureScannerSchema()
     const sale = await getSaleById(db.pool, Number(req.params.id))
     if (!sale) return res.status(404).json({ error: 'sale not found' })
     res.json(sale)
@@ -403,8 +557,10 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
 
   try {
     await conn.beginTransaction()
+    await ensureScannerSchema(conn)
 
     const {
+      draft_sale_id,
       order_note,
       items,
       payment_method,
@@ -431,9 +587,29 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
       throw createHttpError(400, 'payment_amount must be greater than 0')
     }
 
-    const { processedItems, subtotal, productRows } = await prepareSaleItems(conn, items, {
-      allowPriceOverride: canOverridePrice
-    })
+    const runtimeConfig = await getRuntimeConfig(conn)
+    let processedItems
+    let subtotal
+    let productRows
+    let saleId = null
+
+    if (draft_sale_id !== undefined && draft_sale_id !== null && draft_sale_id !== '') {
+      const preparedDraft = await prepareDraftSaleForCheckout(conn, Number(draft_sale_id), {
+        allowPriceOverride: canOverridePrice
+      })
+      processedItems = preparedDraft.processedItems
+      subtotal = preparedDraft.subtotal
+      productRows = preparedDraft.productRows
+      saleId = preparedDraft.sale.id
+    } else {
+      const preparedItems = await prepareSaleItems(conn, items, {
+        allowPriceOverride: canOverridePrice
+      })
+      processedItems = preparedItems.processedItems
+      subtotal = preparedItems.subtotal
+      productRows = preparedItems.productRows
+    }
+
     const discountPct = normalizeDiscountPercentage(discount_percentage)
     if (discountPct > 0 && !canApplyDiscount) {
       throw createHttpError(403, 'You do not have permission to apply discounts')
@@ -441,8 +617,8 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
 
     const discountAmt = roundMoney(subtotal * (discountPct / 100))
     const taxableBase = Math.max(subtotal - discountAmt, 0)
-    const taxAmt = 0
-    const total = roundMoney(taxableBase)
+    const taxAmt = roundMoney(taxableBase * runtimeConfig.taxRate)
+    const total = roundMoney(taxableBase + taxAmt)
 
     if (total <= 0) {
       throw createHttpError(400, 'total must be greater than 0')
@@ -472,38 +648,76 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     }
 
     const changeAmount = roundMoney(amountReceived - total)
-    const saleNumber = await generateDocumentNumber(conn, 'sales', 'sale_number', 'SAL')
-    const receiptNo = await generateDocumentNumber(conn, 'sales', 'receipt_no', 'RCT')
     const orderNote = normalizeOptionalText(order_note)
     const resolvedCustomerId = null
     const customerNameSnapshot = WALK_IN_CUSTOMER_LABEL
     const customerPhoneSnapshot = null
     const customerEmailSnapshot = null
+    const saleNumber = await generateDocumentNumber(conn, 'sales', 'sale_number', 'SAL')
+    const receiptNo = await generateDocumentNumber(conn, 'sales', 'receipt_no', 'RCT')
 
-    const [saleResult] = await conn.query(
-      `INSERT INTO sales (
-        sale_number, clerk_id, customer_id, customer_name_snapshot, customer_phone_snapshot, customer_email_snapshot, order_note,
-        subtotal, tax, discount, total, payment_method, receipt_no, status
+    if (saleId) {
+      await conn.query(
+        `UPDATE sales
+         SET sale_number = ?,
+             clerk_id = ?,
+             customer_id = ?,
+             customer_name_snapshot = ?,
+             customer_phone_snapshot = ?,
+             customer_email_snapshot = ?,
+             order_note = ?,
+             subtotal = ?,
+             tax = ?,
+             discount = ?,
+             total = ?,
+             payment_method = ?,
+             receipt_no = ?,
+             status = 'COMPLETED'
+         WHERE id = ?
+           AND status = 'DRAFT'`,
+        [
+          saleNumber,
+          req.auth.id,
+          resolvedCustomerId,
+          customerNameSnapshot,
+          customerPhoneSnapshot,
+          customerEmailSnapshot,
+          orderNote,
+          subtotal,
+          taxAmt,
+          discountAmt,
+          total,
+          payment_method,
+          receiptNo,
+          saleId
+        ]
       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED')`,
-      [
-        saleNumber,
-        req.auth.id,
-        resolvedCustomerId,
-        customerNameSnapshot,
-        customerPhoneSnapshot,
-        customerEmailSnapshot,
-        orderNote,
-        subtotal,
-        taxAmt,
-        discountAmt,
-        total,
-        payment_method,
-        receiptNo
-      ]
-    )
+    } else {
+      const [saleResult] = await conn.query(
+        `INSERT INTO sales (
+          sale_number, clerk_id, customer_id, customer_name_snapshot, customer_phone_snapshot, customer_email_snapshot, order_note,
+          subtotal, tax, discount, total, payment_method, receipt_no, status
+        )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED')`,
+        [
+          saleNumber,
+          req.auth.id,
+          resolvedCustomerId,
+          customerNameSnapshot,
+          customerPhoneSnapshot,
+          customerEmailSnapshot,
+          orderNote,
+          subtotal,
+          taxAmt,
+          discountAmt,
+          total,
+          payment_method,
+          receiptNo
+        ]
+      )
 
-    const saleId = saleResult.insertId
+      saleId = saleResult.insertId
+    }
 
     await conn.query(
       `INSERT INTO sales_payments (sale_id, amount_received, change_amount, payment_method, bank_app_used, reference_number, received_by)
@@ -511,11 +725,19 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
       [saleId, amountReceived, changeAmount, payment_method, normalizedBankApp, normalizedReferenceNumber, req.auth.id]
     )
 
-    await applySaleInventoryChanges(conn, processedItems, productRows, req.auth.id, {
-      saleId,
-      saleNumber,
-      receiptNo
-    })
+    if (draft_sale_id !== undefined && draft_sale_id !== null && draft_sale_id !== '') {
+      await applyDraftSaleInventoryChanges(conn, processedItems, productRows, req.auth.id, {
+        saleId,
+        saleNumber,
+        receiptNo
+      })
+    } else {
+      await applySaleInventoryChanges(conn, processedItems, productRows, req.auth.id, {
+        saleId,
+        saleNumber,
+        receiptNo
+      })
+    }
 
     await conn.commit()
 
@@ -523,7 +745,9 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     res.json({
       ...sale,
       discount_percentage: discountPct,
-      tax_rate: 0
+      tax_rate: runtimeConfig.taxRate,
+      tax_rate_percentage: roundMoney(runtimeConfig.taxRate * 100),
+      currency: runtimeConfig.currency
     })
   } catch (err) {
     await conn.rollback()
@@ -540,6 +764,7 @@ router.post('/returns', express.json(), verifyToken, authorize('sales.refund'), 
 
   try {
     await conn.beginTransaction()
+    await ensureScannerSchema(conn)
 
     const { receipt_no, sale_id, items, reason, accounting_reference, return_disposition } = req.body || {}
     if (!receipt_no && !sale_id) {
@@ -573,6 +798,7 @@ router.post('/:id/refund', express.json(), verifyToken, authorize('sales.refund'
 
   try {
     await conn.beginTransaction()
+    await ensureScannerSchema(conn)
 
     const { accounting_reference, return_disposition } = req.body || {}
 
