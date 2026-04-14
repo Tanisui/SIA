@@ -1,4 +1,4 @@
-CREATE DATABASE cecilles_nstyle_db; 
+CREATE DATABASE IF NOT EXISTS cecilles_nstyle_db;
 USE cecilles_nstyle_db;
 
 SET FOREIGN_KEY_CHECKS = 0;

@@ -6,6 +6,7 @@ const { ensureAutomatedReportsSchema } = require('../utils/automatedReports')
 const { roundMoney } = require('../utils/salesSupport')
 
 const PAYMENT_STATUSES = ['PAID', 'PARTIAL', 'UNPAID']
+const PO_STATUSES = ['PENDING', 'ORDERED', 'RECEIVED', 'COMPLETED', 'CANCELLED']
 const BALE_VIEW_PERMISSIONS = ['inventory.view', 'inventory.receive', 'products.view', 'reports.view', 'finance.reports.view']
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
@@ -83,6 +84,31 @@ function asPaymentStatus(value, required = false) {
   return normalized
 }
 
+function asPoStatus(value, required = false) {
+  if (isBlank(value)) {
+    if (required) return 'PENDING'
+    return undefined
+  }
+  const normalized = String(value).trim().toUpperCase()
+  if (!PO_STATUSES.includes(normalized)) {
+    const err = new Error(`po_status must be one of: ${PO_STATUSES.join(', ')}`)
+    err.statusCode = 400
+    throw err
+  }
+  return normalized
+}
+
+function asPositiveInt(value, fieldName) {
+  if (isBlank(value)) return 0
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0 || !Number.isInteger(parsed)) {
+    const err = new Error(`${fieldName} must be a valid non-negative integer`)
+    err.statusCode = 400
+    throw err
+  }
+  return parsed
+}
+
 function buildDateFilter(alias, column, from, to, params) {
   let clause = ''
   if (from) {
@@ -121,10 +147,30 @@ function normalizeBalePurchaseInput(payload, options = {}) {
     parsed.bale_batch_no = baleBatchNo
   }
 
+  // Handle supplier_id (foreign key to suppliers table)
+  if (!isUpdate || body.supplier_id !== undefined) {
+    if (body.supplier_id !== undefined && body.supplier_id !== null) {
+      const supplierId = Number(body.supplier_id)
+      if (!Number.isFinite(supplierId) || supplierId <= 0) {
+        const err = new Error('supplier_id must be a valid positive integer')
+        err.statusCode = 400
+        throw err
+      }
+      parsed.supplier_id = supplierId
+    } else if (!isUpdate) {
+      const err = new Error('supplier_id is required when supplier_name is not provided')
+      err.statusCode = 400
+      throw err
+    } else {
+      parsed.supplier_id = null
+    }
+  }
+
+  // Handle supplier_name (for backward compatibility and display)
   if (!isUpdate || body.supplier_name !== undefined) {
     const supplierName = asText(body.supplier_name)
-    if (!supplierName && !isUpdate) {
-      const err = new Error('supplier_name is required')
+    if (!supplierName && !isUpdate && !body.supplier_id) {
+      const err = new Error('supplier_name or supplier_id is required')
       err.statusCode = 400
       throw err
     }
@@ -149,6 +195,31 @@ function normalizeBalePurchaseInput(payload, options = {}) {
 
   if (!isUpdate || body.payment_status !== undefined) {
     parsed.payment_status = asPaymentStatus(body.payment_status, !isUpdate)
+  }
+
+  // P.O. Workflow fields
+  if (!isUpdate || body.po_status !== undefined) {
+    parsed.po_status = asPoStatus(body.po_status, !isUpdate)
+  }
+
+  if (!isUpdate || body.po_number !== undefined) {
+    parsed.po_number = asText(body.po_number)
+  }
+
+  if (!isUpdate || body.quantity_ordered !== undefined) {
+    parsed.quantity_ordered = asPositiveInt(body.quantity_ordered, 'quantity_ordered')
+  }
+
+  if (!isUpdate || body.quantity_received !== undefined) {
+    parsed.quantity_received = asPositiveInt(body.quantity_received, 'quantity_received')
+  }
+
+  if (!isUpdate || body.expected_delivery_date !== undefined) {
+    parsed.expected_delivery_date = body.expected_delivery_date ? asDateOnly(body.expected_delivery_date, 'expected_delivery_date', false) : null
+  }
+
+  if (!isUpdate || body.actual_delivery_date !== undefined) {
+    parsed.actual_delivery_date = body.actual_delivery_date ? asDateOnly(body.actual_delivery_date, 'actual_delivery_date', false) : null
   }
 
   if (!isUpdate || body.notes !== undefined) parsed.notes = asText(body.notes)
@@ -298,23 +369,33 @@ router.post('/', express.json(), verifyToken, authorize('inventory.receive'), as
     await ensureAutomatedReportsSchema()
     const payload = normalizeBalePurchaseInput(req.body, { isUpdate: false })
 
+    // Validate supplier_id if provided
+    if (payload.supplier_id) {
+      await ensureSupplierExists(payload.supplier_id)
+    }
+
     const [dup] = await db.pool.query('SELECT id FROM bale_purchases WHERE bale_batch_no = ? LIMIT 1', [payload.bale_batch_no])
     if (dup.length) return res.status(400).json({ error: 'bale_batch_no already exists' })
 
     const [result] = await db.pool.query(`
       INSERT INTO bale_purchases (
-        bale_batch_no, supplier_name, purchase_date, bale_category,
-        bale_cost, total_purchase_cost,
-        payment_status, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        supplier_id, bale_batch_no, po_number, supplier_name, purchase_date, bale_category,
+        bale_cost, total_purchase_cost, quantity_ordered,
+        payment_status, po_status, expected_delivery_date, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
+      payload.supplier_id || null,
       payload.bale_batch_no,
+      payload.po_number || null,
       payload.supplier_name,
       payload.purchase_date,
       payload.bale_category,
       payload.bale_cost,
       payload.total_purchase_cost,
+      payload.quantity_ordered,
       payload.payment_status,
+      payload.po_status || 'PENDING',
+      payload.expected_delivery_date || null,
       payload.notes
     ])
 
@@ -337,6 +418,11 @@ router.put('/:id', express.json(), verifyToken, authorize('inventory.receive'), 
     const body = req.body || {}
     const payload = normalizeBalePurchaseInput(body, { isUpdate: true })
 
+    // Validate supplier_id if provided
+    if (payload.supplier_id) {
+      await ensureSupplierExists(payload.supplier_id)
+    }
+
     const hasCostInputs = body.bale_cost !== undefined
     const hasExplicitTotal = body.total_purchase_cost !== undefined && !isBlank(body.total_purchase_cost)
     if (!hasExplicitTotal && (hasCostInputs || body.total_purchase_cost !== undefined)) {
@@ -347,13 +433,20 @@ router.put('/:id', express.json(), verifyToken, authorize('inventory.receive'), 
     const updates = []
     const params = []
     const allowedFields = [
+      'supplier_id',
       'bale_batch_no',
+      'po_number',
       'supplier_name',
       'purchase_date',
       'bale_category',
       'bale_cost',
       'total_purchase_cost',
+      'quantity_ordered',
+      'quantity_received',
       'payment_status',
+      'po_status',
+      'expected_delivery_date',
+      'actual_delivery_date',
       'notes'
     ]
 
@@ -538,5 +631,103 @@ async function upsertBreakdown(req, res) {
 
 router.post('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
 router.put('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
+
+// Receive P.O. order: Mark as COMPLETED and increment product stock
+router.post('/:id/receive', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
+  const conn = await db.pool.getConnection()
+  try {
+    await ensureAutomatedReportsSchema()
+    const id = asOptionalInt(req.params.id, 'id')
+    const body = req.body || {}
+    const quantityToReceive = asPositiveInt(body.quantity_received, 'quantity_received')
+
+    await conn.beginTransaction()
+
+    const [purchaseRows] = await conn.query(`
+      SELECT id, po_status, quantity_ordered, bale_purchase_id, product_id
+      FROM bale_purchases
+      WHERE id = ?
+      LIMIT 1
+      FOR UPDATE
+    `, [id])
+
+    if (!purchaseRows.length) {
+      await conn.rollback()
+      conn.release()
+      return res.status(404).json({ error: 'purchase order not found' })
+    }
+
+    const purchase = purchaseRows[0]
+    if (String(purchase.po_status).toUpperCase() === 'COMPLETED') {
+      await conn.rollback()
+      conn.release()
+      return res.status(400).json({ error: 'purchase order is already completed' })
+    }
+
+    if (quantityToReceive <= 0) {
+      await conn.rollback()
+      conn.release()
+      return res.status(400).json({ error: 'quantity_received must be greater than 0' })
+    }
+
+    // Update P.O. status to COMPLETED
+    const today = new Date().toISOString().slice(0, 10)
+    await conn.query(`
+      UPDATE bale_purchases
+      SET po_status = ?, quantity_received = ?, actual_delivery_date = ?
+      WHERE id = ?
+    `, ['COMPLETED', quantityToReceive, today, id])
+
+    // Get products associated with this P.O. (if any) and increment stock
+    // If no specific product, store as a generic inventory update
+    const [poDetails] = await conn.query(`
+      SELECT product_id, quantity_ordered
+      FROM bale_purchases
+      WHERE id = ?
+      LIMIT 1
+    `, [id])
+
+    if (poDetails.length && poDetails[0].product_id) {
+      // Increment specific product's stock
+      await conn.query(`
+        UPDATE products
+        SET stock_quantity = stock_quantity + ?
+        WHERE id = ?
+      `, [quantityToReceive, poDetails[0].product_id])
+    } else {
+      // For bale/generic purchases, track in inventory adjustments
+      // This allows flexibility for multi-item P.O.s in future
+      const [adjustmentTable] = await conn.query(`
+        SELECT 1 FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'inventory_adjustments'
+        LIMIT 1
+      `)
+
+      if (adjustmentTable.length) {
+        await conn.query(`
+          INSERT INTO inventory_adjustments (
+            bale_purchase_id, adjustment_type, quantity, reason, adjustment_date
+          ) VALUES (?, ?, ?, ?, ?)
+        `, [id, 'received', quantityToReceive, 'P.O. received and recorded', today])
+      }
+    }
+
+    await conn.commit()
+    conn.release()
+
+    const updated = await getBalePurchaseById(id)
+    res.json({
+      success: true,
+      message: `Purchase order completed. ${quantityToReceive} units received.`,
+      purchase_order: updated
+    })
+  } catch (err) {
+    await conn.rollback()
+    conn.release()
+    console.error(err)
+    res.status(err?.statusCode || 500).json({ error: err?.message || 'failed to receive purchase order' })
+  }
+})
 
 module.exports = router

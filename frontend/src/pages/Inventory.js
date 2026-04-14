@@ -1175,11 +1175,26 @@ export default function Inventory() {
     sendProductToPos(product)
   }
 
+  // Dynamic tab labels
+  const tabLabels = {
+    'overview': { title: 'Inventory Overview', subtitle: 'View summary, stock levels, and key metrics.' },
+    'stock-in': { title: 'Stock In', subtitle: 'Record direct purchases and stock received into inventory.' },
+    'stock-out': { title: 'Stock Out', subtitle: 'Record adjustments, shrinkage, and damage.' },
+    'products': { title: 'Product Management', subtitle: 'Create, edit, and manage inventory products.' },
+    'barcode-labels': { title: 'Barcode Labels', subtitle: 'Print barcodes and QR labels for products.' },
+    'transactions': { title: 'Inventory Transactions', subtitle: 'View all inventory transactions and adjustments.' },
+    'damaged': { title: 'Damaged Items', subtitle: 'Track products marked as damaged or unsellable.' },
+    'low-stock': { title: 'Low Stock Alerts', subtitle: 'Monitor products below threshold quantity.' },
+    'shrinkage': { title: 'Shrinkage Report', subtitle: 'Losses from theft, errors, or unexplained causes.' },
+    'reports': { title: 'Inventory Reports', subtitle: 'Analytics and detailed inventory reports.' }
+  }
+  const currentLabel = tabLabels[tab] || tabLabels['overview']
+
   return React.createElement('div', { className: 'page' },
     React.createElement('div', { className: 'page-header' },
       React.createElement('div', null,
-        React.createElement('h1', { className: 'page-title' }, 'Inventory Management'),
-        React.createElement('p', { className: 'page-subtitle' }, 'Track stock-in, stock-out, damages, low-stock alerts, shrinkage, and product inventory updates.')
+        React.createElement('h1', { className: 'page-title' }, currentLabel.title),
+        React.createElement('p', { className: 'page-subtitle' }, currentLabel.subtitle)
       )
     ),
 

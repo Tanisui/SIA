@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true, icon: 'DB', perm: null },
   { section: 'Store' },
   { to: '/categories', label: 'Categories', icon: 'CT', perm: 'products.view' },
+  { to: '/suppliers', label: 'Suppliers', icon: 'SP', perm: 'suppliers.view' },
   {
     to: '/inventory',
     label: 'Inventory',

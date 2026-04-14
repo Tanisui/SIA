@@ -8,6 +8,7 @@ import Users from './pages/Users.jsx'
 import UserFormPage from './pages/UserFormPage.jsx'
 import Roles from './pages/Roles.js'
 import Categories from './pages/Categories.js'
+import Suppliers from './pages/Suppliers.js'
 import Inventory from './pages/Inventory.js'
 import Sales from './pages/Sales.jsx'
 import Purchasing from './pages/Purchasing.jsx'
@@ -38,6 +39,7 @@ export default function App() {
           React.createElement(Route, { path: 'employees/:id/edit', element: React.createElement(UserFormPage, { mode: 'edit' }) }),
           React.createElement(Route, { path: 'roles', element: React.createElement(Roles, null) }),
           React.createElement(Route, { path: 'categories', element: React.createElement(Categories, null) }),
+          React.createElement(Route, { path: 'suppliers', element: React.createElement(Suppliers, null) }),
           React.createElement(Route, { path: 'inventory', element: React.createElement(Inventory, null) }),
           React.createElement(Route, { path: 'sales', element: React.createElement(Sales, null) }),
           React.createElement(Route, { path: 'purchasing', element: React.createElement(Purchasing, null) }),

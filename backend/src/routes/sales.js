@@ -616,9 +616,15 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     }
 
     const discountAmt = roundMoney(subtotal * (discountPct / 100))
-    const taxableBase = Math.max(subtotal - discountAmt, 0)
-    const taxAmt = roundMoney(taxableBase * runtimeConfig.taxRate)
-    const total = roundMoney(taxableBase + taxAmt)
+    const subtotalAfterDiscount = Math.max(subtotal - discountAmt, 0)
+    
+    // Philippine VAT (12% Inclusive)
+    // Formula: If total is ₱500, customer pays ₱500
+    // Vatable Sales = Total / 1.12
+    // VAT Amount = Total - Vatable Sales
+    const vatableSales = roundMoney(subtotalAfterDiscount / (1 + runtimeConfig.taxRate))
+    const taxAmt = roundMoney(subtotalAfterDiscount - vatableSales)
+    const total = roundMoney(subtotalAfterDiscount)
 
     if (total <= 0) {
       throw createHttpError(400, 'total must be greater than 0')

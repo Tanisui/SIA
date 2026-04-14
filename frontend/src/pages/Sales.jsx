@@ -262,9 +262,16 @@ export default function Sales() {
   const subtotal = round(cart.reduce((sum, item) => sum + num(item.unit_price) * num(item.quantity), 0))
   const discountPct = allowDiscount ? pct(discountPercentage) : 0
   const discountAmount = round(subtotal * (discountPct / 100))
-  const taxableBase = Math.max(subtotal - discountAmount, 0)
-  const taxAmount = round(taxableBase * taxRate)
-  const total = round(taxableBase + taxAmount)
+  const subtotalAfterDiscount = Math.max(subtotal - discountAmount, 0)
+  
+  // Philippine VAT (12% Inclusive)
+  // Formula: If total is ₱500, customer pays ₱500
+  // Vatable Sales = Total / 1.12
+  // VAT Amount = Total - Vatable Sales
+  const vatableSales = round(subtotalAfterDiscount / (1 + taxRate))
+  const taxAmount = round(subtotalAfterDiscount - vatableSales)
+  const total = round(subtotalAfterDiscount)
+  
   const tendered = num(paymentAmount)
   const requiresBankTransferFields = String(pendingOrder?.payment_method || '') === 'mobile_bank_transfer'
   const isAmountValid = pendingOrder ? (requiresBankTransferFields ? round(tendered) === round(num(pendingOrder.total)) : tendered >= num(pendingOrder.total)) : false
@@ -272,6 +279,33 @@ export default function Sales() {
   const isReferenceValid = String(referenceNumber || '').trim().length > 0
   const canConfirmPayment = Boolean(pendingOrder) && isAmountValid && (!requiresBankTransferFields || (isBankAppValid && isReferenceValid)) && !loading
   const cartHasLockedPriceOverride = !allowPriceOverride && cart.some((item) => round(item.unit_price) !== round(item.catalog_unit_price ?? item.unit_price))
+
+  // Initialize cart from localStorage on mount
+  useEffect(() => {
+    const savedDraft = localStorage.getItem('pos_draft_sale_id')
+    const savedCart = localStorage.getItem('pos_cart_items')
+    if (savedDraft && savedCart) {
+      try {
+        setDraftSaleId(savedDraft)
+        setCart(JSON.parse(savedCart))
+      } catch (err) {
+        console.warn('Could not restore cart from localStorage:', err)
+        localStorage.removeItem('pos_draft_sale_id')
+        localStorage.removeItem('pos_cart_items')
+      }
+    }
+  }, [])
+
+  // Save cart to localStorage whenever it changes
+  useEffect(() => {
+    if (draftSaleId && cart.length > 0) {
+      localStorage.setItem('pos_draft_sale_id', draftSaleId)
+      localStorage.setItem('pos_cart_items', JSON.stringify(cart))
+    } else {
+      localStorage.removeItem('pos_draft_sale_id')
+      localStorage.removeItem('pos_cart_items')
+    }
+  }, [draftSaleId, cart])
 
   useEffect(() => {
     if (!tabs.some(([key]) => key === tab) && tabs[0]) setTab(tabs[0][0])
@@ -705,6 +739,23 @@ export default function Sales() {
     clearBufferedScanSubmit()
     clearGlobalScanBuffer()
     lastScanRef.current = { code: '', at: 0 }
+    localStorage.removeItem('pos_draft_sale_id')
+    localStorage.removeItem('pos_cart_items')
+  }
+
+  async function clearAllCart() {
+    if (!window.confirm('Clear entire cart? This action cannot be undone.')) return
+    clearMsg()
+    if (draftSaleId) {
+      try {
+        setLoading(true)
+        await api.delete(`/sales/${draftSaleId}`)
+      } catch (err) {
+        console.warn('Could not delete draft on server:', err)
+      }
+    }
+    resetDraft()
+    flash('Cart cleared.')
   }
 
   async function handleScanSubmit(rawValue = scanValue, source = 'Scan input field') {
@@ -1160,7 +1211,10 @@ export default function Sales() {
             </div>
 
             <div className="card">
-              <h3 style={{ marginBottom: 12 }}>Cart</h3>
+              <h3 style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Cart</span>
+                {cart.length > 0 && <button className="btn btn-danger" onClick={clearAllCart} disabled={loading} style={{ padding: '4px 10px', fontSize: 12 }}>Clear All</button>}
+              </h3>
               <div className="table-wrap">
                 <table>
                   <thead><tr><th>Product</th><th>Price</th><th>Qty</th><th>Subtotal</th><th /></tr></thead>
@@ -1182,17 +1236,15 @@ export default function Sales() {
 
           <div className="card" style={{ position: 'sticky', top: 80, height: 'fit-content' }}>
             <h3 style={{ marginBottom: 12 }}>POS Summary</h3>
-            <div style={{ marginBottom: 16, padding: '10px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 12, color: 'var(--text-mid)' }}>
-              Customer module is deprecated for POS checkout. New sales are recorded as walk-in.
-            </div>
             <div className="form-group"><label className="form-label">Order Note</label><textarea className="form-input" rows="2" value={orderNote} onChange={(e) => setOrderNote(e.target.value)} /></div>
             <div className="form-group"><label className="form-label">Payment Method</label><select className="form-input" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>{(config.payment_methods || ['cash', 'mobile_bank_transfer']).map((method) => <option key={method} value={method}>{method === 'mobile_bank_transfer' ? 'Bank Transfer' : 'Cash'}</option>)}</select></div>
             <div className="form-group"><label className="form-label">Discount (%)</label><input className="form-input" type="number" min="0" max="100" step="0.01" value={allowDiscount ? discountPercentage : '0'} disabled={!allowDiscount} onChange={(e) => setDiscountPercentage(e.target.value)} /></div>
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Subtotal</span><span>{fmt(subtotal)}</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Discount</span><span>-{fmt(discountAmount)}</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Tax ({taxRatePercentage.toFixed(2)}%)</span><span>{fmt(taxAmount)}</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 20, marginTop: 8 }}><span>Total</span><span>{fmt(total)}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>Subtotal</span><span>{fmt(subtotal)}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>Discount</span><span>-{fmt(discountAmount)}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-light)', marginTop: 4 }}><span>VATable Sales (12%)</span><span>{fmt(vatableSales)}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-light)' }}><span>VAT (12%)</span><span>{fmt(taxAmount)}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 20, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}><span>Total</span><span>{fmt(total)}</span></div>
             </div>
             {cartHasLockedPriceOverride && <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, color: '#9a3412', fontSize: 12 }}>This cart includes manager-set price overrides. A cashier without price override permission cannot complete it.</div>}
             <button className="btn btn-primary" onClick={startPayment} disabled={!cart.length || loading} style={{ width: '100%', marginTop: 16 }}>Proceed To Accept Payment</button>
@@ -1209,10 +1261,11 @@ export default function Sales() {
                 <div className="table-wrap" style={{ marginBottom: 16 }}><table><thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Subtotal</th></tr></thead><tbody>{pendingOrder.items.map((item, index) => <tr key={item.id || `${item.product_id}-${index}`}><td>{item.name}</td><td>{item.quantity}</td><td>{fmt(item.unit_price)}</td><td style={{ fontWeight: 600 }}>{fmt(item.unit_price * item.quantity)}</td></tr>)}</tbody></table></div>
                 <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text-mid)' }}>Order Note: {pendingOrder.order_note || '-'}</div>
                 <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 8, background: '#f8fafc', color: 'var(--text-mid)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Subtotal</span><strong>{fmt(pendingOrder.subtotal)}</strong></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Discount</span><strong>-{fmt(pendingOrder.discount_amount)}</strong></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Tax ({num(pendingOrder.tax_rate_percentage, taxRatePercentage).toFixed(2)}%)</span><strong>{fmt(pendingOrder.tax_amount)}</strong></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}><span>Total Due</span><strong>{fmt(pendingOrder.total)}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>Subtotal</span><strong>{fmt(pendingOrder.subtotal)}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>Discount</span><strong>-{fmt(pendingOrder.discount_amount)}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-light)', marginTop: 4 }}><span>VATable Sales (12%)</span><strong>{fmt(round(pendingOrder.total / 1.12))}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-light)' }}><span>VAT (12%)</span><strong>{fmt(pendingOrder.tax_amount)}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(0,0,0,0.1)', fontWeight: 700, fontSize: 16 }}><span>Total Due</span><strong>{fmt(pendingOrder.total)}</strong></div>
                 </div>
                 <div className="form-group"><label className="form-label">Amount Received</label><input className="form-input" type="number" min="0.01" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} /></div>
                 {requiresBankTransferFields && <div className="form-group"><label className="form-label">Bank App Used *</label><select className="form-input" value={bankAppUsed} onChange={(e) => setBankAppUsed(e.target.value)}><option value="">Select mobile banking app</option>{MOBILE_BANK_APPS.map((name) => <option key={name} value={name}>{name}</option>)}</select></div>}

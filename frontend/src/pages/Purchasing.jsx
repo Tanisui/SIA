@@ -5,17 +5,23 @@ import api from '../api/api.js'
 import Badge from '../components/Badge.js'
 
 const PAYMENT_STATUSES = ['PAID', 'PARTIAL', 'UNPAID']
+const PO_STATUSES = ['PENDING', 'ORDERED', 'RECEIVED', 'COMPLETED', 'CANCELLED']
 const PURCHASING_TAB_KEYS = new Set(['bale-purchases', 'bale-breakdowns'])
 const DEFAULT_PURCHASING_TAB = 'bale-purchases'
 
 function createDefaultBaleForm() {
   return {
     bale_batch_no: '',
+    po_number: '',
+    supplier_id: '',
     supplier_name: '',
     purchase_date: '',
     bale_category: '',
     bale_cost: '',
+    quantity_ordered: '',
+    expected_delivery_date: '',
     payment_status: 'UNPAID',
+    po_status: 'PENDING',
     notes: ''
   }
 }
@@ -82,9 +88,24 @@ function statusVariant(status) {
   return 'neutral'
 }
 
+function poStatusVariant(status) {
+  const normalized = String(status || '').toUpperCase()
+  if (normalized === 'COMPLETED') return 'success'
+  if (normalized === 'RECEIVED') return 'warning'
+  if (normalized === 'PENDING') return 'warning'
+  if (normalized === 'ORDERED') return 'info'
+  if (normalized === 'CANCELLED') return 'danger'
+  return 'neutral'
+}
+
 function PaymentStatusBadge({ status }) {
   const normalized = String(status || 'UNPAID').toUpperCase()
   return <Badge variant={statusVariant(normalized)}>{normalized}</Badge>
+}
+
+function PoStatusBadge({ status }) {
+  const normalized = String(status || 'PENDING').toUpperCase()
+  return <Badge variant={poStatusVariant(normalized)}>{normalized}</Badge>
 }
 
 function mapBreakdownToForm(row) {
@@ -111,6 +132,7 @@ export default function Purchasing() {
 
   const [bales, setBales] = useState([])
   const [breakdowns, setBreakdowns] = useState([])
+  const [suppliers, setSuppliers] = useState([])
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
@@ -191,20 +213,31 @@ export default function Purchasing() {
     setBreakdowns(Array.isArray(response?.data) ? response.data : [])
   }, [baleFilters, canManageBales, canViewBales])
 
+  const fetchSuppliers = useCallback(async () => {
+    try {
+      const response = await api.get('/suppliers')
+      setSuppliers(Array.isArray(response?.data) ? response.data : [])
+    } catch (err) {
+      console.warn('Failed to load suppliers:', err)
+      setSuppliers([])
+    }
+  }, [])
+
   const refreshAll = useCallback(async () => {
     try {
       clearMessages()
       setLoading(true)
       await Promise.all([
         fetchBales(),
-        fetchBreakdowns()
+        fetchBreakdowns(),
+        fetchSuppliers()
       ])
     } catch (err) {
       setError(err?.response?.data?.error || 'Failed to load bale workflow data')
     } finally {
       setLoading(false)
     }
-  }, [clearMessages, fetchBales, fetchBreakdowns])
+  }, [clearMessages, fetchBales, fetchBreakdowns, fetchSuppliers])
 
   useEffect(() => {
     refreshAll()
@@ -271,12 +304,17 @@ export default function Purchasing() {
     setEditingBaleId(row.id)
     setBaleForm({
       bale_batch_no: row.bale_batch_no || '',
+      po_number: row.po_number || '',
+      supplier_id: String(row.supplier_id || ''),
       supplier_name: row.supplier_name || '',
       purchase_date: toDateInput(row.purchase_date),
       bale_type: row.bale_type || '',
       bale_category: row.bale_category || '',
       bale_cost: String(row.bale_cost ?? ''),
+      quantity_ordered: String(row.quantity_ordered ?? ''),
+      expected_delivery_date: toDateInput(row.expected_delivery_date),
       payment_status: row.payment_status || 'UNPAID',
+      po_status: row.po_status || 'PENDING',
       notes: row.notes || ''
     })
     goToTab('bale-purchases')
@@ -291,8 +329,8 @@ export default function Purchasing() {
       setError('Bale Batch No. is required.')
       return
     }
-    if (!String(baleForm.supplier_name || '').trim()) {
-      setError('Supplier name is required for bale purchases.')
+    if (!baleForm.supplier_id) {
+      setError('Supplier is required. Please select a valid supplier from the list.')
       return
     }
     if (!baleForm.purchase_date) {
@@ -300,15 +338,21 @@ export default function Purchasing() {
       return
     }
 
+    const selectedSupplier = suppliers.find((s) => String(s.id) === String(baleForm.supplier_id))
     const payload = {
       bale_batch_no: baleForm.bale_batch_no.trim(),
-      supplier_name: String(baleForm.supplier_name || '').trim(),
+      po_number: baleForm.po_number || null,
+      supplier_id: Number(baleForm.supplier_id),
+      supplier_name: selectedSupplier?.name || baleForm.supplier_name,
       purchase_date: baleForm.purchase_date,
       bale_type: baleForm.bale_type || null,
       bale_category: baleForm.bale_category || null,
       bale_cost: toMoney(baleForm.bale_cost),
       total_purchase_cost: toMoney(baleForm.bale_cost),
+      quantity_ordered: toNonNegativeInteger(baleForm.quantity_ordered),
+      expected_delivery_date: baleForm.expected_delivery_date || null,
       payment_status: baleForm.payment_status || 'UNPAID',
+      po_status: baleForm.po_status || 'PENDING',
       notes: baleForm.notes || null
     }
 
@@ -541,14 +585,32 @@ export default function Purchasing() {
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Supplier *</label>
-                    <input
+                    <select
                       className="form-input"
-                      type="text"
                       required
-                      value={baleForm.supplier_name}
-                      onChange={(event) => setBaleForm((prev) => ({ ...prev, supplier_name: event.target.value }))}
-                      placeholder="Enter supplier name"
-                    />
+                      value={baleForm.supplier_id}
+                      onChange={(event) => {
+                        const supplierId = event.target.value
+                        const supplier = suppliers.find((s) => String(s.id) === String(supplierId))
+                        setBaleForm((prev) => ({
+                          ...prev,
+                          supplier_id: supplierId,
+                          supplier_name: supplier?.name || ''
+                        }))
+                      }}
+                    >
+                      <option value="">-- Select Supplier --</option>
+                      {suppliers.map((supplier) => (
+                        <option key={supplier.id} value={supplier.id}>
+                          {supplier.name}
+                        </option>
+                      ))}
+                    </select>
+                    {suppliers.length === 0 && (
+                      <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 4 }}>
+                        No suppliers available. Create suppliers first in the Suppliers module.
+                      </div>
+                    )}
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Purchase Date *</label>
@@ -590,6 +652,46 @@ export default function Purchasing() {
                       value={baleForm.bale_cost}
                       onChange={(event) => setBaleForm((prev) => ({ ...prev, bale_cost: event.target.value }))}
                     />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">P.O. Number</label>
+                    <input
+                      className="form-input"
+                      value={baleForm.po_number}
+                      onChange={(event) => setBaleForm((prev) => ({ ...prev, po_number: event.target.value }))}
+                      placeholder="e.g., PO-2026-001"
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Quantity Ordered</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min={0}
+                      value={baleForm.quantity_ordered}
+                      onChange={(event) => setBaleForm((prev) => ({ ...prev, quantity_ordered: event.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Expected Delivery Date</label>
+                    <input
+                      className="form-input"
+                      type="date"
+                      value={baleForm.expected_delivery_date}
+                      onChange={(event) => setBaleForm((prev) => ({ ...prev, expected_delivery_date: event.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">P.O. Status</label>
+                    <select
+                      className="form-input"
+                      value={baleForm.po_status}
+                      onChange={(event) => setBaleForm((prev) => ({ ...prev, po_status: event.target.value }))}
+                    >
+                      {PO_STATUSES.map((status) => (
+                        <option key={status} value={status}>{status}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="form-group" style={{ gridColumn: '1 / -1', marginBottom: 0 }}>
                     <label className="form-label">Notes</label>

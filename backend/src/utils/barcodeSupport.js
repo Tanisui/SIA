@@ -53,6 +53,60 @@ async function generateUniqueBarcodeForProduct(conn, productId, excludeProductId
   throw new Error(`failed to generate unique barcode for product ${productId}`)
 }
 
+// Get next sequential barcode starting with "BAR" (e.g., BAR000001, BAR000002)
+async function getNextSequentialBarcode(conn) {
+  try {
+    // Get the highest barcode number that starts with "BAR"
+    const [rows] = await conn.query(`
+      SELECT barcode
+      FROM products
+      WHERE barcode LIKE 'BAR%'
+      ORDER BY 
+        CAST(SUBSTRING(barcode, 4, LENGTH(barcode)-3) AS UNSIGNED) DESC
+      LIMIT 1
+    `)
+    
+    if (rows.length === 0) {
+      return 'BAR000001'
+    }
+    
+    const lastBarcode = rows[0].barcode
+    const numPart = parseInt(lastBarcode.substring(3), 10)
+    const nextNum = numPart + 1
+    return `BAR${String(nextNum).padStart(6, '0')}`
+  } catch (err) {
+    console.error('Error getting next sequential barcode:', err)
+    return 'BAR000001'
+  }
+}
+
+// Get next sequential SKU (similar to barcode)
+async function getNextSequentialSKU(conn) {
+  try {
+    // Get the highest SKU number that starts with "SKU"
+    const [rows] = await conn.query(`
+      SELECT sku
+      FROM products
+      WHERE sku LIKE 'SKU%'
+      ORDER BY 
+        CAST(SUBSTRING(sku, 4, LENGTH(sku)-3) AS UNSIGNED) DESC
+      LIMIT 1
+    `)
+    
+    if (rows.length === 0) {
+      return 'SKU000001'
+    }
+    
+    const lastSku = rows[0].sku
+    const numPart = parseInt(lastSku.substring(3), 10)
+    const nextNum = numPart + 1
+    return `SKU${String(nextNum).padStart(6, '0')}`
+  } catch (err) {
+    console.error('Error getting next sequential SKU:', err)
+    return 'SKU000001'
+  }
+}
+
 module.exports = {
   BARCODE_PATTERN,
   normalizeBarcode,
@@ -60,5 +114,7 @@ module.exports = {
   validateBarcodeFormat,
   baseBarcodeForProduct,
   barcodeExists,
-  generateUniqueBarcodeForProduct
+  generateUniqueBarcodeForProduct,
+  getNextSequentialBarcode,
+  getNextSequentialSKU
 }
