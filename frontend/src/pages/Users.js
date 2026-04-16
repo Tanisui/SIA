@@ -1,4 +1,3 @@
-/** @jsxImportSource react */
 import React, { useEffect, useState } from 'react'
 import api from '../api/api.js'
 
@@ -123,8 +122,7 @@ export default function Users(){
   const handleInputChange = (e) => {
     const { name, value } = e.target
     if (name === 'roles') {
-      const selected = Array.from(e.target.selectedOptions, option => option.value)
-      setFormData(prev => ({ ...prev, [name]: selected }))
+      setFormData(prev => ({ ...prev, [name]: value ? [String(value)] : [] }))
     } else if (name === 'is_active') {
       setFormData(prev => ({ ...prev, [name]: value === '1' ? 1 : 0 }))
     } else {
@@ -144,7 +142,6 @@ export default function Users(){
     error && React.createElement('div', { style: { background: '#fee', border: '1px solid #f99', color: '#c33', padding: '10px 14px', borderRadius: 6, marginBottom: 16 } }, error),
     success && React.createElement('div', { style: { background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d', padding: '10px 14px', borderRadius: 6, marginBottom: 16 } }, success),
 
-    // Users List Table
     React.createElement('div', { className: 'table-wrap', style: { marginBottom: 40 } },
       loading ? React.createElement('p', null, 'Loading...') : 
       React.createElement('table', null,
@@ -193,7 +190,6 @@ export default function Users(){
       )
     ),
 
-    // Create/Edit Form Modal
     (showCreate || showEdit) && React.createElement('div', { 
       style: { 
         position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
@@ -234,11 +230,12 @@ export default function Users(){
           React.createElement('div', { style: { marginBottom: 15 } },
             React.createElement('label', null, 'Roles'),
             React.createElement('select', { 
-              name: 'roles', multiple: true, 
-              value: Array.isArray(formData.roles) ? formData.roles.map(String) : [],
+              name: 'roles',
+              value: Array.isArray(formData.roles) && formData.roles[0] ? String(formData.roles[0]) : '',
               onChange: handleInputChange,
               style: { width: '100%', padding: 8, borderRadius: 4, border: '1px solid #ccc' }
             },
+              React.createElement('option', { value: '' }, 'Select role'),
               rolesOptions.map(r => React.createElement('option', { key: r.value, value: r.value }, r.label))
             )
           ),
@@ -308,7 +305,6 @@ export default function Users(){
       )
     ),
 
-    // Details View Modal
     showDetails && selectedUser && React.createElement('div', { 
       style: { 
         position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 

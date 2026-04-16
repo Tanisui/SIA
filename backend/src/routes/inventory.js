@@ -2,6 +2,7 @@ const express = require('express')
 const router = express.Router()
 const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
+const { logAuditEventSafe } = require('../utils/auditLog')
 
 // ─── List all inventory transactions (Allow products.view to see history) ───
 router.get('/transactions', verifyToken, authorize(['inventory.view', 'products.view']), async (req, res) => {
@@ -40,18 +41,35 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
       return res.status(400).json({ error: 'Direct stock-in does not accept supplier details. Record supplier activity outside this inventory flow.' })
     }
 
-    const [prod] = await conn.query('SELECT stock_quantity, cost AS old_cost FROM products WHERE id = ? FOR UPDATE', [product_id])
+    const [prod] = await conn.query('SELECT stock_quantity, cost AS old_cost, name, sku FROM products WHERE id = ? FOR UPDATE', [product_id])
     if (!prod.length) { await conn.rollback(); conn.release(); return res.status(404).json({ error: 'product not found' }) }
     const newQty = prod[0].stock_quantity + Number(quantity)
     const updateCost = cost !== undefined ? ', cost = ?' : ''
     const costParams = cost !== undefined ? [cost] : []
     await conn.query(`UPDATE products SET stock_quantity = ?${updateCost} WHERE id = ?`, [newQty, ...costParams, product_id])
 
-    await conn.query(
+    const [transactionResult] = await conn.query(
       `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after, created_at)
        VALUES (?, 'IN', ?, ?, ?, ?, ?, ?)`,
       [product_id, quantity, reference || null, req.auth.id, 'Direct purchase (no supplier)', newQty, date || new Date()]
     )
+
+    await logAuditEventSafe(conn, {
+      userId: req.auth.id,
+      action: 'INVENTORY_STOCK_IN',
+      resourceType: 'Product',
+      resourceId: product_id,
+      details: {
+        module: 'inventory',
+        severity: 'low',
+        target_label: prod[0].sku ? `${prod[0].name} (${prod[0].sku})` : prod[0].name,
+        summary: `Recorded stock in for ${prod[0].name}`,
+        before: { stock_quantity: Number(prod[0].stock_quantity) || 0, cost: Number(prod[0].old_cost) || 0 },
+        after: { stock_quantity: newQty, cost: cost !== undefined ? Number(cost) : Number(prod[0].old_cost) || 0 },
+        metrics: { quantity_received: Number(quantity) || 0 },
+        references: { transaction_id: transactionResult.insertId, reference: reference || null }
+      }
+    })
     await conn.commit()
     conn.release()
     res.json({ success: true, new_quantity: newQty })
@@ -77,7 +95,7 @@ router.post('/stock-out/adjust', express.json(), verifyToken, authorize('invento
       return res.status(400).json({ error: 'quantity must be a positive number' })
     }
 
-    const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [product_id])
+    const [prod] = await conn.query('SELECT stock_quantity, name, sku FROM products WHERE id = ? FOR UPDATE', [product_id])
     if (!prod.length) { await conn.rollback(); conn.release(); return res.status(404).json({ error: 'product not found' }) }
     const currentQty = Number(prod[0].stock_quantity) || 0
     if (currentQty <= 0) {
@@ -95,11 +113,29 @@ router.post('/stock-out/adjust', express.json(), verifyToken, authorize('invento
     const fullReason = employee_id
       ? `STOCK_OUT:SHRINKAGE | ${reason || 'Shrinkage/manual adjustment'} (Employee #${employee_id})`
       : `STOCK_OUT:SHRINKAGE | ${reason || 'Shrinkage/manual adjustment'}`
-    await conn.query(
+    const [transactionResult] = await conn.query(
       `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after)
        VALUES (?, 'OUT', ?, ?, ?, ?, ?)`,
       [product_id, -qtyToRemove, reference || null, req.auth.id, fullReason, newQty]
     )
+
+    await logAuditEventSafe(conn, {
+      userId: req.auth.id,
+      action: 'INVENTORY_SHRINKAGE_OUT',
+      resourceType: 'Product',
+      resourceId: product_id,
+      details: {
+        module: 'inventory',
+        severity: 'high',
+        target_label: prod[0].sku ? `${prod[0].name} (${prod[0].sku})` : prod[0].name,
+        summary: `Recorded shrinkage for ${prod[0].name}`,
+        reason: reason || 'Shrinkage/manual adjustment',
+        before: { stock_quantity: currentQty },
+        after: { stock_quantity: newQty },
+        metrics: { quantity_removed: qtyToRemove },
+        references: { transaction_id: transactionResult.insertId, reference: reference || null, employee_id: employee_id || null }
+      }
+    })
     await conn.commit()
     conn.release()
     res.json({ success: true, new_quantity: newQty })
@@ -125,7 +161,7 @@ router.post('/stock-out/damage', express.json(), verifyToken, authorize('invento
       return res.status(400).json({ error: 'quantity must be a positive number' })
     }
 
-    const [prod] = await conn.query('SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE', [product_id])
+    const [prod] = await conn.query('SELECT stock_quantity, name, sku FROM products WHERE id = ? FOR UPDATE', [product_id])
     if (!prod.length) { await conn.rollback(); conn.release(); return res.status(404).json({ error: 'product not found' }) }
     const currentQty = Number(prod[0].stock_quantity) || 0
     if (currentQty <= 0) {
@@ -143,11 +179,29 @@ router.post('/stock-out/damage', express.json(), verifyToken, authorize('invento
     const fullReason = employee_id
       ? `STOCK_OUT:DAMAGE | ${reason || 'Damaged/defective stock'} (Employee #${employee_id})`
       : `STOCK_OUT:DAMAGE | ${reason || 'Damaged/defective stock'}`
-    await conn.query(
+    const [transactionResult] = await conn.query(
       `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after)
        VALUES (?, 'OUT', ?, ?, ?, ?, ?)`,
       [product_id, -qtyToRemove, reference || null, req.auth.id, fullReason, newQty]
     )
+
+    await logAuditEventSafe(conn, {
+      userId: req.auth.id,
+      action: 'INVENTORY_DAMAGE_OUT',
+      resourceType: 'Product',
+      resourceId: product_id,
+      details: {
+        module: 'inventory',
+        severity: 'high',
+        target_label: prod[0].sku ? `${prod[0].name} (${prod[0].sku})` : prod[0].name,
+        summary: `Recorded damaged stock for ${prod[0].name}`,
+        reason: reason || 'Damaged/defective stock',
+        before: { stock_quantity: currentQty },
+        after: { stock_quantity: newQty },
+        metrics: { quantity_removed: qtyToRemove },
+        references: { transaction_id: transactionResult.insertId, reference: reference || null, employee_id: employee_id || null }
+      }
+    })
     await conn.commit()
     conn.release()
     res.json({ success: true, new_quantity: newQty })

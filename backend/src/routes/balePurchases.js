@@ -4,6 +4,7 @@ const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 const { ensureAutomatedReportsSchema } = require('../utils/automatedReports')
 const { roundMoney } = require('../utils/salesSupport')
+const { logAuditEventSafe } = require('../utils/auditLog')
 
 const PAYMENT_STATUSES = ['PAID', 'PARTIAL', 'UNPAID']
 const PO_STATUSES = ['PENDING', 'ORDERED', 'RECEIVED', 'COMPLETED', 'CANCELLED']
@@ -400,6 +401,20 @@ router.post('/', express.json(), verifyToken, authorize('inventory.receive'), as
     ])
 
     const created = await getBalePurchaseById(result.insertId)
+
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'BALE_PURCHASE_CREATED',
+      resourceType: 'PurchaseOrder',
+      resourceId: result.insertId,
+      details: {
+        module: 'purchasing',
+        severity: 'medium',
+        target_label: created?.po_number || created?.bale_batch_no || `Purchase order #${result.insertId}`,
+        summary: `Created purchase order "${created?.po_number || created?.bale_batch_no || result.insertId}"`,
+        after: created
+      }
+    })
     res.json(created)
   } catch (err) {
     console.error(err)
@@ -462,6 +477,20 @@ router.put('/:id', express.json(), verifyToken, authorize('inventory.receive'), 
     await db.pool.query(`UPDATE bale_purchases SET ${updates.join(', ')} WHERE id = ?`, params)
 
     const updated = await getBalePurchaseById(id)
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'BALE_PURCHASE_UPDATED',
+      resourceType: 'PurchaseOrder',
+      resourceId: id,
+      details: {
+        module: 'purchasing',
+        severity: String(existing.po_status || '').toUpperCase() !== String(updated.po_status || '').toUpperCase() ? 'high' : 'medium',
+        target_label: updated?.po_number || updated?.bale_batch_no || `Purchase order #${id}`,
+        summary: `Updated purchase order "${updated?.po_number || updated?.bale_batch_no || id}"`,
+        before: existing,
+        after: updated
+      }
+    })
     res.json(updated)
   } catch (err) {
     console.error(err)
@@ -484,9 +513,24 @@ router.delete('/:id', verifyToken, authorize('inventory.receive'), async (req, r
       return res.status(404).json({ error: 'bale purchase not found' })
     }
 
+    const beforeDelete = await getBalePurchaseById(id)
     await conn.query('DELETE FROM bale_purchases WHERE id = ?', [id])
     await conn.commit()
     conn.release()
+
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'BALE_PURCHASE_DELETED',
+      resourceType: 'PurchaseOrder',
+      resourceId: id,
+      details: {
+        module: 'purchasing',
+        severity: 'high',
+        target_label: beforeDelete?.po_number || beforeDelete?.bale_batch_no || `Purchase order #${id}`,
+        summary: `Deleted purchase order "${beforeDelete?.po_number || beforeDelete?.bale_batch_no || id}"`,
+        before: beforeDelete
+      }
+    })
     res.json({ success: true })
   } catch (err) {
     await conn.rollback()
@@ -620,6 +664,25 @@ async function upsertBreakdown(req, res) {
       LIMIT 1
     `, [balePurchaseId])
 
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'BALE_BREAKDOWN_SAVED',
+      resourceType: 'BaleBreakdown',
+      resourceId: balePurchaseId,
+      details: {
+        module: 'purchasing',
+        severity: 'medium',
+        target_label: rows[0]?.bale_batch_no || `Bale breakdown #${balePurchaseId}`,
+        summary: `Saved bale breakdown for "${rows[0]?.bale_batch_no || balePurchaseId}"`,
+        after: rows[0] || null,
+        metrics: {
+          total_pieces: rows[0]?.total_pieces || 0,
+          saleable_items: rows[0]?.saleable_items || 0,
+          damaged_items: rows[0]?.damaged_items || 0
+        }
+      }
+    })
+
     res.json(rows[0] || null)
   } catch (err) {
     await conn.rollback()
@@ -717,6 +780,20 @@ router.post('/:id/receive', express.json(), verifyToken, authorize('inventory.re
     conn.release()
 
     const updated = await getBalePurchaseById(id)
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'PURCHASE_ORDER_RECEIVED',
+      resourceType: 'PurchaseOrder',
+      resourceId: id,
+      details: {
+        module: 'purchasing',
+        severity: 'high',
+        target_label: updated?.po_number || updated?.bale_batch_no || `Purchase order #${id}`,
+        summary: `Received purchase order "${updated?.po_number || updated?.bale_batch_no || id}"`,
+        after: updated,
+        metrics: { quantity_received: quantityToReceive }
+      }
+    })
     res.json({
       success: true,
       message: `Purchase order completed. ${quantityToReceive} units received.`,

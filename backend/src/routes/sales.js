@@ -22,6 +22,7 @@ const {
 const { normalizeScannedCode } = require('../utils/scannerSupport')
 const { getRuntimeConfig } = require('../services/runtimeConfigService')
 const { ensureScannerSchema } = require('../services/scannerSchemaService')
+const { logAuditEventSafe } = require('../utils/auditLog')
 const {
   ensureDraftSale,
   getLockedDraftSale,
@@ -63,6 +64,20 @@ function hasPermission(permissions, required) {
 function normalizeOptionalText(value) {
   const normalized = String(value || '').trim()
   return normalized || null
+}
+
+function summarizeSaleAdjustments(processedItems, productRows) {
+  let priceOverrides = 0
+  let quantity = 0
+
+  for (const item of processedItems || []) {
+    quantity += Number(item.quantity) || 0
+    const product = productRows?.get ? productRows.get(Number(item.product_id)) : null
+    const catalogPrice = roundMoney(product?.price)
+    if (product && roundMoney(item.unit_price) !== catalogPrice) priceOverrides += 1
+  }
+
+  return { priceOverrides, quantity }
 }
 
 function hasOwn(payload, key) {
@@ -748,6 +763,71 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     await conn.commit()
 
     const sale = await getSaleById(conn, saleId)
+    const saleAdjustments = summarizeSaleAdjustments(processedItems, productRows)
+
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'SALE_COMPLETED',
+      resourceType: 'Sale',
+      resourceId: saleId,
+      details: {
+        module: 'sales',
+        severity: discountPct > 0 || saleAdjustments.priceOverrides > 0 ? 'high' : 'medium',
+        target_label: sale?.receipt_no || sale?.sale_number || `Sale #${saleId}`,
+        summary: `Completed sale "${sale?.receipt_no || sale?.sale_number || saleId}"`,
+        after: {
+          sale_number: sale?.sale_number || null,
+          receipt_no: sale?.receipt_no || null,
+          payment_method: sale?.payment_method || null,
+          total: sale?.total || 0,
+          discount: sale?.discount || 0,
+          tax: sale?.tax || 0,
+          status: sale?.status || null
+        },
+        metrics: {
+          items_sold: saleAdjustments.quantity,
+          price_overrides_count: saleAdjustments.priceOverrides,
+          discount_percentage: discountPct,
+          total: sale?.total || 0
+        },
+        references: {
+          sale_id: saleId,
+          sale_number: sale?.sale_number || null,
+          receipt_no: sale?.receipt_no || null,
+          payment_reference: sale?.payment_reference || null
+        },
+        metadata: {
+          has_discount: discountPct > 0,
+          has_price_override: saleAdjustments.priceOverrides > 0
+        }
+      }
+    })
+
+    if (discountPct > 0) {
+      await logAuditEventSafe(db.pool, {
+        userId: req.auth.id,
+        action: 'DISCOUNT_APPLIED',
+        resourceType: 'Sale',
+        resourceId: saleId,
+        details: {
+          module: 'sales',
+          severity: 'medium',
+          result: 'adjusted',
+          target_label: sale?.receipt_no || sale?.sale_number || `Sale #${saleId}`,
+          summary: `Applied ${discountPct}% discount to "${sale?.receipt_no || sale?.sale_number || saleId}"`,
+          metrics: {
+            discount_percentage: discountPct,
+            discount_amount: sale?.discount || 0
+          },
+          references: {
+            sale_id: saleId,
+            sale_number: sale?.sale_number || null,
+            receipt_no: sale?.receipt_no || null
+          }
+        }
+      })
+    }
+
     res.json({
       ...sale,
       discount_percentage: discountPct,
@@ -784,6 +864,39 @@ router.post('/returns', express.json(), verifyToken, authorize('sales.refund'), 
     const updatedSale = await getSaleById(conn, sale.id)
 
     await conn.commit()
+
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'SALE_RETURN',
+      resourceType: 'Sale',
+      resourceId: sale.id,
+      details: {
+        module: 'sales',
+        severity: 'high',
+        target_label: updatedSale?.receipt_no || updatedSale?.sale_number || `Sale #${sale.id}`,
+        summary: `Processed return for "${updatedSale?.receipt_no || updatedSale?.sale_number || sale.id}"`,
+        reason: reason || null,
+        after: {
+          sale_number: updatedSale?.sale_number || null,
+          receipt_no: updatedSale?.receipt_no || null,
+          status: updatedSale?.status || null,
+          returned_qty: updatedSale?.returned_qty || 0,
+          returned_amount: updatedSale?.returned_amount || 0
+        },
+        metrics: {
+          returned_items_count: returnedItems.length,
+          returned_quantity: returnedItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
+        },
+        references: {
+          sale_id: sale.id,
+          sale_number: updatedSale?.sale_number || null,
+          receipt_no: updatedSale?.receipt_no || null,
+          accounting_reference: accounting_reference || null,
+          return_disposition: return_disposition || null
+        }
+      }
+    })
+
     res.json({
       success: true,
       returned_items: returnedItems,
@@ -826,6 +939,68 @@ router.post('/:id/refund', express.json(), verifyToken, authorize('sales.refund'
     const updatedSale = await getSaleById(conn, sale.id)
 
     await conn.commit()
+
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'SALE_REFUND',
+      resourceType: 'Sale',
+      resourceId: sale.id,
+      details: {
+        module: 'sales',
+        severity: 'high',
+        target_label: updatedSale?.receipt_no || updatedSale?.sale_number || `Sale #${sale.id}`,
+        summary: `Refunded sale "${updatedSale?.receipt_no || updatedSale?.sale_number || sale.id}"`,
+        reason: 'full refund',
+        after: {
+          sale_number: updatedSale?.sale_number || null,
+          receipt_no: updatedSale?.receipt_no || null,
+          status: updatedSale?.status || null,
+          returned_qty: updatedSale?.returned_qty || 0,
+          returned_amount: updatedSale?.returned_amount || 0
+        },
+        metrics: {
+          refunded_items_count: returnedItems.length,
+          refunded_quantity: returnedItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
+        },
+        references: {
+          sale_id: sale.id,
+          sale_number: updatedSale?.sale_number || null,
+          receipt_no: updatedSale?.receipt_no || null,
+          accounting_reference: accounting_reference || null,
+          return_disposition: return_disposition || null
+        }
+      }
+    })
+
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'SALE_VOIDED',
+      resourceType: 'Sale',
+      resourceId: sale.id,
+      details: {
+        module: 'sales',
+        severity: 'high',
+        result: 'reversed',
+        target_label: updatedSale?.receipt_no || updatedSale?.sale_number || `Sale #${sale.id}`,
+        summary: `Voided sale "${updatedSale?.receipt_no || updatedSale?.sale_number || sale.id}" via full refund`,
+        reason: 'full refund',
+        after: {
+          sale_number: updatedSale?.sale_number || null,
+          receipt_no: updatedSale?.receipt_no || null,
+          status: updatedSale?.status || null,
+          returned_qty: updatedSale?.returned_qty || 0,
+          returned_amount: updatedSale?.returned_amount || 0
+        },
+        references: {
+          sale_id: sale.id,
+          sale_number: updatedSale?.sale_number || null,
+          receipt_no: updatedSale?.receipt_no || null,
+          accounting_reference: accounting_reference || null,
+          return_disposition: return_disposition || null
+        }
+      }
+    })
+
     res.json({
       success: true,
       returned_items: returnedItems,

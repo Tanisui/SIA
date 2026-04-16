@@ -167,12 +167,32 @@ CREATE TABLE IF NOT EXISTS `sale_items` (
 CREATE TABLE IF NOT EXISTS `employees` (
 	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 	`name` VARCHAR(255) NOT NULL,
+	`birth_date` DATE,
+	`sex` VARCHAR(32),
+	`civil_status` VARCHAR(32),
+	`nationality` VARCHAR(100),
+	`mobile_number` VARCHAR(32),
+	`present_address` TEXT,
+	`permanent_address` TEXT,
+	`position_title` VARCHAR(150),
+	`department_name` VARCHAR(150),
 	`role` VARCHAR(100),
 	`contact_type` VARCHAR(50),
 	`contact` VARCHAR(255),
 	`hire_date` DATE,
+	`employment_type` ENUM('PROBATIONARY','REGULAR','CONTRACTUAL','PART_TIME','SEASONAL','INTERN'),
 	`pay_rate` DECIMAL(12,2) DEFAULT 0.00,
 	`employment_status` ENUM('ACTIVE','INACTIVE','TERMINATED') DEFAULT 'ACTIVE',
+	`pay_basis` ENUM('DAILY','MONTHLY'),
+	`payroll_method` ENUM('CASH','BANK_TRANSFER','E_WALLET'),
+	`tin` VARCHAR(64),
+	`sss_number` VARCHAR(64),
+	`philhealth_pin` VARCHAR(64),
+	`pagibig_mid` VARCHAR(64),
+	`emergency_contact_name` VARCHAR(255),
+	`emergency_contact_relationship` VARCHAR(120),
+	`emergency_contact_number` VARCHAR(32),
+	`emergency_contact_address` TEXT,
 	`bank_details` JSON,
 	`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -233,6 +253,29 @@ CREATE TABLE IF NOT EXISTS `files` (
 	`uploaded_by` BIGINT UNSIGNED,
 	`uploaded_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (`uploaded_by`) REFERENCES `users`(`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `employee_documents` (
+	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+	`employee_id` BIGINT UNSIGNED NOT NULL,
+	`file_id` BIGINT UNSIGNED,
+	`document_type` VARCHAR(100) NOT NULL,
+	`document_number` VARCHAR(255),
+	`issuing_agency` VARCHAR(255),
+	`issue_date` DATE,
+	`expiry_date` DATE,
+	`status` ENUM('NOT_SUBMITTED','SUBMITTED','VERIFIED','REJECTED','EXPIRED') DEFAULT 'NOT_SUBMITTED',
+	`remarks` TEXT,
+	`verified_by` BIGINT UNSIGNED,
+	`verified_at` TIMESTAMP NULL,
+	`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	`updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+	UNIQUE KEY `uq_employee_documents_employee_type` (`employee_id`, `document_type`),
+	KEY `idx_employee_documents_status` (`status`),
+	KEY `idx_employee_documents_expiry_date` (`expiry_date`),
+	FOREIGN KEY (`employee_id`) REFERENCES `employees`(`id`) ON DELETE CASCADE,
+	FOREIGN KEY (`file_id`) REFERENCES `files`(`id`) ON DELETE SET NULL,
+	FOREIGN KEY (`verified_by`) REFERENCES `users`(`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `notifications` (

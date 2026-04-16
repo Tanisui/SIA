@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { logout } from '../store/authSlice.js'
+import { logoutUser } from '../store/authSlice.js'
 
 export default function Header({ onMenuToggle }) {
   const dispatch = useDispatch()
@@ -58,7 +58,7 @@ export default function Header({ onMenuToggle }) {
       React.createElement('button', {
         type: 'button',
         className: 'btn-signout',
-        onClick: () => dispatch(logout())
+        onClick: () => dispatch(logoutUser())
       }, 'Sign out')
     )
   )

@@ -52,7 +52,6 @@ export default function Users(){
 
   return (
     <div className="page">
-      {/* Header */}
       <div className="page-header">
         <h1 className="page-title">Users</h1>
         <button className="btn btn-primary" onClick={() => navigate('/users/new')}>
@@ -60,7 +59,6 @@ export default function Users(){
         </button>
       </div>
 
-      {/* Messages */}
       {error && (
         <div style={{ background: '#fee', border: '1px solid #f99', color: '#c33', padding: '10px 14px', borderRadius: 6, marginBottom: 16 }}>
           {error}
@@ -72,7 +70,6 @@ export default function Users(){
         </div>
       )}
 
-      {/* Users Table */}
       <div className="table-wrap" style={{ marginBottom: 40 }}>
         {loading ? (
           <p>Loading...</p>
@@ -99,7 +96,7 @@ export default function Users(){
                   <td>{u.full_name || '-'}</td>
                   <td>{(u.roles || [])[0] || '-'}</td>
                   <td>{u.is_active === 1 ? 'Active' : 'Inactive'}</td>
-                  <td>{u.employee?.contact || '-'}</td>
+                  <td>{u.employee?.mobile_number || u.employee?.contact || '-'}</td>
                   <td>{u.employee?.hire_date ? new Date(u.employee.hire_date).toLocaleDateString() : '-'}</td>
                   <td>{u.employee?.pay_rate ? '₱' + parseFloat(u.employee.pay_rate).toFixed(2) : '-'}</td>
                   <td style={{ display: 'flex', gap: 8 }}>
@@ -120,7 +117,6 @@ export default function Users(){
         )}
       </div>
 
-      {/* Details Modal */}
       {showDetails && selectedUser && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: 'white', padding: 30, borderRadius: 8, maxWidth: 700, maxHeight: '90vh', overflow: 'auto', width: '90%' }}>
@@ -151,16 +147,24 @@ export default function Users(){
                 <>
                   <h4 style={{ marginTop: 20, marginBottom: 10 }}>Employee Information</h4>
                   <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
-                    <strong>Contact Type: </strong>
-                    <span>{selectedUser.employee.contact_type || '-'}</span>
+                    <strong>Mobile Number: </strong>
+                    <span>{selectedUser.employee.mobile_number || selectedUser.employee.contact || '-'}</span>
                   </div>
                   <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
-                    <strong>Contact: </strong>
-                    <span>{selectedUser.employee.contact || '-'}</span>
+                    <strong>Position Title: </strong>
+                    <span>{selectedUser.employee.position_title || '-'}</span>
+                  </div>
+                  <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
+                    <strong>Department / Store: </strong>
+                    <span>{selectedUser.employee.department_name || '-'}</span>
                   </div>
                   <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
                     <strong>Hire Date: </strong>
                     <span>{selectedUser.employee.hire_date ? new Date(selectedUser.employee.hire_date).toLocaleDateString() : '-'}</span>
+                  </div>
+                  <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
+                    <strong>Employment Type: </strong>
+                    <span>{selectedUser.employee.employment_type || '-'}</span>
                   </div>
                   <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
                     <strong>Pay Rate: </strong>

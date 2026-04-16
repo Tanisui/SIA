@@ -18,6 +18,17 @@ export const login = createAsyncThunk('auth/login', async ({ username, password 
   }
 })
 
+export const logoutUser = createAsyncThunk('auth/logoutUser', async (_, thunkAPI) => {
+  try {
+    await api.post('/auth/logout')
+  } catch (err) {
+    // Always continue local logout even when API logout fails.
+  }
+
+  thunkAPI.dispatch({ type: 'auth/logout' })
+  return true
+})
+
 const authSlice = createSlice({
   name: 'auth',
   initialState,

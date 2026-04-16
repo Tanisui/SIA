@@ -18,6 +18,7 @@ const {
   findProductByScannedCode,
   updateProductQrImagePath
 } = require('../repositories/productRepository')
+const { logAuditEventSafe } = require('../utils/auditLog')
 
 const BARCODE_FORMAT_ERROR = 'barcode must be 4-64 chars using letters, numbers, ".", "_" or "-"'
 
@@ -169,7 +170,32 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
     })
     await updateProductQrImagePath(conn, result.insertId, qrAsset.publicPath)
 
+    const [createdRows] = await conn.query(
+      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active
+       FROM products
+       WHERE id = ?
+       LIMIT 1`,
+      [result.insertId]
+    )
+    const createdProduct = createdRows[0] || null
+
     await conn.commit()
+
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'PRODUCT_CREATED',
+      resourceType: 'Product',
+      resourceId: result.insertId,
+      details: {
+        module: 'catalog',
+        severity: 'medium',
+        result: 'success',
+        target_label: createdProduct?.sku ? `${createdProduct.name} (${createdProduct.sku})` : createdProduct?.name,
+        summary: `Added product "${createdProduct?.name || normalizedName}"`,
+        after: createdProduct
+      }
+    })
+
     res.json({ id: result.insertId, barcode: normalizedBarcode, qr_image_path: qrAsset.publicPath })
   } catch (err) {
     await conn.rollback().catch(() => {})
@@ -195,10 +221,15 @@ router.put('/:id', express.json(), verifyToken, authorize('products.edit'), asyn
     if (!Number.isFinite(id) || id <= 0) throw createHttpError(400, 'invalid product id')
 
     const [existingRows] = await conn.query(
-      'SELECT id, barcode, sku, qr_image_path FROM products WHERE id = ? LIMIT 1 FOR UPDATE',
+      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, qr_image_path
+       FROM products
+       WHERE id = ?
+       LIMIT 1
+       FOR UPDATE`,
       [id]
     )
     if (!existingRows.length) throw createHttpError(404, 'product not found')
+    const beforeProduct = { ...existingRows[0] }
 
     const { sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active } = req.body
     const updates = []
@@ -263,7 +294,33 @@ router.put('/:id', express.json(), verifyToken, authorize('products.edit'), asyn
       await updateProductQrImagePath(conn, id, qrAsset.publicPath)
     }
 
+    const [updatedRows] = await conn.query(
+      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active
+       FROM products
+       WHERE id = ?
+       LIMIT 1`,
+      [id]
+    )
+    const updatedProduct = updatedRows[0] || null
+
     await conn.commit()
+
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'PRODUCT_UPDATED',
+      resourceType: 'Product',
+      resourceId: id,
+      details: {
+        module: 'catalog',
+        severity: 'medium',
+        result: 'adjusted',
+        target_label: updatedProduct?.sku ? `${updatedProduct.name} (${updatedProduct.sku})` : updatedProduct?.name,
+        summary: `Updated product "${updatedProduct?.name || beforeProduct?.name || id}"`,
+        before: beforeProduct,
+        after: updatedProduct
+      }
+    })
+
     res.json({ success: true })
   } catch (err) {
     await conn.rollback().catch(() => {})
@@ -281,7 +338,33 @@ router.put('/:id', express.json(), verifyToken, authorize('products.edit'), asyn
 // Delete product
 router.delete('/:id', verifyToken, authorize('products.delete'), async (req, res) => {
   try {
-    await db.pool.query('DELETE FROM products WHERE id = ?', [req.params.id])
+    const id = Number(req.params.id)
+    const [beforeRows] = await db.pool.query(
+      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active
+       FROM products
+       WHERE id = ?
+       LIMIT 1`,
+      [id]
+    )
+    if (!beforeRows.length) return res.status(404).json({ error: 'product not found' })
+
+    await db.pool.query('DELETE FROM products WHERE id = ?', [id])
+
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'PRODUCT_DELETED',
+      resourceType: 'Product',
+      resourceId: id,
+      details: {
+        module: 'catalog',
+        severity: 'high',
+        result: 'reversed',
+        target_label: beforeRows[0].sku ? `${beforeRows[0].name} (${beforeRows[0].sku})` : beforeRows[0].name,
+        summary: `Deleted product "${beforeRows[0].name}"`,
+        before: beforeRows[0]
+      }
+    })
+
     res.json({ success: true })
   } catch (err) {
     console.error(err)
