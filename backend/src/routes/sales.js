@@ -4,10 +4,10 @@ const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 const {
   PAYMENT_METHODS,
-  MOBILE_BANK_APPS,
   WALK_IN_CUSTOMER_LABEL,
   roundMoney,
   normalizeDiscountPercentage,
+  calculateSaleTaxBreakdown,
   ensureSalesSchema,
   buildDateFilter,
   enrichSaleRecord,
@@ -29,6 +29,7 @@ const {
   addDraftSaleItem,
   updateDraftSaleItem,
   removeDraftSaleItem,
+  updateDraftSaleCustomer,
   findRecentScanEvent,
   recordScanEvent,
   prepareDraftSaleForCheckout,
@@ -103,13 +104,15 @@ router.get('/config', verifyToken, authorize(['sales.view', 'sales.create']), as
       discount_type: 'percentage',
       currency: runtimeConfig.currency,
       tax_rate: runtimeConfig.taxRate,
+      configured_tax_rate: runtimeConfig.configuredTaxRate,
       tax_rate_percentage: roundMoney(runtimeConfig.taxRate * 100),
       scanner_debounce_ms: runtimeConfig.scannerDebounceMs,
       payment_methods: PAYMENT_METHODS,
       allow_discount: hasPermission(permissions, 'sales.discount'),
       allow_price_override: hasPermission(permissions, 'sales.price_override'),
-      allow_customer_profile_save: false,
-      walk_in_customer_label: WALK_IN_CUSTOMER_LABEL
+      allow_customer_profile_save: hasPermission(permissions, 'customers.create'),
+      walk_in_customer_label: WALK_IN_CUSTOMER_LABEL,
+      invoice: runtimeConfig.invoice
     })
   } catch (err) {
     console.error(err)
@@ -269,10 +272,9 @@ router.get('/transactions', verifyToken, authorize('sales.view'), async (req, re
         s.total AS amount,
         sp.amount_received,
         sp.change_amount,
-        sp.bank_app_used,
-        sp.reference_number,
         u.username AS user_name,
-        COALESCE(s.customer_name_snapshot, c.name) AS customer_name,
+        c.customer_code AS customer_code,
+        COALESCE(s.customer_name_snapshot, NULLIF(c.full_name, ''), c.name) AS customer_name,
         COALESCE(s.customer_phone_snapshot, c.phone) AS customer_phone,
         COALESCE(s.customer_email_snapshot, c.email) AS customer_email
       FROM sales_payments sp
@@ -306,11 +308,16 @@ router.get('/transactions', verifyToken, authorize('sales.view'), async (req, re
         sri.accounting_reference,
         p.name AS product_name,
         p.sku,
-        u.username AS user_name
+        u.username AS user_name,
+        c.customer_code AS customer_code,
+        COALESCE(s.customer_name_snapshot, NULLIF(c.full_name, ''), c.name) AS customer_name,
+        COALESCE(s.customer_phone_snapshot, c.phone) AS customer_phone,
+        COALESCE(s.customer_email_snapshot, c.email) AS customer_email
       FROM sale_return_items sri
       JOIN sales s ON s.id = sri.sale_id
       LEFT JOIN products p ON p.id = sri.product_id
       LEFT JOIN users u ON u.id = sri.processed_by
+      LEFT JOIN customers c ON c.id = s.customer_id
       WHERE 1=1${returnFilter}
       ORDER BY sri.created_at DESC
     `, returnParams)
@@ -364,14 +371,12 @@ router.get('/', verifyToken, authorize('sales.view'), async (req, res) => {
       SELECT
         s.*,
         u.username AS clerk_name,
-        COALESCE(s.customer_name_snapshot, c.name) AS customer_name,
+        c.customer_code AS customer_code,
+        COALESCE(s.customer_name_snapshot, NULLIF(c.full_name, ''), c.name) AS customer_name,
         COALESCE(s.customer_phone_snapshot, c.phone) AS customer_phone,
         COALESCE(s.customer_email_snapshot, c.email) AS customer_email,
         sp.amount_received,
         sp.change_amount,
-        sp.bank_app_used,
-        sp.reference_number,
-        sp.reference_number AS payment_reference,
         sp.received_at AS payment_received_at,
         COALESCE(sold.sold_qty, 0) AS sold_qty,
         COALESCE(ret.returned_qty, 0) AS returned_qty,
@@ -430,10 +435,17 @@ router.post('/drafts', express.json(), verifyToken, authorize('sales.create'), a
     await ensureSalesSchema()
     await ensureScannerSchema(conn)
 
-    const saleId = Number(req.body?.sale_id)
+    const rawSaleId = req.body?.sale_id
+    const saleId = Number(rawSaleId)
+    const forceNew = req.body?.force_new === true
+      || req.body?.force_new === 'true'
+      || req.body?.force_new === 1
+      || req.body?.force_new === '1'
     const sale = await ensureDraftSale(conn, {
       saleId: Number.isFinite(saleId) && saleId > 0 ? saleId : null,
-      clerkId: req.auth.id
+      clerkId: req.auth.id,
+      requireExisting: rawSaleId !== undefined && rawSaleId !== null && rawSaleId !== '',
+      forceNew
     })
 
     await conn.commit()
@@ -442,6 +454,43 @@ router.post('/drafts', express.json(), verifyToken, authorize('sales.create'), a
     await conn.rollback().catch(() => {})
     console.error(err)
     res.status(getErrorStatus(err)).json({ error: getErrorMessage(err, 'failed to prepare draft sale') })
+  } finally {
+    conn.release()
+  }
+})
+
+router.patch('/drafts/:saleId/customer', express.json(), verifyToken, authorize('sales.create'), async (req, res) => {
+  const conn = await db.pool.getConnection()
+  try {
+    await conn.beginTransaction()
+    await ensureSalesSchema()
+    await ensureScannerSchema(conn)
+
+    if (!hasOwn(req.body || {}, 'customer_id')) {
+      throw createHttpError(400, 'customer_id is required')
+    }
+
+    const rawCustomerId = req.body?.customer_id
+    const normalizedCustomerId = rawCustomerId === null || rawCustomerId === ''
+      ? null
+      : Number(rawCustomerId)
+
+    if (normalizedCustomerId !== null && (!Number.isFinite(normalizedCustomerId) || normalizedCustomerId <= 0)) {
+      throw createHttpError(400, 'customer_id must be a valid positive integer or null')
+    }
+
+    const saleId = Number(req.params.saleId)
+    const draftSale = await getLockedDraftSale(conn, saleId)
+    if (!draftSale) throw createHttpError(404, 'draft sale not found')
+
+    const sale = await updateDraftSaleCustomer(conn, saleId, normalizedCustomerId)
+
+    await conn.commit()
+    res.json(sale)
+  } catch (err) {
+    await conn.rollback().catch(() => {})
+    console.error(err)
+    res.status(getErrorStatus(err)).json({ error: getErrorMessage(err, 'failed to update draft customer') })
   } finally {
     conn.release()
   }
@@ -461,12 +510,13 @@ router.post('/:saleId/items', express.json(), verifyToken, authorize('sales.crea
     const runtimeConfig = await getRuntimeConfig(conn)
     const rawCode = req.body?.code
     const normalizedCode = rawCode !== undefined ? normalizeScannedCode(rawCode) : null
+    const duplicateScanWindowMs = 0
     if (rawCode !== undefined && (!normalizedCode || !normalizedCode.length)) {
       throw createHttpError(400, 'invalid code')
     }
 
-    if (normalizedCode) {
-      const recentScan = await findRecentScanEvent(conn, saleId, normalizedCode, runtimeConfig.scannerDebounceMs)
+    if (normalizedCode && duplicateScanWindowMs > 0) {
+      const recentScan = await findRecentScanEvent(conn, saleId, normalizedCode, duplicateScanWindowMs)
       if (recentScan) {
         const sale = await getSaleById(conn, saleId)
         await conn.commit()
@@ -497,7 +547,11 @@ router.post('/:saleId/items', express.json(), verifyToken, authorize('sales.crea
   } catch (err) {
     await conn.rollback().catch(() => {})
     console.error(err)
-    res.status(getErrorStatus(err)).json({ error: getErrorMessage(err, 'failed to add sale item') })
+    res.status(getErrorStatus(err)).json({
+      error: getErrorMessage(err, 'failed to add sale item'),
+      sale_id: Number(req.params.saleId) || null,
+      meta: err?.meta || null
+    })
   } finally {
     conn.release()
   }
@@ -553,6 +607,37 @@ router.delete('/:saleId/items/:itemId', verifyToken, authorize('sales.create'), 
   }
 })
 
+router.delete('/:saleId', verifyToken, authorize('sales.create'), async (req, res) => {
+  const conn = await db.pool.getConnection()
+  try {
+    await conn.beginTransaction()
+    await ensureSalesSchema()
+    await ensureScannerSchema(conn)
+
+    const saleId = Number(req.params.saleId)
+    const draftSale = await getLockedDraftSale(conn, saleId)
+    if (!draftSale) throw createHttpError(404, 'draft sale not found')
+
+    await conn.query('DELETE FROM sale_scan_events WHERE sale_id = ?', [saleId]).catch(() => {})
+    await conn.query('DELETE FROM sale_items WHERE sale_id = ?', [saleId])
+    await conn.query(
+      `DELETE FROM sales
+       WHERE id = ?
+         AND status = 'DRAFT'`,
+      [saleId]
+    )
+
+    await conn.commit()
+    res.json({ success: true })
+  } catch (err) {
+    await conn.rollback().catch(() => {})
+    console.error(err)
+    res.status(getErrorStatus(err)).json({ error: getErrorMessage(err, 'failed to delete draft sale') })
+  } finally {
+    conn.release()
+  }
+})
+
 router.get('/:id', verifyToken, authorize('sales.view'), async (req, res) => {
   try {
     await ensureSalesSchema()
@@ -576,14 +661,10 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
 
     const {
       draft_sale_id,
-      order_note,
       items,
       payment_method,
       payment_amount,
-      discount_percentage,
-      bank_app_used,
-      reference_number,
-      payment_reference
+      discount_percentage
     } = req.body || {}
     const permissions = Array.isArray(req.auth?.permissions) ? req.auth.permissions : []
     const canApplyDiscount = hasPermission(permissions, 'sales.discount')
@@ -607,6 +688,10 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     let subtotal
     let productRows
     let saleId = null
+    let resolvedCustomerId = null
+    let customerNameSnapshot = WALK_IN_CUSTOMER_LABEL
+    let customerPhoneSnapshot = null
+    let customerEmailSnapshot = null
 
     if (draft_sale_id !== undefined && draft_sale_id !== null && draft_sale_id !== '') {
       const preparedDraft = await prepareDraftSaleForCheckout(conn, Number(draft_sale_id), {
@@ -616,6 +701,10 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
       subtotal = preparedDraft.subtotal
       productRows = preparedDraft.productRows
       saleId = preparedDraft.sale.id
+      resolvedCustomerId = Number(preparedDraft.sale.customer_id) > 0 ? Number(preparedDraft.sale.customer_id) : null
+      customerNameSnapshot = normalizeOptionalText(preparedDraft.sale.customer_name_snapshot || preparedDraft.sale.customer_name) || WALK_IN_CUSTOMER_LABEL
+      customerPhoneSnapshot = normalizeOptionalText(preparedDraft.sale.customer_phone_snapshot || preparedDraft.sale.customer_phone)
+      customerEmailSnapshot = normalizeOptionalText(preparedDraft.sale.customer_email_snapshot || preparedDraft.sale.customer_email)
     } else {
       const preparedItems = await prepareSaleItems(conn, items, {
         allowPriceOverride: canOverridePrice
@@ -632,48 +721,27 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
 
     const discountAmt = roundMoney(subtotal * (discountPct / 100))
     const subtotalAfterDiscount = Math.max(subtotal - discountAmt, 0)
+    const taxBreakdown = calculateSaleTaxBreakdown(subtotalAfterDiscount, runtimeConfig.taxRate)
     
     // Philippine VAT (12% Inclusive)
     // Formula: If total is ₱500, customer pays ₱500
     // Vatable Sales = Total / 1.12
     // VAT Amount = Total - Vatable Sales
-    const vatableSales = roundMoney(subtotalAfterDiscount / (1 + runtimeConfig.taxRate))
-    const taxAmt = roundMoney(subtotalAfterDiscount - vatableSales)
-    const total = roundMoney(subtotalAfterDiscount)
+    const vatableSales = taxBreakdown.vatableSales
+    const taxAmt = taxBreakdown.vatAmount
+    const total = taxBreakdown.total
 
     if (total <= 0) {
       throw createHttpError(400, 'total must be greater than 0')
     }
 
     const amountReceived = roundMoney(tenderedAmount)
-    if (String(payment_method) === 'mobile_bank_transfer') {
-      if (amountReceived !== total) {
-        throw createHttpError(400, 'bank transfer payment must match the exact sale total')
-      }
-    } else if (amountReceived < total) {
+    if (amountReceived < total) {
       throw createHttpError(400, 'payment must be greater than or equal to total amount')
     }
 
-    let normalizedBankApp = null
-    let normalizedReferenceNumber = null
-    if (String(payment_method) === 'mobile_bank_transfer') {
-      normalizedBankApp = String(bank_app_used || '').trim()
-      if (!normalizedBankApp || !MOBILE_BANK_APPS.includes(normalizedBankApp)) {
-        throw createHttpError(400, 'bank_app_used is required and must be a supported mobile banking app')
-      }
-
-      normalizedReferenceNumber = String(reference_number || payment_reference || '').trim()
-      if (!normalizedReferenceNumber) {
-        throw createHttpError(400, 'reference_number is required')
-      }
-    }
-
     const changeAmount = roundMoney(amountReceived - total)
-    const orderNote = normalizeOptionalText(order_note)
-    const resolvedCustomerId = null
-    const customerNameSnapshot = WALK_IN_CUSTOMER_LABEL
-    const customerPhoneSnapshot = null
-    const customerEmailSnapshot = null
+    const orderNote = null
     const saleNumber = await generateDocumentNumber(conn, 'sales', 'sale_number', 'SAL')
     const receiptNo = await generateDocumentNumber(conn, 'sales', 'receipt_no', 'RCT')
 
@@ -688,6 +756,9 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
              customer_email_snapshot = ?,
              order_note = ?,
              subtotal = ?,
+             vatable_sales = ?,
+             vat_amount = ?,
+             tax_calculation_method = ?,
              tax = ?,
              discount = ?,
              total = ?,
@@ -705,6 +776,9 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
           customerEmailSnapshot,
           orderNote,
           subtotal,
+          vatableSales,
+          taxAmt,
+          taxBreakdown.taxCalculationMethod,
           taxAmt,
           discountAmt,
           total,
@@ -717,9 +791,9 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
       const [saleResult] = await conn.query(
         `INSERT INTO sales (
           sale_number, clerk_id, customer_id, customer_name_snapshot, customer_phone_snapshot, customer_email_snapshot, order_note,
-          subtotal, tax, discount, total, payment_method, receipt_no, status
+          subtotal, vatable_sales, vat_amount, tax_calculation_method, tax, discount, total, payment_method, receipt_no, status
         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED')`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED')`,
         [
           saleNumber,
           req.auth.id,
@@ -729,6 +803,9 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
           customerEmailSnapshot,
           orderNote,
           subtotal,
+          vatableSales,
+          taxAmt,
+          taxBreakdown.taxCalculationMethod,
           taxAmt,
           discountAmt,
           total,
@@ -741,9 +818,9 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     }
 
     await conn.query(
-      `INSERT INTO sales_payments (sale_id, amount_received, change_amount, payment_method, bank_app_used, reference_number, received_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [saleId, amountReceived, changeAmount, payment_method, normalizedBankApp, normalizedReferenceNumber, req.auth.id]
+      `INSERT INTO sales_payments (sale_id, amount_received, change_amount, payment_method, received_by)
+       VALUES (?, ?, ?, ?, ?)`,
+      [saleId, amountReceived, changeAmount, payment_method, req.auth.id]
     )
 
     if (draft_sale_id !== undefined && draft_sale_id !== null && draft_sale_id !== '') {
@@ -793,8 +870,7 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
         references: {
           sale_id: saleId,
           sale_number: sale?.sale_number || null,
-          receipt_no: sale?.receipt_no || null,
-          payment_reference: sale?.payment_reference || null
+          receipt_no: sale?.receipt_no || null
         },
         metadata: {
           has_discount: discountPct > 0,

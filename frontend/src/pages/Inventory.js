@@ -4,11 +4,53 @@ import QRCode from 'qrcode'
 import { jsPDF } from 'jspdf'
 import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/api.js'
+import { PRODUCT_SIZE_OPTIONS } from '../constants/productSizes.js'
 
 // ─── Helpers ───
 const fmt = (n) => Number(n || 0).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
-const normalizeScanCode = (v) => String(v || '').trim().toUpperCase()
+const safeDecodeScannedValue = (value) => {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+const extractScannedCodeToken = (value) => {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+
+  const compact = raw.replace(/[\r\n]+/g, '').trim()
+  if (!compact) return ''
+
+  const queryParamMatch = compact.match(/[?&](?:scan|code|barcode|sku)=([^&#\s]+)/i)
+  if (queryParamMatch?.[1]) {
+    return safeDecodeScannedValue(queryParamMatch[1])
+  }
+
+  const keyValueMatch = compact.match(/\b(?:scan|code|barcode|sku)\s*[:=]\s*([A-Za-z0-9._-]{1,128})\b/i)
+  if (keyValueMatch?.[1]) {
+    return keyValueMatch[1]
+  }
+
+  if (compact.startsWith('{') && compact.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(compact)
+      if (parsed && typeof parsed === 'object') {
+        for (const key of ['scan', 'code', 'barcode', 'sku']) {
+          if (parsed[key] !== undefined && parsed[key] !== null && String(parsed[key]).trim()) {
+            return String(parsed[key])
+          }
+        }
+      }
+    } catch {
+      // Fall through and treat the raw value as the product code.
+    }
+  }
+
+  return compact
+}
+const normalizeScanCode = (v) => extractScannedCodeToken(v).trim().toUpperCase()
 
 function escapeHtml(value) {
   return String(value || '')
@@ -95,6 +137,146 @@ const STOCK_OUT_REASON_LABELS = {
   SHRINKAGE: 'Shrinkage'
 }
 
+function productSourceKey(product) {
+  return String(product?.product_source || 'manual').trim().toLowerCase() || 'manual'
+}
+
+function isBaleGeneratedProduct(product) {
+  return productSourceKey(product) === 'bale_breakdown'
+}
+
+function productSourceLabel(product) {
+  const sourceKey = productSourceKey(product)
+  if (sourceKey === 'bale_breakdown') return 'Bale Breakdown'
+  if (sourceKey === 'repaired_damage') return 'Repaired Damage'
+  return 'Manual'
+}
+
+function createEmptyProductForm(overrides = {}) {
+  return {
+    sku: '',
+    name: '',
+    brand: '',
+    description: '',
+    category_id: '',
+    price: '',
+    stock_quantity: '1',
+    low_stock_threshold: '10',
+    size: '',
+    barcode: '',
+    product_source: 'manual',
+    bale_purchase_id: '',
+    condition_grade: 'premium',
+    ...overrides
+  }
+}
+
+function createEmptyRepairForm(overrides = {}) {
+  return {
+    damage_source_type: '',
+    damage_source_id: '',
+    source_label: '',
+    source_name: '',
+    original_quantity: 0,
+    repaired_quantity: 0,
+    remaining_quantity: 0,
+    quantity: '1',
+    suggested_name: '',
+    sku: '',
+    name: '',
+    brand: '',
+    description: '',
+    category_id: '',
+    price: '',
+    low_stock_threshold: '0',
+    size: '',
+    barcode: '',
+    reported_by_name: '',
+    created_at: '',
+    ...overrides
+  }
+}
+
+function createRepairDraft(form, categorySearch = '') {
+  return {
+    quantity: String(form?.quantity || '1'),
+    sku: String(form?.sku || ''),
+    name: String(form?.name || ''),
+    brand: String(form?.brand || ''),
+    description: String(form?.description || ''),
+    category_id: String(form?.category_id || ''),
+    price: String(form?.price || ''),
+    low_stock_threshold: String(form?.low_stock_threshold ?? '0'),
+    size: String(form?.size || ''),
+    barcode: String(form?.barcode || ''),
+    category_search: String(categorySearch || '')
+  }
+}
+
+const DAMAGE_SOURCE_LABELS = {
+  bale_breakdown: 'Bale Breakdown',
+  manual_damage: 'Manual Damage',
+  sales_return: 'Sales Return'
+}
+
+function inferDamagedSourceType(record) {
+  const explicitType = String(record?.damage_source_type || record?.source_type || '').trim().toLowerCase()
+  if (explicitType) return explicitType
+
+  const sourceLabel = String(record?.source_label || '').trim().toLowerCase()
+  if (sourceLabel.includes('bale')) return 'bale_breakdown'
+  if (sourceLabel.includes('sales return')) return 'sales_return'
+  if (sourceLabel.includes('manual damage')) return 'manual_damage'
+
+  const parsedReference = parseReferenceMeta(record?.reference)
+  if (parsedReference?.tag === 'BALE_BREAKDOWN') return 'bale_breakdown'
+  if (parsedReference?.tag === 'STOCK_OUT') {
+    const disposition = String(parsedReference.meta?.disposition || '').trim().toUpperCase()
+    if (disposition === 'DAMAGE') {
+      return parsedReference.meta?.receipt ? 'sales_return' : 'manual_damage'
+    }
+  }
+
+  const parsedReason = parseStockOutReason(record?.reason)
+  if (parsedReason?.type === 'DAMAGE') return 'manual_damage'
+  return ''
+}
+
+function inferDamagedSourceId(record, sourceType) {
+  const candidates = sourceType === 'bale_breakdown'
+    ? [record?.damage_source_id, record?.source_breakdown_id, record?.id]
+    : [record?.damage_source_id, record?.id, record?.source_breakdown_id]
+
+  for (const value of candidates) {
+    const normalized = Number(value)
+    if (Number.isInteger(normalized) && normalized > 0) return normalized
+  }
+  return 0
+}
+
+function normalizeDamagedRecord(record) {
+  const sourceType = inferDamagedSourceType(record)
+  const sourceId = inferDamagedSourceId(record, sourceType)
+  const originalQuantity = Math.max(0, Number(record?.original_quantity ?? record?.quantity ?? 0) || 0)
+  const repairedQuantity = Math.max(0, Number(record?.repaired_quantity ?? 0) || 0)
+  const remainingBase = record?.remaining_quantity ?? Math.max(originalQuantity - repairedQuantity, 0)
+  const remainingQuantity = Math.max(0, Number(remainingBase) || 0)
+  const sourceLabel = String(record?.source_label || DAMAGE_SOURCE_LABELS[sourceType] || 'Damage Record').trim()
+
+  return {
+    ...record,
+    source_label: sourceLabel,
+    source_name: String(record?.source_name || record?.product_name || '').trim(),
+    damage_source_type: sourceType,
+    damage_source_id: sourceId,
+    original_quantity: originalQuantity,
+    repaired_quantity: repairedQuantity,
+    remaining_quantity: remainingQuantity,
+    repair_allowed: remainingQuantity > 0 && Boolean(sourceType && sourceId > 0),
+    record_key: String(record?.record_key || `${sourceType || 'damage'}-${sourceId || record?.id || 'row'}`)
+  }
+}
+
 function toTitleCaseWords(value) {
   return String(value || '')
     .trim()
@@ -142,7 +324,30 @@ function formatTransactionReference(value) {
   if (tag === 'STOCK_OUT') {
     return `Stock out${meta.disposition ? ` • ${meta.disposition}` : ''}${meta.receipt ? ` • Receipt ${meta.receipt}` : ''}${meta.acct_ref ? ` • Acct Ref ${meta.acct_ref}` : ''}`
   }
+  if (tag === 'BALE_BREAKDOWN') {
+    return `Bale breakdown${meta.grade ? ` • ${toTitleCaseWords(meta.grade)}` : ''}${meta.breakdown_id ? ` • Breakdown #${meta.breakdown_id}` : ''}${meta.bale_purchase_id ? ` • Bale #${meta.bale_purchase_id}` : ''}${meta.disposition ? ` • ${toTitleCaseWords(meta.disposition)}` : ''}`
+  }
+  if (tag === 'BALE_PRODUCT_CREATE') {
+    return `Bale product created${meta.grade ? ` • ${toTitleCaseWords(meta.grade)}` : ''}${meta.breakdown_id ? ` • Breakdown #${meta.breakdown_id}` : ''}${meta.bale_purchase_id ? ` • Bale #${meta.bale_purchase_id}` : ''}`
+  }
+  if (tag === 'DAMAGE_REPAIR') {
+    const sourceType = String(meta.source_type || '').trim().toLowerCase()
+    const sourceLabel = DAMAGE_SOURCE_LABELS[sourceType] || toTitleCaseWords(sourceType)
+    const sourceId = Number(meta.source_id)
+    const sourceSuffix = Number.isInteger(sourceId) && sourceId > 0 ? ` #${sourceId}` : ''
+    if (sourceLabel) return `Repaired item from ${sourceLabel}${sourceSuffix}`
+    return 'Repaired item intake'
+  }
   return value
+}
+
+function getInventoryTransactionTypeMeta(transactionType) {
+  const normalized = String(transactionType || '').trim().toUpperCase()
+  if (normalized === 'IN') return { label: 'Stock In', badgeClass: 'badge-success' }
+  if (normalized === 'OUT') return { label: 'Stock Out', badgeClass: 'badge-danger' }
+  if (normalized === 'RETURN') return { label: 'Return', badgeClass: 'badge-warning' }
+  if (normalized === 'ADJUST') return { label: 'Adjustment', badgeClass: 'badge-info' }
+  return { label: normalized || 'N/A', badgeClass: 'badge-neutral' }
 }
 
 function formatTransactionReason(reason, reference = '') {
@@ -253,6 +458,7 @@ export default function Inventory() {
   const [employees, setEmployees] = useState([])
   const [categories, setCategories] = useState([])
   const [transactions, setTransactions] = useState([])
+  const [stockInRecords, setStockInRecords] = useState([])
   const [damaged, setDamaged] = useState([])
   const [lowStock, setLowStock] = useState([])
   const [shrinkage, setShrinkage] = useState([])
@@ -265,21 +471,36 @@ export default function Inventory() {
 
   // forms
   const [stockInForm, setStockInForm] = useState({ product_id: '', quantity: '', reference: '', date: '' })
+  const [stockInMode, setStockInMode] = useState('bale')
+  const [baleStockOptions, setBaleStockOptions] = useState([])
+  const [baleStockLoading, setBaleStockLoading] = useState(false)
+  const [selectedBaleStockOptionId, setSelectedBaleStockOptionId] = useState('')
   const [adjustForm, setAdjustForm] = useState({ product_id: '', quantity: '', reason: '', employee_id: '' })
   const [damageForm, setDamageForm] = useState({ product_id: '', quantity: '', reason: '', employee_id: '' })
-  const [stockInBarcode, setStockInBarcode] = useState('')
   const [adjustBarcode, setAdjustBarcode] = useState('')
   const [damageBarcode, setDamageBarcode] = useState('')
-  const [productForm, setProductForm] = useState({ sku: '', name: '', brand: '', description: '', category_id: '', price: '', cost: '', stock_quantity: '', low_stock_threshold: '10', size: '', color: '', barcode: '' })
+  const [productForm, setProductForm] = useState(createEmptyProductForm())
   const [editingProduct, setEditingProduct] = useState(null)
   const [showProductModal, setShowProductModal] = useState(false)
+  const [showRepairModal, setShowRepairModal] = useState(false)
   const [qrPreviewProduct, setQrPreviewProduct] = useState(null)
   const [qrPreviewSrc, setQrPreviewSrc] = useState('')
   const [qrPreviewLoading, setQrPreviewLoading] = useState(false)
   const [qrPreviewScanValue, setQrPreviewScanValue] = useState('')
+  const [stockInSourceFilter, setStockInSourceFilter] = useState('')
+  const [stockInFrom, setStockInFrom] = useState('')
+  const [stockInTo, setStockInTo] = useState('')
   const [filterType, setFilterType] = useState('')
+  const [damagedSourceFilter, setDamagedSourceFilter] = useState('')
+  const [damagedFrom, setDamagedFrom] = useState('')
+  const [damagedTo, setDamagedTo] = useState('')
+  const [repairForm, setRepairForm] = useState(createEmptyRepairForm())
+  const [repairDrafts, setRepairDrafts] = useState({})
+  const [selectedDamagedRecordKey, setSelectedDamagedRecordKey] = useState('')
   const [categorySearch, setCategorySearch] = useState('')
   const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false)
+  const [repairCategorySearch, setRepairCategorySearch] = useState('')
+  const [repairCategoryDropdownOpen, setRepairCategoryDropdownOpen] = useState(false)
   const [labelProductId, setLabelProductId] = useState('')
   const [labelScanValue, setLabelScanValue] = useState('')
   const [labelCopies, setLabelCopies] = useState('1')
@@ -287,6 +508,7 @@ export default function Inventory() {
   const labelScanInputRef = useRef(null)
   const qrPreviewScanInputRef = useRef(null)
   const qrPreviewScanTimerRef = useRef(null)
+  const posSendStateRef = useRef({ code: '', at: 0, pending: false })
   const tab = useMemo(() => {
     const params = new URLSearchParams(location.search)
     const searchTab = String(params.get('tab') || '').trim()
@@ -300,14 +522,21 @@ export default function Inventory() {
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [prodRes, catRes, empRes] = await Promise.all([
+      const [prodRes, catRes, empRes] = await Promise.allSettled([
         api.get('/products'),
         api.get('/categories'),
         api.get('/employees')
       ])
-      setProducts(prodRes.data || [])
-      setCategories(catRes.data || [])
-      setEmployees(empRes.data || [])
+
+      if (prodRes.status === 'fulfilled') {
+        setProducts(Array.isArray(prodRes.value?.data) ? prodRes.value.data : [])
+      }
+      if (catRes.status === 'fulfilled') {
+        setCategories(Array.isArray(catRes.value?.data) ? catRes.value.data : [])
+      }
+      if (empRes.status === 'fulfilled') {
+        setEmployees(Array.isArray(empRes.value?.data) ? empRes.value.data : [])
+      }
     } catch (e) { /* ignore */ }
     setLoading(false)
   }, [])
@@ -321,13 +550,305 @@ export default function Inventory() {
     } catch (e) { /* ignore */ }
   }, [filterType])
 
+  const fetchStockInRecords = useCallback(async () => {
+    try {
+      const query = ['type=IN']
+      if (stockInSourceFilter) query.push(`source=${encodeURIComponent(stockInSourceFilter)}`)
+      if (stockInFrom) query.push(`from=${encodeURIComponent(stockInFrom)}`)
+      if (stockInTo) query.push(`to=${encodeURIComponent(stockInTo)}`)
+      const res = await api.get(`/inventory/transactions?${query.join('&')}`)
+      setStockInRecords((res.data || []).filter((row) => Number(row.quantity) > 0))
+    } catch (e) { /* ignore */ }
+  }, [stockInFrom, stockInSourceFilter, stockInTo])
+
+  const fetchBaleStockOptions = useCallback(async () => {
+    try {
+      setBaleStockLoading(true)
+      const res = await api.get('/inventory/stock-in/bale-options?include_all=1')
+      setBaleStockOptions(Array.isArray(res.data) ? res.data : [])
+    } catch (e) {
+      setBaleStockOptions([])
+      const status = Number(e?.response?.status) || 0
+      const serverMessage = e?.response?.data?.error || e?.response?.data?.message || ''
+
+  /* const renderRepairModal = () => (
+    showRepairModal && React.createElement('div', {
+      className: 'modal-backdrop',
+      onClick: closeRepairModal
+    },
+    React.createElement('div', {
+      className: 'modal',
+      style: { maxWidth: 860, width: '94%' },
+      onClick: (e) => e.stopPropagation()
+    },
+    React.createElement('div', { className: 'modal-header' },
+      React.createElement('h2', null, 'Receive Repaired Product'),
+      React.createElement('button', {
+        type: 'button',
+        className: 'modal-close',
+        onClick: closeRepairModal
+      }, '×')
+    ),
+    React.createElement('form', { onSubmit: handleRepairDamagedItem },
+      React.createElement('div', { className: 'modal-body inventory-damaged-modal-body' },
+        React.createElement('div', {
+          className: 'inventory-damaged-modal-grid',
+          style: { marginBottom: 14 }
+        },
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Damage Source'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: repairForm.source_label
+                ? `${repairForm.source_label}${repairForm.damage_source_id ? ` #${repairForm.damage_source_id}` : ''}`
+                : 'Select a damage record',
+              readOnly: true,
+              disabled: true
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Original Qty'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: Number(repairForm.original_quantity || 0),
+              readOnly: true,
+              disabled: true
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Already Received'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: Number(repairForm.repaired_quantity || 0),
+              readOnly: true,
+              disabled: true
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Remaining Qty'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: repairFormRemainingQuantity,
+              readOnly: true,
+              disabled: true
+            })
+          )
+        ),
+        React.createElement('div', {
+          className: 'inventory-damaged-modal-grid'
+        },
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'SKU'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: repairForm.sku,
+              onChange: (e) => setRepairForm((form) => ({ ...form, sku: e.target.value })),
+              placeholder: 'Auto-generated if blank'
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Name *'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: repairForm.name,
+              onChange: (e) => setRepairForm((form) => ({ ...form, name: e.target.value })),
+              placeholder: 'Product name',
+              required: true
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Barcode'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: repairForm.barcode,
+              onChange: (e) => setRepairForm((form) => ({ ...form, barcode: e.target.value })),
+              placeholder: 'Auto-generated if blank'
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0, position: 'relative' } },
+            React.createElement('label', { className: 'form-label' }, 'Category *'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: repairCategorySearch,
+              onChange: (e) => {
+                const nextValue = e.target.value
+                const matchedCategory = categories.find((category) => String(category?.name || '').toLowerCase() === nextValue.trim().toLowerCase())
+                setRepairCategorySearch(nextValue)
+                setRepairCategoryDropdownOpen(true)
+                setRepairForm((form) => ({ ...form, category_id: matchedCategory ? String(matchedCategory.id) : '' }))
+              },
+              onFocus: () => setRepairCategoryDropdownOpen(true),
+              placeholder: '- Search or select category -',
+              autoComplete: 'off',
+              required: true
+            }),
+            repairCategoryDropdownOpen && React.createElement('div', {
+              style: {
+                position: 'absolute',
+                top: '100%',
+                left: 0,
+                right: 0,
+                zIndex: 50,
+                background: 'var(--card-bg, #fff)',
+                border: '1px solid var(--border, #ddd)',
+                borderRadius: 6,
+                maxHeight: 220,
+                overflowY: 'auto',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.12)'
+              }
+            },
+              filteredRepairCategories.length === 0
+                ? React.createElement('div', {
+                  style: { padding: '10px 14px', color: 'var(--text-light, #999)', fontSize: 13 }
+                }, 'No categories found')
+                : filteredRepairCategories.map((category) => React.createElement('div', {
+                  key: `repair-category-${category.id}`,
+                  style: {
+                    padding: '8px 14px',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    background: String(repairForm.category_id) === String(category.id) ? 'var(--gold-light, #fef3c7)' : 'transparent',
+                    borderBottom: '1px solid var(--border-light, #f0f0f0)'
+                  },
+                  onMouseDown: (e) => {
+                    e.preventDefault()
+                    setRepairForm((form) => ({ ...form, category_id: String(category.id) }))
+                    setRepairCategorySearch(category.name)
+                    setRepairCategoryDropdownOpen(false)
+                  },
+                  onMouseEnter: (e) => { e.currentTarget.style.background = 'var(--gold-light, #fef3c7)' },
+                  onMouseLeave: (e) => { e.currentTarget.style.background = String(repairForm.category_id) === String(category.id) ? 'var(--gold-light, #fef3c7)' : 'transparent' }
+                }, category.name))
+            ),
+            repairCategoryDropdownOpen && React.createElement('div', {
+              style: { position: 'fixed', inset: 0, zIndex: 49 },
+              onClick: () => setRepairCategoryDropdownOpen(false)
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Brand'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: repairForm.brand,
+              onChange: (e) => setRepairForm((form) => ({ ...form, brand: e.target.value })),
+              placeholder: 'Brand name'
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Selling Price *'),
+            React.createElement('input', {
+              className: 'form-input',
+              type: 'number',
+              min: '0.01',
+              step: '0.01',
+              value: repairForm.price,
+              onChange: (e) => setRepairForm((form) => ({ ...form, price: e.target.value })),
+              required: true
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Low Stock Threshold'),
+            React.createElement('input', {
+              className: 'form-input',
+              type: 'number',
+              min: 0,
+              step: 1,
+              value: repairForm.low_stock_threshold,
+              onChange: (e) => setRepairForm((form) => ({ ...form, low_stock_threshold: e.target.value }))
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Size'),
+            React.createElement('select', {
+              className: 'form-input',
+              value: repairForm.size,
+              onChange: (e) => setRepairForm((form) => ({ ...form, size: e.target.value }))
+            },
+              React.createElement('option', { value: '' }, '- Select size -'),
+              ...PRODUCT_SIZE_OPTIONS.map((option) => React.createElement('option', {
+                key: `repair-size-${option.value}`,
+                value: option.value
+              }, option.label))
+            )
+          )
+        ),
+        React.createElement('div', { className: 'form-group', style: { marginTop: 12, marginBottom: 0 } },
+          React.createElement('label', { className: 'form-label' }, 'Description'),
+          React.createElement('textarea', {
+            className: 'form-input',
+            rows: 2,
+            value: repairForm.description,
+            onChange: (e) => setRepairForm((form) => ({ ...form, description: e.target.value })),
+            placeholder: 'Optional details about this received repaired product'
+          })
+        ),
+        React.createElement('div', { className: 'inventory-damaged-modal-note' },
+          repairFormRecordSelected
+            ? `Selected: ${repairForm.source_name || 'Damaged item'}. Remaining units to repair: ${repairFormRemainingQuantity}. Saving this will create 1 sellable product entry in Product Management.`
+            : 'Select a damaged record from the table first.'
+        )
+      ),
+      React.createElement('div', { className: 'modal-footer' },
+        React.createElement('button', {
+          type: 'submit',
+          className: 'btn btn-primary',
+          disabled: !repairFormRecordSelected || repairFormRemainingQuantity <= 0
+        }, repairFormRemainingQuantity <= 0 ? 'No Remaining Qty' : 'Encode Repaired Product'),
+        React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: clearRepairForm }, 'Clear'),
+        React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: closeRepairModal }, 'Cancel')
+      )
+    )))
+  )
+  */
+      if (serverMessage) {
+        setError(serverMessage)
+      } else if (status > 0) {
+        setError(`Could not load bale records for Stock In (server reply ${status}).`)
+      } else {
+        setError('Could not load bale records for Stock In. Check if the backend is running and reachable.')
+      }
+    } finally {
+      setBaleStockLoading(false)
+    }
+  }, [])
+
   const fetchLowStock = useCallback(async () => {
     try { const res = await api.get('/inventory/alerts/low-stock'); setLowStock(res.data || []) } catch (e) { /* ignore */ }
   }, [])
 
   const fetchDamaged = useCallback(async () => {
-    try { const res = await api.get('/inventory/damaged'); setDamaged(res.data || []) } catch (e) { /* ignore */ }
+    try {
+      const query = []
+      if (damagedSourceFilter) query.push(`source=${encodeURIComponent(damagedSourceFilter)}`)
+      if (damagedFrom) query.push(`from=${encodeURIComponent(damagedFrom)}`)
+      if (damagedTo) query.push(`to=${encodeURIComponent(damagedTo)}`)
+      const url = query.length ? `/inventory/damaged?${query.join('&')}` : '/inventory/damaged'
+      const res = await api.get(url)
+      setDamaged((Array.isArray(res.data) ? res.data : []).map(normalizeDamagedRecord))
+    } catch (e) { /* ignore */ }
+  }, [damagedFrom, damagedSourceFilter, damagedTo])
+
+  const handleClearDamagedFilters = useCallback(async () => {
+    setDamagedSourceFilter('')
+    setDamagedFrom('')
+    setDamagedTo('')
+    try {
+      const res = await api.get('/inventory/damaged')
+      setDamaged((Array.isArray(res.data) ? res.data : []).map(normalizeDamagedRecord))
+    } catch (e) { /* ignore */ }
   }, [])
+
+  const ensureRepairCategories = useCallback(async () => {
+    if (Array.isArray(categories) && categories.length > 0) return categories
+    try {
+      const res = await api.get('/categories')
+      const rows = Array.isArray(res.data) ? res.data : []
+      setCategories(rows)
+      return rows
+    } catch (err) {
+      return []
+    }
+  }, [categories])
 
   const fetchShrinkage = useCallback(async () => {
     try { const res = await api.get('/inventory/reports/shrinkage'); setShrinkage(res.data || []) } catch (e) { /* ignore */ }
@@ -339,13 +860,19 @@ export default function Inventory() {
 
   useEffect(() => { fetchAll() }, [fetchAll])
   useEffect(() => {
+    if (tab === 'stock-in') {
+      fetchStockInRecords()
+    }
+    if (tab === 'stock-in' || tab === 'products') {
+      fetchBaleStockOptions()
+    }
     if (tab === 'transactions') fetchTransactions()
     if (tab === 'damaged') fetchDamaged()
     if (tab === 'low-stock') fetchLowStock()
     if (tab === 'shrinkage') fetchShrinkage()
     if (tab === 'reports') fetchSummary()
     if (tab === 'overview') { fetchSummary(); fetchLowStock() }
-  }, [tab, fetchTransactions, fetchDamaged, fetchLowStock, fetchShrinkage, fetchSummary])
+  }, [tab, fetchStockInRecords, fetchBaleStockOptions, fetchTransactions, fetchDamaged, fetchLowStock, fetchShrinkage, fetchSummary])
 
   useEffect(() => {
     if (location.pathname !== '/inventory') return
@@ -355,6 +882,19 @@ export default function Inventory() {
     params.set('tab', tab)
     navigate(`/inventory?${params.toString()}`, { replace: true, preventScrollReset: true })
   }, [location.pathname, location.search, location.hash, tab, navigate])
+
+  useEffect(() => {
+    if (!Array.isArray(baleStockOptions) || baleStockOptions.length === 0) {
+      if (selectedBaleStockOptionId) setSelectedBaleStockOptionId('')
+      return
+    }
+
+    if (!selectedBaleStockOptionId) return
+    const selectedStillExists = baleStockOptions.some((row) => String(row.bale_purchase_id) === String(selectedBaleStockOptionId))
+    if (!selectedStillExists) {
+      setSelectedBaleStockOptionId('')
+    }
+  }, [baleStockOptions, selectedBaleStockOptionId])
 
   useEffect(() => {
     if (tab !== 'barcode-labels') return undefined
@@ -517,7 +1057,7 @@ export default function Inventory() {
     return false
   }, [])
 
-  const sendProductToPos = useCallback((product) => {
+  const sendProductToPos = useCallback(async (product) => {
     const normalizedCode = normalizeScanCode(product?.barcode)
     if (!normalizedCode) {
       setError('Selected product has no barcode/QR code yet')
@@ -525,12 +1065,24 @@ export default function Inventory() {
     }
     if (!productAvailableForPos(product)) return false
 
+    const now = Date.now()
+    const lastSend = posSendStateRef.current
+    if (lastSend.pending && lastSend.code === normalizedCode) {
+      return true
+    }
+    if (lastSend.code === normalizedCode && (now - lastSend.at) < 250) {
+      return true
+    }
+
+    posSendStateRef.current = { code: normalizedCode, at: now, pending: true }
+    clearMessages()
+    posSendStateRef.current = { code: normalizedCode, at: Date.now(), pending: false }
     closeQrPreview()
-    navigate(`/sales?scan=${encodeURIComponent(normalizedCode)}`, { preventScrollReset: true })
+    navigate(`/sales?tab=pos&scan=${encodeURIComponent(normalizedCode)}`, { preventScrollReset: true })
     return true
   }, [closeQrPreview, navigate, productAvailableForPos])
 
-  const submitQrPreviewScan = useCallback((rawValue) => {
+  const submitQrPreviewScan = useCallback(async (rawValue) => {
     clearQrPreviewScanTimer()
     const normalizedCode = normalizeScanCode(rawValue)
     const previewCode = normalizeScanCode(qrPreviewProduct?.barcode)
@@ -549,9 +1101,8 @@ export default function Inventory() {
     }
 
     setQrPreviewScanValue('')
-    if (sendProductToPos(qrPreviewProduct)) {
-      showMsg(`Scanned ${qrPreviewProduct?.name || 'product'} from the digital QR preview`)
-    } else {
+    const sent = await sendProductToPos(qrPreviewProduct)
+    if (!sent) {
       focusQrPreviewScanInput()
     }
   }, [clearQrPreviewScanTimer, focusQrPreviewScanInput, qrPreviewProduct, sendProductToPos])
@@ -589,7 +1140,7 @@ export default function Inventory() {
         submitQrPreviewScan(e.currentTarget.value)
       },
       autoComplete: 'off',
-      'aria-hidden': 'true',
+      'aria-label': 'QR preview scanner capture',
       tabIndex: -1,
       style: {
         position: 'absolute',
@@ -694,8 +1245,7 @@ export default function Inventory() {
       setLabelProductId(String(product.id))
       setLabelCopies('1')
       setLabelScanValue('')
-      sendProductToPos(product)
-      return true
+      return await sendProductToPos(product)
     } catch (err) {
       setLabelScanValue('')
       const apiError = String(err?.response?.data?.error || '').trim()
@@ -1004,34 +1554,61 @@ export default function Inventory() {
   // ── Stock In ──
   const handleStockIn = async (e) => {
     e.preventDefault(); clearMessages()
-    
-    // Validate against threshold
-    const selectedProduct = products.find(p => p.id === Number(stockInForm.product_id))
-    if (selectedProduct) {
-      const newTotal = selectedProduct.stock_quantity + Number(stockInForm.quantity)
-      const threshold = selectedProduct.low_stock_threshold || 10
-      if (selectedProduct.stock_quantity > threshold) {
-        setError(`Cannot add stock: ${selectedProduct.name} is already above low stock threshold (Current: ${selectedProduct.stock_quantity}, Threshold: ${threshold})`)
-        return
-      }
-      if (newTotal > threshold * 10) {
-        setError(`Warning: Adding ${stockInForm.quantity} items would bring total to ${newTotal}, which is ${Math.floor(newTotal/threshold)}x the threshold. Please verify this is correct.`)
-        return
-      }
+
+    const productId = Number(stockInForm.product_id)
+    const quantity = Number(stockInForm.quantity)
+    const selectedProduct = products.find((p) => Number(p.id) === productId)
+
+    if (!selectedProduct) return setError('Please select a valid product')
+    if (productSourceKey(selectedProduct) !== 'manual') {
+      return setError(`This item is managed through ${productSourceLabel(selectedProduct)}. Use its dedicated creation flow instead of manual Stock In.`)
     }
-    
+    if (!Number.isFinite(quantity) || quantity <= 0) return setError('Quantity must be greater than 0')
+
     try {
       await api.post('/inventory/stock-in', {
-        product_id: Number(stockInForm.product_id),
-        quantity: Number(stockInForm.quantity),
+        product_id: productId,
+        quantity,
         reference: stockInForm.reference,
         date: stockInForm.date || undefined
       })
       setStockInForm({ product_id: '', quantity: '', reference: '', date: '' })
-      setStockInBarcode('')
       showMsg('Stock in recorded successfully')
       fetchAll()
-    } catch (err) { setError(err?.response?.data?.error || 'Stock in failed') }
+      fetchStockInRecords()
+    } catch (err) { setError(err?.response?.data?.error || 'Could not record manual stock in') }
+  }
+
+  const openCreateProductModal = (overrides = {}) => {
+    setEditingProduct(null)
+    const nextForm = createEmptyProductForm(overrides)
+    setProductForm(nextForm)
+
+    const selectedCategory = categories.find((category) => String(category.id) === String(nextForm.category_id || ''))
+    setCategorySearch(selectedCategory?.name || '')
+    setShowProductModal(true)
+  }
+
+  const startBaleIndividualCreate = () => {
+    clearMessages()
+    if (!selectedBaleStockOptionId) {
+      return setError('Choose a bale record first, then create one product at a time in Product Management.')
+    }
+
+    const premiumAvailable = Number(selectedBaleStockOption?.pending_premium ?? 0)
+    const standardAvailable = Number(selectedBaleStockOption?.pending_standard ?? 0)
+    const defaultGrade = premiumAvailable > 0
+      ? 'premium'
+      : standardAvailable > 0
+        ? 'standard'
+        : 'premium'
+
+    openCreateProductModal({
+      product_source: 'bale_breakdown',
+      bale_purchase_id: String(selectedBaleStockOptionId),
+      condition_grade: defaultGrade
+    })
+    navigate('/inventory?tab=products')
   }
 
   // ── Adjustment ──
@@ -1085,36 +1662,538 @@ export default function Inventory() {
       setDamageBarcode('')
       showMsg('Damage recorded')
       fetchAll()
+      fetchDamaged()
     } catch (err) { setError(err?.response?.data?.error || 'Damage record failed') }
   }
 
   // ── Product CRUD ──
+  const resetRepairModalState = useCallback(() => {
+    setRepairForm(createEmptyRepairForm())
+    setSelectedDamagedRecordKey('')
+    setRepairCategorySearch('')
+    setRepairCategoryDropdownOpen(false)
+  }, [])
+
+  const saveRepairDraft = useCallback(() => {
+    const currentSourceType = String(repairForm.damage_source_type || inferDamagedSourceType(repairForm)).trim().toLowerCase()
+    const currentSourceId = Number(repairForm.damage_source_id || inferDamagedSourceId(repairForm, currentSourceType))
+    const recordIsSelected = Boolean(currentSourceType) && Number.isInteger(currentSourceId) && currentSourceId > 0
+    if (!selectedDamagedRecordKey || !recordIsSelected) return
+    setRepairDrafts((drafts) => ({
+      ...drafts,
+      [selectedDamagedRecordKey]: createRepairDraft(repairForm, repairCategorySearch)
+    }))
+  }, [repairCategorySearch, repairForm, selectedDamagedRecordKey])
+
+  const clearRepairForm = useCallback(() => {
+    if (selectedDamagedRecordKey) {
+      setRepairDrafts((drafts) => {
+        if (!drafts[selectedDamagedRecordKey]) return drafts
+        const nextDrafts = { ...drafts }
+        delete nextDrafts[selectedDamagedRecordKey]
+        return nextDrafts
+      })
+    }
+    resetRepairModalState()
+  }, [resetRepairModalState, selectedDamagedRecordKey])
+
+  const closeRepairModal = useCallback(() => {
+    saveRepairDraft()
+    setShowRepairModal(false)
+    resetRepairModalState()
+  }, [resetRepairModalState, saveRepairDraft])
+
+  const startRepairDamagedItem = useCallback(async (row) => {
+    if (!row) return
+    const normalizedRow = normalizeDamagedRecord(row)
+    clearMessages()
+    const availableCategories = await ensureRepairCategories()
+    const recordKey = String(normalizedRow.record_key || `${normalizedRow.damage_source_type}-${normalizedRow.damage_source_id}`)
+    const savedDraft = repairDrafts[recordKey] || null
+    const preferredCategoryId = String(savedDraft?.category_id || normalizedRow.category_id || '')
+    const matchedCategory = availableCategories.find((category) => String(category?.id) === preferredCategoryId)
+    setSelectedDamagedRecordKey(recordKey)
+    setRepairForm(createEmptyRepairForm({
+      damage_source_type: normalizedRow.damage_source_type || '',
+      damage_source_id: String(normalizedRow.damage_source_id || ''),
+      source_label: normalizedRow.source_label || 'Damage Record',
+      source_name: normalizedRow.source_name || normalizedRow.product_name || '',
+      original_quantity: Number(normalizedRow.original_quantity || normalizedRow.quantity || 0),
+      repaired_quantity: Number(normalizedRow.repaired_quantity || 0),
+      remaining_quantity: Number(normalizedRow.remaining_quantity ?? normalizedRow.quantity ?? 0),
+      quantity: savedDraft?.quantity || '1',
+      suggested_name: normalizedRow.suggested_name || normalizedRow.product_name || '',
+      sku: savedDraft?.sku || '',
+      name: savedDraft?.name || '',
+      brand: savedDraft?.brand ?? (normalizedRow.brand || ''),
+      description: savedDraft?.description ?? (normalizedRow.description || ''),
+      category_id: preferredCategoryId,
+      price: savedDraft?.price ?? (normalizedRow.price ? String(normalizedRow.price) : ''),
+      low_stock_threshold: savedDraft?.low_stock_threshold ?? String(normalizedRow.low_stock_threshold ?? 0),
+      size: savedDraft?.size ?? (normalizedRow.size || ''),
+      barcode: savedDraft?.barcode || '',
+      reported_by_name: normalizedRow.reported_by_name || '',
+      created_at: normalizedRow.created_at || ''
+    }))
+    setRepairCategorySearch(savedDraft?.category_search || matchedCategory?.name || '')
+    setRepairCategoryDropdownOpen(false)
+    if (!normalizedRow.category_id && availableCategories.length === 0) {
+      setError('Categories could not be loaded. Check backend permissions or create at least one category first.')
+    }
+    setShowRepairModal(true)
+  }, [ensureRepairCategories, repairDrafts])
+
+  const handleRepairDamagedItem = async (e) => {
+    e.preventDefault()
+    clearMessages()
+
+    const damageSourceType = repairFormSourceType
+    const damageSourceId = repairFormSourceId
+    const categoryId = Number(repairForm.category_id)
+    const normalizedName = String(repairForm.name || '').trim()
+    const normalizedPrice = Number(repairForm.price)
+    const normalizedQuantity = Number(repairForm.quantity)
+    const normalizedLowStockThreshold = repairForm.low_stock_threshold === '' || repairForm.low_stock_threshold === undefined
+      ? 0
+      : Number(repairForm.low_stock_threshold)
+
+    if (!damageSourceType || !Number.isInteger(damageSourceId) || damageSourceId <= 0) {
+      return setError('Choose a damaged record to receive first')
+    }
+    if (!normalizedName) return setError('Product name is required')
+    if (!Number.isInteger(categoryId) || categoryId <= 0) return setError('Category is required')
+    if (!Number.isFinite(normalizedPrice) || normalizedPrice <= 0) return setError('Selling price must be greater than 0')
+    if (!Number.isInteger(normalizedQuantity) || normalizedQuantity <= 0) return setError('Quantity must be a positive whole number')
+    if (normalizedQuantity > repairFormRemainingQuantity) return setError(`Quantity cannot exceed remaining units (${repairFormRemainingQuantity})`)
+    if (!Number.isFinite(normalizedLowStockThreshold) || normalizedLowStockThreshold < 0) {
+      return setError('Low stock threshold must be 0 or greater')
+    }
+
+    try {
+      const payload = {
+        damage_source_type: damageSourceType,
+        damage_source_id: damageSourceId,
+        quantity: normalizedQuantity,
+        sku: String(repairForm.sku || '').trim() || undefined,
+        name: normalizedName,
+        brand: String(repairForm.brand || '').trim() || undefined,
+        description: String(repairForm.description || '').trim() || undefined,
+        category_id: categoryId,
+        price: normalizedPrice,
+        low_stock_threshold: Math.floor(normalizedLowStockThreshold),
+        size: String(repairForm.size || '').trim() || undefined,
+        barcode: String(repairForm.barcode || '').trim() || undefined
+      }
+
+      const res = await api.post('/inventory/damaged/repair', payload)
+      const createdProduct = res?.data?.product || null
+      const quantityReceived = Number(res?.data?.quantity_received || normalizedQuantity)
+      showMsg(
+        createdProduct?.sku
+          ? `Received repaired product in Product Management: ${createdProduct.name} (${createdProduct.sku}) with stock ${quantityReceived}`
+          : `Received repaired product in Product Management with stock ${quantityReceived}`
+      )
+      if (selectedDamagedRecordKey) {
+        setRepairDrafts((drafts) => {
+          if (!drafts[selectedDamagedRecordKey]) return drafts
+          const nextDrafts = { ...drafts }
+          delete nextDrafts[selectedDamagedRecordKey]
+          return nextDrafts
+        })
+      }
+      setShowRepairModal(false)
+      resetRepairModalState()
+      await Promise.all([
+        fetchDamaged(),
+        fetchAll()
+      ])
+    } catch (err) {
+      if (Number(err?.response?.status) === 404) {
+        setError('Receive repaired endpoint was not found. Restart the backend so the latest inventory route loads.')
+      } else {
+        setError(err?.response?.data?.error || 'Failed to receive repaired product')
+      }
+    }
+  }
+
+  const renderRepairModal = () => (
+    showRepairModal && React.createElement('div', {
+      className: 'modal-backdrop',
+      onClick: closeRepairModal
+    },
+    React.createElement('div', {
+      className: 'modal',
+      style: { maxWidth: 860, width: '94%' },
+      onClick: (e) => e.stopPropagation()
+    },
+    React.createElement('div', { className: 'modal-header' },
+      React.createElement('h2', null, 'Receive Repaired Product'),
+      React.createElement('button', {
+        type: 'button',
+        className: 'modal-close',
+        onClick: closeRepairModal
+      }, '×')
+    ),
+    React.createElement('form', { onSubmit: handleRepairDamagedItem },
+      React.createElement('div', { className: 'modal-body inventory-damaged-modal-body' },
+        React.createElement('div', {
+          className: 'inventory-damaged-modal-grid',
+          style: { marginBottom: 14 }
+        },
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Damage Source'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: repairFormRecordSelected
+                ? `${repairForm.source_label || 'Damage'} #${repairForm.damage_source_id || ''}`
+                : 'Select a damage record',
+              readOnly: true,
+              disabled: true
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Original Qty'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: Number(repairForm.original_quantity || 0),
+              readOnly: true,
+              disabled: true
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Already Received'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: Number(repairForm.repaired_quantity || 0),
+              readOnly: true,
+              disabled: true
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Remaining Qty'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: repairFormRemainingQuantity,
+              readOnly: true,
+              disabled: true
+            })
+          )
+        ),
+        React.createElement('div', {
+          className: 'inventory-damaged-modal-grid'
+        },
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Quantity *'),
+            React.createElement('input', {
+              className: 'form-input',
+              type: 'number',
+              min: 1,
+              max: Math.max(1, repairFormRemainingQuantity || 1),
+              step: 1,
+              value: repairForm.quantity,
+              onChange: (e) => setRepairForm((form) => ({ ...form, quantity: e.target.value })),
+              required: true
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'SKU'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: repairForm.sku,
+              onChange: (e) => setRepairForm((form) => ({ ...form, sku: e.target.value })),
+              placeholder: 'Auto-generated if blank'
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Name *'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: repairForm.name,
+              onChange: (e) => setRepairForm((form) => ({ ...form, name: e.target.value })),
+              required: true
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Barcode'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: repairForm.barcode,
+              onChange: (e) => setRepairForm((form) => ({ ...form, barcode: e.target.value })),
+              placeholder: 'Auto-generated if blank'
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0, position: 'relative' } },
+            React.createElement('label', { className: 'form-label' }, 'Category *'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: repairCategorySearch,
+              onChange: (e) => {
+                const nextValue = e.target.value
+                const matchedCategory = categories.find((category) => String(category?.name || '').toLowerCase() === nextValue.trim().toLowerCase())
+                setRepairCategorySearch(nextValue)
+                setRepairCategoryDropdownOpen(true)
+                setRepairForm((form) => ({ ...form, category_id: matchedCategory ? String(matchedCategory.id) : '' }))
+              },
+              onFocus: () => setRepairCategoryDropdownOpen(true),
+              placeholder: '- Search or select category -',
+              autoComplete: 'off',
+              required: true
+            }),
+            repairCategoryDropdownOpen && React.createElement('div', {
+              style: {
+                position: 'absolute',
+                top: '100%',
+                left: 0,
+                right: 0,
+                zIndex: 50,
+                background: 'var(--card-bg, #fff)',
+                border: '1px solid var(--border, #ddd)',
+                borderRadius: 6,
+                maxHeight: 220,
+                overflowY: 'auto',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.12)'
+              }
+            },
+              filteredRepairCategories.length === 0
+                ? React.createElement('div', {
+                  style: { padding: '10px 14px', color: 'var(--text-light, #999)', fontSize: 13 }
+                }, 'No categories found')
+                : filteredRepairCategories.map((category) => React.createElement('div', {
+                  key: `repair-category-active-${category.id}`,
+                  style: {
+                    padding: '8px 14px',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    background: String(repairForm.category_id) === String(category.id) ? 'var(--gold-light, #fef3c7)' : 'transparent',
+                    borderBottom: '1px solid var(--border-light, #f0f0f0)'
+                  },
+                  onMouseDown: (e) => {
+                    e.preventDefault()
+                    setRepairForm((form) => ({ ...form, category_id: String(category.id) }))
+                    setRepairCategorySearch(category.name)
+                    setRepairCategoryDropdownOpen(false)
+                  },
+                  onMouseEnter: (e) => { e.currentTarget.style.background = 'var(--gold-light, #fef3c7)' },
+                  onMouseLeave: (e) => { e.currentTarget.style.background = String(repairForm.category_id) === String(category.id) ? 'var(--gold-light, #fef3c7)' : 'transparent' }
+                }, category.name))
+            ),
+            repairCategoryDropdownOpen && React.createElement('div', {
+              style: { position: 'fixed', inset: 0, zIndex: 49 },
+              onClick: () => setRepairCategoryDropdownOpen(false)
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Brand'),
+            React.createElement('input', {
+              className: 'form-input',
+              value: repairForm.brand,
+              onChange: (e) => setRepairForm((form) => ({ ...form, brand: e.target.value })),
+              placeholder: 'Brand name'
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Selling Price *'),
+            React.createElement('input', {
+              className: 'form-input',
+              type: 'number',
+              min: '0.01',
+              step: '0.01',
+              value: repairForm.price,
+              onChange: (e) => setRepairForm((form) => ({ ...form, price: e.target.value })),
+              required: true
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Low Stock Threshold'),
+            React.createElement('input', {
+              className: 'form-input',
+              type: 'number',
+              min: 0,
+              step: 1,
+              value: repairForm.low_stock_threshold,
+              onChange: (e) => setRepairForm((form) => ({ ...form, low_stock_threshold: e.target.value }))
+            })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Size'),
+            React.createElement('select', {
+              className: 'form-input',
+              value: repairForm.size,
+              onChange: (e) => setRepairForm((form) => ({ ...form, size: e.target.value }))
+            },
+              React.createElement('option', { value: '' }, '- Select size -'),
+              ...PRODUCT_SIZE_OPTIONS.map((option) => React.createElement('option', {
+                key: `repair-size-${option.value}`,
+                value: option.value
+              }, option.label))
+            )
+          )
+        ),
+        React.createElement('div', { className: 'form-group', style: { marginTop: 12, marginBottom: 0 } },
+          React.createElement('label', { className: 'form-label' }, 'Description'),
+          React.createElement('textarea', {
+            className: 'form-input',
+            rows: 2,
+            value: repairForm.description,
+            onChange: (e) => setRepairForm((form) => ({ ...form, description: e.target.value })),
+            placeholder: 'Optional details about this received repaired product'
+          })
+        ),
+      ),
+      React.createElement('div', { className: 'modal-footer' },
+        React.createElement('button', {
+          type: 'submit',
+          className: 'btn btn-primary',
+          disabled: !repairFormRecordSelected || repairFormRemainingQuantity <= 0
+        }, repairFormRemainingQuantity <= 0 ? 'No Units Left' : 'Receive Repaired Product'),
+        React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: clearRepairForm }, 'Clear'),
+        React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: closeRepairModal }, 'Cancel')
+      )
+    )))
+  )
+
   const handleSaveProduct = async (e) => {
     e.preventDefault(); clearMessages()
     try {
       const payload = { ...productForm }
+      const isEditing = Boolean(editingProduct)
+      const sourceKey = String(payload.product_source || 'manual').trim().toLowerCase()
+      const normalizedSource = sourceKey === 'bale_breakdown'
+        ? 'bale_breakdown'
+        : sourceKey === 'repaired_damage'
+          ? 'repaired_damage'
+          : 'manual'
+      const isSystemManagedSource = normalizedSource === 'bale_breakdown' || normalizedSource === 'repaired_damage'
+
+      payload.name = String(payload.name || '').trim()
       payload.sku = String(payload.sku || '').trim()
       payload.barcode = String(payload.barcode || '').trim()
-      if (payload.price) payload.price = Number(payload.price)
-      if (payload.cost) payload.cost = Number(payload.cost)
-      if (payload.stock_quantity) payload.stock_quantity = Number(payload.stock_quantity)
-      if (payload.low_stock_threshold) payload.low_stock_threshold = Number(payload.low_stock_threshold)
-      if (payload.category_id) payload.category_id = Number(payload.category_id)
-      if (!payload.sku) delete payload.sku
-      if (!payload.barcode && !editingProduct) delete payload.barcode
+      payload.brand = String(payload.brand || '').trim()
+      payload.description = String(payload.description || '').trim()
 
-      if (editingProduct) {
-        await api.put(`/products/${editingProduct}`, payload)
+      payload.price = Number(payload.price)
+      payload.stock_quantity = payload.stock_quantity === '' || payload.stock_quantity === undefined
+        ? 1
+        : Number(payload.stock_quantity)
+      payload.low_stock_threshold = payload.low_stock_threshold === '' || payload.low_stock_threshold === undefined
+        ? 10
+        : Number(payload.low_stock_threshold)
+      payload.category_id = payload.category_id ? Number(payload.category_id) : null
+
+      if (!payload.name) return setError('Product name is required')
+      if (!Number.isFinite(payload.price) || payload.price <= 0) return setError('Selling price must be greater than 0')
+      if (!Number.isFinite(payload.stock_quantity) || payload.stock_quantity < 0) return setError('Stock quantity must be 0 or greater')
+      payload.stock_quantity = Math.floor(payload.stock_quantity)
+      payload.low_stock_threshold = Number.isFinite(payload.low_stock_threshold) ? Math.max(0, payload.low_stock_threshold) : 10
+
+      if (!isEditing && normalizedSource === 'bale_breakdown') {
+        const balePurchaseId = Number(payload.bale_purchase_id)
+        if (!Number.isInteger(balePurchaseId) || balePurchaseId <= 0) {
+          return setError('Choose a bale record before creating this product')
+        }
+
+        const conditionGrade = String(payload.condition_grade || '').trim().toLowerCase()
+        if (!['premium', 'standard'].includes(conditionGrade)) {
+          return setError('Choose Product Type: Premium or Standard')
+        }
+
+        const baleOption = baleStockOptions.find((row) => String(row.bale_purchase_id) === String(balePurchaseId))
+        const availableForGrade = conditionGrade === 'premium'
+          ? Number(baleOption?.pending_premium ?? 0)
+          : Number(baleOption?.pending_standard ?? 0)
+        const gradeLabel = conditionGrade === 'premium' ? 'Premium' : 'Standard'
+
+        if (availableForGrade <= 0) {
+          return setError(`No more ${gradeLabel} quantity available for this bale record.`)
+        }
+
+        payload.product_source = 'bale_breakdown'
+        payload.bale_purchase_id = balePurchaseId
+        payload.condition_grade = conditionGrade
+      } else if (!isEditing) {
+        payload.product_source = 'manual'
+        delete payload.bale_purchase_id
+        delete payload.condition_grade
+      }
+
+      delete payload.source_breakdown_id
+      delete payload.allocated_cost
+      delete payload.status
+      delete payload.date_encoded
+
+      if (isEditing) {
+        delete payload.product_source
+        delete payload.bale_purchase_id
+        delete payload.condition_grade
+        if (isSystemManagedSource) delete payload.stock_quantity
+      }
+
+      if (!payload.sku) delete payload.sku
+      if (!payload.barcode && !isEditing) delete payload.barcode
+      if (!payload.brand) delete payload.brand
+      if (!payload.description) delete payload.description
+
+      if (isEditing) {
+        try {
+          await api.put(`/products/${editingProduct}`, payload)
+        } catch (updateErr) {
+          const backendMessage = String(updateErr?.response?.data?.error || '').toLowerCase()
+          const isLegacyStockQuantityRule = backendMessage.includes('stock quantity is managed through stock in')
+
+          if (!isLegacyStockQuantityRule) {
+            throw updateErr
+          }
+
+          const editingProductId = Number(editingProduct)
+          const previousStockQuantity = Number(
+            products.find((row) => Number(row.id) === editingProductId)?.stock_quantity ?? 0
+          )
+          const nextStockQuantity = Number(payload.stock_quantity)
+          const stockDelta = Math.floor(nextStockQuantity) - Math.floor(previousStockQuantity)
+
+          const updatePayloadWithoutStock = { ...payload }
+          delete updatePayloadWithoutStock.stock_quantity
+
+          await api.put(`/products/${editingProduct}`, updatePayloadWithoutStock)
+
+          if (stockDelta > 0) {
+            await api.post('/inventory/stock-in', {
+              product_id: editingProductId,
+              quantity: stockDelta,
+              reference: 'PRODUCT_EDIT_QUANTITY_COMPAT',
+              date: new Date().toISOString().slice(0, 10)
+            })
+          } else if (stockDelta < 0) {
+            await api.post('/inventory/stock-out/adjust', {
+              product_id: editingProductId,
+              quantity: Math.abs(stockDelta),
+              reason: 'Quantity adjusted from Product Management'
+            })
+          }
+        }
+
         showMsg('Product updated')
+        await fetchAll()
       } else {
         await api.post('/products', payload)
-        showMsg('Product created')
+        const gradeLabel = payload.condition_grade === 'premium'
+          ? 'Premium'
+          : payload.condition_grade === 'standard'
+            ? 'Standard'
+            : null
+
+        showMsg(gradeLabel ? `${gradeLabel} product created successfully.` : 'Product created')
+        await Promise.all([
+          fetchAll(),
+          fetchBaleStockOptions(),
+          fetchStockInRecords()
+        ])
       }
-      setProductForm({ sku: '', name: '', brand: '', description: '', category_id: '', price: '', cost: '', stock_quantity: '', low_stock_threshold: '10', size: '', color: '', barcode: '' })
+
+      setProductForm(createEmptyProductForm())
       setCategorySearch('')
       setEditingProduct(null)
       setShowProductModal(false)
-      fetchAll()
     } catch (err) { setError(err?.response?.data?.error || 'Save product failed') }
   }
 
@@ -1122,9 +2201,14 @@ export default function Inventory() {
     setEditingProduct(p.id)
     setProductForm({
       sku: p.sku || '', name: p.name || '', brand: p.brand || '', description: p.description || '',
-      category_id: p.category_id || '', price: p.price || '', cost: p.cost || '',
-      stock_quantity: p.stock_quantity || '', low_stock_threshold: p.low_stock_threshold || '10',
-      size: p.size || '', color: p.color || '', barcode: p.barcode || ''
+      category_id: p.category_id || '', price: p.price || '',
+      stock_quantity: String(p.stock_quantity ?? 0), low_stock_threshold: p.low_stock_threshold || '10',
+      size: p.size || '',
+      barcode: p.barcode || '',
+      product_source: p.product_source || (Number(p.bale_purchase_id || 0) > 0 ? 'bale_breakdown' : 'manual'),
+      source_breakdown_id: p.source_breakdown_id || '',
+      bale_purchase_id: p.bale_purchase_id ? String(p.bale_purchase_id) : '',
+      condition_grade: String(p.condition_grade || '').trim().toLowerCase() || 'premium'
     })
     setCategorySearch(p.category || '')
     setShowProductModal(true)
@@ -1141,9 +2225,15 @@ export default function Inventory() {
   }
 
   // ── Select helper ──
-  const barcodeReadyProducts = products.filter((p) => normalizeScanCode(p.barcode))
+  const activeProducts = products.filter((p) => Number(p?.is_active ?? 1) !== 0)
+  const listedProducts = activeProducts
+  const manualStockInProducts = activeProducts.filter((p) => productSourceKey(p) === 'manual')
+  const barcodeReadyProducts = activeProducts.filter((p) => normalizeScanCode(p.barcode))
   const productOptions = products.map(p =>
     React.createElement('option', { key: p.id, value: p.id }, `${p.sku ? p.sku + ' — ' : ''}${p.name} (Stock: ${p.stock_quantity})`)
+  )
+  const stockInProductOptions = manualStockInProducts.map(p =>
+    React.createElement('option', { key: `stock-in-${p.id}`, value: p.id }, `${p.sku ? p.sku + ' — ' : ''}${p.name} (Stock: ${p.stock_quantity})`)
   )
   const barcodeProductOptions = barcodeReadyProducts.map((p) =>
     React.createElement('option', { key: `barcode-${p.id}`, value: p.id }, `${p.sku ? `${p.sku} - ` : ''}${p.name} (${normalizeScanCode(p.barcode)})`)
@@ -1155,6 +2245,88 @@ export default function Inventory() {
   // ── Tabs ──
   const resolvedLabelRows = buildLabelRows()
   const totalLabelCopies = resolvedLabelRows.reduce((sum, row) => sum + (Number(row.copies) || 0), 0)
+  const baleOptionByPurchaseId = useMemo(() => {
+    const nextMap = new Map()
+    for (const row of baleStockOptions || []) {
+      nextMap.set(String(row.bale_purchase_id), row)
+    }
+    return nextMap
+  }, [baleStockOptions])
+  const selectedBaleStockOption = useMemo(() => (
+    baleStockOptions.find((row) => String(row.bale_purchase_id) === String(selectedBaleStockOptionId)) || null
+  ), [baleStockOptions, selectedBaleStockOptionId])
+  const selectedBaleListedProducts = useMemo(() => (
+    !selectedBaleStockOption
+      ? []
+      : listedProducts.filter((product) => String(product?.bale_purchase_id || '') === String(selectedBaleStockOptionId))
+  ), [listedProducts, selectedBaleStockOption, selectedBaleStockOptionId])
+  const selectedBaleReadyProducts = useMemo(() => (
+    selectedBaleListedProducts.filter((product) => Number(product?.stock_quantity || 0) > 0)
+  ), [selectedBaleListedProducts])
+  const baleStockSummary = useMemo(() => {
+    return (baleStockOptions || []).reduce((acc, row) => {
+      acc.breakdownRecords += 1
+      acc.leftToStockIn += Number(row.left_to_stock_in ?? row.pending_total ?? 0)
+      acc.readyForProductManagement += Number(row.ready_for_product_management ?? row.stocked_total ?? 0)
+      const saleableTotal = row.saleable_total ?? (Number(row.premium_total || 0) + Number(row.standard_total || 0))
+      acc.saleableTotal += Number(saleableTotal || 0)
+      return acc
+    }, {
+      breakdownRecords: 0,
+      leftToStockIn: 0,
+      readyForProductManagement: 0,
+      saleableTotal: 0
+    })
+  }, [baleStockOptions])
+  const selectedBalePremiumTotal = Number(selectedBaleStockOption?.premium_total ?? 0)
+  const selectedBaleStandardTotal = Number(selectedBaleStockOption?.standard_total ?? 0)
+  const selectedBaleTotalItems = Number(
+    selectedBaleStockOption?.saleable_total
+      ?? (selectedBalePremiumTotal + selectedBaleStandardTotal)
+  )
+  const selectedBaleLeftToStockIn = Number(selectedBaleStockOption?.left_to_stock_in ?? selectedBaleStockOption?.pending_total ?? 0)
+  const selectedBaleReadyForProductManagement = selectedBaleStockOption
+    ? selectedBaleReadyProducts.length
+    : 0
+  const selectedBalePendingPremium = Number(
+    selectedBaleStockOption?.pending_premium
+      ?? Math.max(Number(selectedBaleStockOption?.premium_total || 0) - Number(selectedBaleStockOption?.premium_stocked || 0), 0)
+  )
+  const selectedBalePendingStandard = Number(
+    selectedBaleStockOption?.pending_standard
+      ?? Math.max(Number(selectedBaleStockOption?.standard_total || 0) - Number(selectedBaleStockOption?.standard_stocked || 0), 0)
+  )
+  const selectedBalePendingTotal = selectedBalePendingPremium + selectedBalePendingStandard
+  const currentProductsListedCount = listedProducts.length
+  const currentProductsInStockCount = listedProducts.filter((product) => Number(product?.stock_quantity || 0) > 0).length
+  const currentBaleLinkedProductsCount = listedProducts.filter((product) => productSourceKey(product) === 'bale_breakdown').length
+  const currentIndividualProductsCount = listedProducts.filter((product) => productSourceKey(product) !== 'bale_breakdown').length
+  const damagedRepairableRecordCount = damaged.filter((record) => Number(record?.remaining_quantity ?? record?.quantity ?? 0) > 0).length
+  const damagedFullyRepairedCount = damaged.filter((record) => Number(record?.remaining_quantity ?? record?.quantity ?? 0) <= 0).length
+  const damagedRemainingUnitCount = damaged.reduce((total, record) => total + Number(record?.remaining_quantity ?? record?.quantity ?? 0), 0)
+  const repairFormSourceType = String(repairForm.damage_source_type || inferDamagedSourceType(repairForm)).trim().toLowerCase()
+  const repairFormSourceId = Number(repairForm.damage_source_id || inferDamagedSourceId(repairForm, repairFormSourceType))
+  const repairFormRecordSelected = Boolean(repairFormSourceType) && Number.isInteger(repairFormSourceId) && repairFormSourceId > 0
+  const repairFormRemainingQuantity = Number(repairForm.remaining_quantity || 0)
+  const filteredRepairCategories = useMemo(() => {
+    const normalizedSearch = String(repairCategorySearch || '').trim().toLowerCase()
+    return categories.filter((category) => !normalizedSearch || String(category?.name || '').toLowerCase().includes(normalizedSearch))
+  }, [categories, repairCategorySearch])
+  const isCreateBaleSource = !editingProduct && String(productForm.product_source || 'manual').toLowerCase() === 'bale_breakdown'
+  const isEditingBaleProduct = Boolean(editingProduct) && String(productForm.product_source || 'manual').toLowerCase() === 'bale_breakdown'
+  const isEditingRepairedProduct = Boolean(editingProduct) && String(productForm.product_source || 'manual').toLowerCase() === 'repaired_damage'
+  const isSystemManagedProductQuantity = isCreateBaleSource || isEditingBaleProduct || isEditingRepairedProduct
+  const productFormBaleOption = useMemo(() => (
+    baleStockOptions.find((row) => String(row.bale_purchase_id) === String(productForm.bale_purchase_id || '')) || null
+  ), [baleStockOptions, productForm.bale_purchase_id])
+  const productFormPendingPremium = Number(productFormBaleOption?.pending_premium ?? 0)
+  const productFormPendingStandard = Number(productFormBaleOption?.pending_standard ?? 0)
+  const productFormSelectedGrade = String(productForm.condition_grade || '').trim().toLowerCase() === 'standard'
+    ? 'standard'
+    : 'premium'
+  const productFormAvailableForSelectedGrade = productFormSelectedGrade === 'premium'
+    ? productFormPendingPremium
+    : productFormPendingStandard
   const previewQueuedQr = () => {
     const preferredProductId = Number(labelProductId) || Number(resolvedLabelRows[0]?.product_id)
     const product = products.find((item) => Number(item.id) === preferredProductId)
@@ -1178,17 +2350,21 @@ export default function Inventory() {
   // Dynamic tab labels
   const tabLabels = {
     'overview': { title: 'Inventory Overview', subtitle: 'View summary, stock levels, and key metrics.' },
-    'stock-in': { title: 'Stock In', subtitle: 'Record direct purchases and stock received into inventory.' },
+    'stock-in': { title: 'Stock In', subtitle: 'Review bale availability, then create each item one by one in Product Management with complete product details.' },
     'stock-out': { title: 'Stock Out', subtitle: 'Record adjustments, shrinkage, and damage.' },
-    'products': { title: 'Product Management', subtitle: 'Create, edit, and manage inventory products.' },
+    'products': { title: 'Product Management', subtitle: 'Create, edit, and manage sellable products, including received repaired items.' },
     'barcode-labels': { title: 'Barcode Labels', subtitle: 'Print barcodes and QR labels for products.' },
     'transactions': { title: 'Inventory Transactions', subtitle: 'View all inventory transactions and adjustments.' },
-    'damaged': { title: 'Damaged Items', subtitle: 'Track products marked as damaged or unsellable.' },
+    'damaged': { title: 'Damaged Items', subtitle: 'Track damage recorded from manual stock-out, sales returns, and bale breakdown data, then receive repaired items back into Product Management.' },
     'low-stock': { title: 'Low Stock Alerts', subtitle: 'Monitor products below threshold quantity.' },
     'shrinkage': { title: 'Shrinkage Report', subtitle: 'Losses from theft, errors, or unexplained causes.' },
     'reports': { title: 'Inventory Reports', subtitle: 'Analytics and detailed inventory reports.' }
   }
   const currentLabel = tabLabels[tab] || tabLabels['overview']
+  const editingProductRow = products.find((p) => Number(p.id) === Number(editingProduct)) || null
+  const editingProductSourceText = editingProductRow
+    ? productSourceLabel(editingProductRow)
+    : productSourceLabel(productForm)
 
   return React.createElement('div', { className: 'page' },
     React.createElement('div', { className: 'page-header' },
@@ -1246,64 +2422,189 @@ export default function Inventory() {
             )
           )
         )
+      ),
+      false && React.createElement('div', { className: 'card', style: { marginTop: 20 } },
+        React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12, flexWrap: 'wrap' } },
+          React.createElement('h3', { style: { margin: 0 } }, `Stock In Records (${stockInRecords.length})`),
+          React.createElement('button', { className: 'btn btn-secondary btn-sm', type: 'button', onClick: fetchStockInRecords }, 'Refresh')
+        ),
+        React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 16 } },
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Source'),
+            React.createElement('select', { className: 'form-input', value: stockInSourceFilter, onChange: (event) => setStockInSourceFilter(event.target.value) },
+              React.createElement('option', { value: '' }, 'All stock-in records'),
+              React.createElement('option', { value: 'manual_stock_in' }, 'Manual Stock In'),
+              React.createElement('option', { value: 'bale_breakdown' }, 'Bale Breakdown')
+            )
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'From'),
+            React.createElement('input', { className: 'form-input', type: 'date', value: stockInFrom, onChange: (event) => setStockInFrom(event.target.value), max: stockInTo || undefined })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'To'),
+            React.createElement('input', { className: 'form-input', type: 'date', value: stockInTo, onChange: (event) => setStockInTo(event.target.value), min: stockInFrom || undefined })
+          )
+        ),
+        React.createElement('div', { className: 'table-wrap' },
+          React.createElement('table', null,
+            React.createElement('thead', null,
+              React.createElement('tr', null,
+                React.createElement('th', null, 'Date'),
+                React.createElement('th', null, 'Source'),
+                React.createElement('th', null, 'Product'),
+                React.createElement('th', null, 'Qty'),
+                React.createElement('th', null, 'Reference'),
+                React.createElement('th', null, 'User')
+              )
+            ),
+            React.createElement('tbody', null,
+              stockInRecords.length === 0
+                ? React.createElement('tr', null, React.createElement('td', { colSpan: 6, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No stock-in records found for this filter.'))
+                : stockInRecords.map((record) => React.createElement('tr', { key: `stock-in-record-${record.id}` },
+                    React.createElement('td', null, fmtDate(record.created_at)),
+                    React.createElement('td', null, record.source_label || 'Inventory'),
+                    React.createElement('td', null, `${record.sku ? `${record.sku} â€” ` : ''}${record.product_name || ''}`),
+                    React.createElement('td', { style: { fontWeight: 600, color: 'var(--success)' } }, `+${record.quantity}`),
+                    React.createElement('td', null, formatTransactionReference(record.reference)),
+                    React.createElement('td', null, record.user_name || 'â€”')
+                  ))
+            )
+          )
+        )
       )
     ),
 
     // ═══════════════ STOCK IN ═══════════════
     tab === 'stock-in' && React.createElement('div', null,
       React.createElement('div', { className: 'card' },
-        React.createElement('h3', { style: { marginBottom: 16 } }, 'Direct Purchase — Stock In'),
-        React.createElement('form', { onSubmit: handleStockIn },
-          React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 } },
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Scan Barcode'),
-              React.createElement('input', {
-                className: 'form-input',
-                value: stockInBarcode,
-                onChange: (e) => setStockInBarcode(e.target.value),
-                onKeyDown: (e) => {
-                  if (e.key !== 'Enter') return
-                  e.preventDefault()
-                  handleFormBarcodeScan(e.currentTarget.value, setStockInBarcode, setStockInForm)
+        React.createElement('h3', { style: { marginBottom: 16 } }, 'Stock In'),
+        React.createElement('div', { className: 'form-group', style: { maxWidth: 280 } },
+          React.createElement('label', { className: 'form-label' }, 'Stock In Mode'),
+          React.createElement('select', {
+            className: 'form-input',
+            value: stockInMode,
+            onChange: (e) => setStockInMode(e.target.value)
+          },
+            React.createElement('option', { value: 'bale' }, 'From Bale Record'),
+            React.createElement('option', { value: 'manual' }, 'Manual Product Entry')
+          )
+        ),
+
+        stockInMode === 'bale'
+          ? React.createElement('div', null,
+              React.createElement('div', { className: 'form-group', style: { maxWidth: 560, marginBottom: 14 } },
+                React.createElement('label', { className: 'form-label' }, 'Bale Record'),
+                React.createElement('select', {
+                  className: 'form-input',
+                  value: selectedBaleStockOptionId,
+                  onChange: (e) => setSelectedBaleStockOptionId(e.target.value),
+                  disabled: baleStockLoading,
+                  required: true
                 },
-                placeholder: 'Scan barcode then press Enter'
-              })
-            ),
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Product *'),
-              React.createElement('select', {
-                className: 'form-input',
-                value: stockInForm.product_id,
-                onChange: (e) => {
-                  const nextProductId = e.target.value
-                  setStockInForm((f) => ({ ...f, product_id: nextProductId }))
-                  const selected = products.find((p) => String(p.id) === String(nextProductId))
-                  setStockInBarcode(selected?.barcode || '')
-                },
-                required: true
+                  React.createElement('option', { value: '' }, baleStockLoading ? 'Loading bale records...' : 'Choose a bale record'),
+                  ...baleStockOptions.map((row) => {
+                    return React.createElement('option', {
+                      key: `bale-option-${row.breakdown_id}`,
+                      value: row.bale_purchase_id
+                    }, `${row.bale_batch_no || 'N/A'} - ${row.supplier_name || 'Unknown Supplier'}`)
+                  })
+                )
+              ),
+              React.createElement('div', {
+                style: {
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                  gap: 12,
+                  marginBottom: 16
+                }
               },
-                React.createElement('option', { value: '' }, '— Select product —'),
-                ...productOptions
-              )
-            ),
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Quantity *'),
-              React.createElement('input', { className: 'form-input', type: 'number', min: 1, value: stockInForm.quantity, onChange: e => setStockInForm(f => ({ ...f, quantity: e.target.value })), required: true })
-            ),
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Reference'),
-              React.createElement('input', { className: 'form-input', value: stockInForm.reference, onChange: e => setStockInForm(f => ({ ...f, reference: e.target.value })), placeholder: 'Optional note / receipt no.' })
-            ),
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Date'),
-              React.createElement('input', { className: 'form-input', type: 'date', value: stockInForm.date, onChange: e => setStockInForm(f => ({ ...f, date: e.target.value })) })
+                React.createElement('div', { className: 'card', style: { margin: 0, padding: 14 } },
+                  React.createElement('div', { className: 'card-title' }, 'Total Products Available for Stock In'),
+                  React.createElement('div', { className: 'card-value' }, selectedBalePendingTotal)
+                ),
+                React.createElement('div', { className: 'card', style: { margin: 0, padding: 14 } },
+                  React.createElement('div', { className: 'card-title' }, 'Premium Products Available for Stock In'),
+                  React.createElement('div', { className: 'card-value' }, selectedBalePendingPremium)
+                ),
+                React.createElement('div', { className: 'card', style: { margin: 0, padding: 14 } },
+                  React.createElement('div', { className: 'card-title' }, 'Standard Products Available for Stock In'),
+                  React.createElement('div', { className: 'card-value' }, selectedBalePendingStandard)
+                )
+              ),
+              React.createElement('div', {
+                style: {
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 10,
+                  flexWrap: 'wrap'
+                }
+              },
+                React.createElement('div', { style: { color: 'var(--text-light)', fontSize: 12 } },
+                  selectedBaleStockOption
+                    ? `Selected batch ${selectedBaleStockOption.bale_batch_no || '-'}: Left ${selectedBaleLeftToStockIn}, Ready ${selectedBaleReadyForProductManagement}, Breakdown date ${fmtDate(selectedBaleStockOption.breakdown_date || selectedBaleStockOption.purchase_date)}.`
+                    : 'Choose a bale record from the list to start stock in.'
+                ),
+                React.createElement('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'btn btn-primary',
+                    disabled: !selectedBaleStockOptionId || selectedBaleLeftToStockIn <= 0,
+                    onClick: startBaleIndividualCreate
+                  }, selectedBaleLeftToStockIn <= 0 ? 'No Quantity Left' : 'Create Individual Product'),
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'btn btn-secondary',
+                    onClick: fetchBaleStockOptions,
+                    disabled: baleStockLoading
+                  }, baleStockLoading ? 'Refreshing...' : 'Refresh List')
+                )
+              ),
+              React.createElement('div', {
+                style: {
+                  marginTop: 8,
+                  fontSize: 12,
+                  color: 'var(--text-light)'
+                }
+              }, 'Automatic bale stock-in is disabled. Use Product Management to create one item at a time with full details.'),
+              React.createElement('div', {
+                style: {
+                  marginTop: 12,
+                  fontSize: 12,
+                  color: 'var(--text-light)'
+                }
+              }, `All records: ${baleStockSummary.breakdownRecords} | Left to stock in: ${baleStockSummary.leftToStockIn} | Ready for Product Management: ${baleStockSummary.readyForProductManagement}`)
             )
-          ),
-          React.createElement('p', { style: { marginTop: 6, fontSize: 12, color: 'var(--text-light)' } },
-            'Record stock received directly into inventory. Use the reference field for receipts, delivery notes, or manual adjustment context when needed.'
-          ),
-          React.createElement('button', { type: 'submit', className: 'btn btn-primary', style: { marginTop: 12 } }, 'Record Stock In')
-        )
+          : React.createElement('form', { onSubmit: handleStockIn },
+              React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 } },
+                React.createElement('div', { className: 'form-group' },
+                  React.createElement('label', { className: 'form-label' }, 'Product *'),
+                  React.createElement('select', {
+                    className: 'form-input',
+                    value: stockInForm.product_id,
+                    onChange: (e) => setStockInForm((f) => ({ ...f, product_id: e.target.value })),
+                    required: true
+                  },
+                    React.createElement('option', { value: '' }, '— Select product —'),
+                    ...stockInProductOptions
+                  )
+                ),
+                React.createElement('div', { className: 'form-group' },
+                  React.createElement('label', { className: 'form-label' }, 'Quantity *'),
+                  React.createElement('input', { className: 'form-input', type: 'number', min: 1, value: stockInForm.quantity, onChange: e => setStockInForm(f => ({ ...f, quantity: e.target.value })), required: true })
+                ),
+                React.createElement('div', { className: 'form-group' },
+                  React.createElement('label', { className: 'form-label' }, 'Reference'),
+                  React.createElement('input', { className: 'form-input', value: stockInForm.reference, onChange: e => setStockInForm(f => ({ ...f, reference: e.target.value })), placeholder: 'Optional note / receipt no.' })
+                ),
+                React.createElement('div', { className: 'form-group' },
+                  React.createElement('label', { className: 'form-label' }, 'Date'),
+                  React.createElement('input', { className: 'form-input', type: 'date', value: stockInForm.date, onChange: e => setStockInForm(f => ({ ...f, date: e.target.value })) })
+                )
+              ),
+              React.createElement('button', { type: 'submit', className: 'btn btn-primary', style: { marginTop: 12 } }, 'Record Stock In')
+            )
       )
     ),
 
@@ -1416,15 +2717,133 @@ export default function Inventory() {
     ),
 
     // ═══════════════ PRODUCTS ═══════════════
-    tab === 'products' && React.createElement('div', null,
-      React.createElement('div', { style: { marginBottom: 16 } },
-        React.createElement('button', { className: 'btn btn-primary', onClick: () => { setEditingProduct(null); setProductForm({ sku: '', name: '', brand: '', description: '', category_id: '', price: '', cost: '', stock_quantity: '', low_stock_threshold: '10', size: '', color: '', barcode: '' }); setCategorySearch(''); setShowProductModal(true) } }, '+ Create Product')
+    tab === 'products' && React.createElement('div', { className: 'inventory-products-view' },
+      React.createElement('div', {
+        className: 'inventory-products-summary',
+        style: {
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+          gap: 16,
+          marginBottom: 18
+        }
+      },
+        React.createElement('div', { className: 'card inventory-products-summary-card', style: { margin: 0, padding: 14 } },
+          React.createElement('div', { className: 'card-title' }, selectedBaleStockOption ? 'All Total Items (Selected Bale)' : 'Current Products Listed'),
+          React.createElement('div', { className: 'card-value' }, selectedBaleStockOption ? selectedBaleTotalItems : currentProductsListedCount)
+        ),
+        React.createElement('div', { className: 'card inventory-products-summary-card', style: { margin: 0, padding: 14 } },
+          React.createElement('div', { className: 'card-title' }, selectedBaleStockOption ? 'Premium Items Remaining (Selected Bale)' : 'Products In Stock'),
+          React.createElement('div', { className: 'card-value' }, selectedBaleStockOption ? selectedBalePendingPremium : currentProductsInStockCount)
+        ),
+        React.createElement('div', { className: 'card inventory-products-summary-card', style: { margin: 0, padding: 14 } },
+          React.createElement('div', { className: 'card-title' }, selectedBaleStockOption ? 'Standard Items Remaining (Selected Bale)' : 'Bale-Linked Products'),
+          React.createElement('div', { className: 'card-value' }, selectedBaleStockOption ? selectedBalePendingStandard : currentBaleLinkedProductsCount)
+        ),
+        React.createElement('div', { className: 'card inventory-products-summary-card', style: { margin: 0, padding: 14 } },
+          React.createElement('div', { className: 'card-title' }, selectedBaleStockOption ? 'Current Products Available (Selected Bale)' : 'Individual Products'),
+          React.createElement('div', { className: 'card-value' }, selectedBaleStockOption ? selectedBaleReadyForProductManagement : currentIndividualProductsCount)
+        )
+      ),
+      React.createElement('div', {
+        className: 'inventory-products-summary-note',
+        style: {
+          marginBottom: 18,
+          color: 'var(--text-light)',
+          fontSize: 12,
+          lineHeight: 1.6
+        }
+      },
+        selectedBaleStockOption
+          ? `Selected bale ${selectedBaleStockOption.bale_batch_no || '-'}: Total items ${selectedBaleTotalItems}, Premium remaining ${selectedBalePendingPremium} of ${selectedBalePremiumTotal}, Standard remaining ${selectedBalePendingStandard} of ${selectedBaleStandardTotal}, Current products available ${selectedBaleReadyForProductManagement}. The table below shows all active products.`
+          : `No bale selected. Current products listed: ${currentProductsListedCount}. In-stock products: ${currentProductsInStockCount}. Bale-linked products: ${currentBaleLinkedProductsCount}. Individual products: ${currentIndividualProductsCount}, including repaired items received from Damaged.`
+      ),
+      React.createElement('div', { className: 'inventory-products-toolbar', style: { marginBottom: 16 } },
+          React.createElement('button', { className: 'btn btn-primary inventory-create-product-btn', onClick: () => openCreateProductModal() }, '+ Create Product')
       ),
 
-      showProductModal && React.createElement('div', { className: 'card', style: { marginBottom: 20 } },
-        React.createElement('h3', { style: { marginBottom: 12 } }, editingProduct ? 'Edit Product' : 'Create Product'),
-        React.createElement('form', { onSubmit: handleSaveProduct },
-          React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 } },
+      showProductModal && React.createElement('div', { className: 'card inventory-product-editor', style: { marginBottom: 20 } },
+        React.createElement('h3', { className: 'inventory-product-editor-title', style: { marginBottom: 12 } }, editingProduct ? 'Edit Product' : 'Create Product'),
+        React.createElement('form', { className: 'inventory-product-form', onSubmit: handleSaveProduct },
+          React.createElement('div', { className: 'inventory-product-form-grid', style: { display: 'grid', gap: 12 } },
+            React.createElement('div', { className: 'form-group' },
+              React.createElement('label', { className: 'form-label' }, 'Stock Source'),
+              editingProduct
+                ? React.createElement('input', {
+                    className: 'form-input',
+                    value: productSourceLabel(productForm),
+                    disabled: true,
+                    readOnly: true
+                  })
+                : React.createElement('select', {
+                    className: 'form-input',
+                    value: productForm.product_source,
+                    onChange: (e) => {
+                      const nextSource = e.target.value === 'bale_breakdown' ? 'bale_breakdown' : 'manual'
+                      setProductForm((form) => ({
+                        ...form,
+                        product_source: nextSource,
+                        bale_purchase_id: nextSource === 'bale_breakdown'
+                          ? (form.bale_purchase_id || String(selectedBaleStockOptionId || ''))
+                          : '',
+                        condition_grade: nextSource === 'bale_breakdown'
+                          ? (String(form.condition_grade || '').trim().toLowerCase() === 'standard' ? 'standard' : 'premium')
+                          : 'premium'
+                      }))
+                    }
+                  },
+                    React.createElement('option', { value: 'manual' }, 'Manual'),
+                    React.createElement('option', { value: 'bale_breakdown' }, 'From Bale Record')
+                  )
+            ),
+            (isCreateBaleSource || isEditingBaleProduct) && React.createElement('div', { className: 'form-group' },
+              React.createElement('label', { className: 'form-label' }, 'Bale Record *'),
+              isEditingBaleProduct
+                ? React.createElement('input', {
+                    className: 'form-input',
+                    value: productFormBaleOption
+                      ? `${productFormBaleOption.bale_batch_no || 'N/A'} - ${productFormBaleOption.supplier_name || 'Unknown Supplier'}`
+                      : `Bale #${productForm.bale_purchase_id || 'N/A'}`,
+                    disabled: true,
+                    readOnly: true
+                  })
+                : React.createElement('select', {
+                    className: 'form-input',
+                    value: productForm.bale_purchase_id,
+                    onChange: (e) => {
+                      const nextBalePurchaseId = String(e.target.value || '')
+                      setProductForm((form) => ({ ...form, bale_purchase_id: nextBalePurchaseId }))
+                      setSelectedBaleStockOptionId(nextBalePurchaseId)
+                    },
+                    required: true,
+                    disabled: baleStockLoading
+                  },
+                    React.createElement('option', { value: '' }, baleStockLoading ? 'Loading bale records...' : 'Choose a bale record'),
+                    ...baleStockOptions.map((row) => (
+                      React.createElement('option', {
+                        key: `modal-bale-option-${row.breakdown_id}`,
+                        value: row.bale_purchase_id
+                      }, `${row.bale_batch_no || 'N/A'} - ${row.supplier_name || 'Unknown Supplier'}`)
+                    ))
+                  )
+            ),
+            (isCreateBaleSource || isEditingBaleProduct) && React.createElement('div', { className: 'form-group' },
+              React.createElement('label', { className: 'form-label' }, 'Product Type *'),
+              isEditingBaleProduct
+                ? React.createElement('input', {
+                    className: 'form-input',
+                    value: productFormSelectedGrade === 'premium' ? 'Premium' : 'Standard',
+                    disabled: true,
+                    readOnly: true
+                  })
+                : React.createElement('select', {
+                    className: 'form-input',
+                    value: productFormSelectedGrade,
+                    onChange: (e) => setProductForm((form) => ({ ...form, condition_grade: e.target.value }))
+                  },
+                    React.createElement('option', { value: 'premium' }, 'Premium'),
+                    React.createElement('option', { value: 'standard' }, 'Standard')
+                  )
+            ),
             React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'SKU', infoTip('Auto-generated unless you change it')),
               React.createElement('input', { className: 'form-input', value: productForm.sku, onChange: e => setProductForm(f => ({ ...f, sku: e.target.value })), placeholder: 'Auto-generated if left blank' })
@@ -1437,7 +2856,7 @@ export default function Inventory() {
               React.createElement('label', { className: 'form-label' }, 'Barcode', infoTip('Auto-generated unless you change it')),
               React.createElement('input', { className: 'form-input', value: productForm.barcode, onChange: e => setProductForm(f => ({ ...f, barcode: e.target.value })), placeholder: 'Scan, enter, or leave blank to auto-generate' })
             ),
-            React.createElement('div', { className: 'form-group', style: { position: 'relative' } },
+            React.createElement('div', { className: 'form-group inventory-category-field', style: { position: 'relative' } },
               React.createElement('label', { className: 'form-label' }, 'Category'),
               React.createElement('input', {
                 className: 'form-input',
@@ -1486,12 +2905,17 @@ export default function Inventory() {
               React.createElement('input', { className: 'form-input', type: 'number', step: '0.01', value: productForm.price, onChange: e => setProductForm(f => ({ ...f, price: e.target.value })) })
             ),
             React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Cost Price'),
-              React.createElement('input', { className: 'form-input', type: 'number', step: '0.01', value: productForm.cost, onChange: e => setProductForm(f => ({ ...f, cost: e.target.value })) })
-            ),
-            React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Quantity'),
-              React.createElement('input', { className: 'form-input', type: 'number', value: productForm.stock_quantity, onChange: e => setProductForm(f => ({ ...f, stock_quantity: e.target.value })) })
+              React.createElement('input', {
+                className: 'form-input',
+                type: 'number',
+                min: 0,
+                step: 1,
+                value: productForm.stock_quantity,
+                onChange: (e) => setProductForm((f) => ({ ...f, stock_quantity: e.target.value })),
+                disabled: isSystemManagedProductQuantity,
+                readOnly: isSystemManagedProductQuantity
+              })
             ),
             React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Low Stock Threshold'),
@@ -1501,68 +2925,92 @@ export default function Inventory() {
               React.createElement('label', { className: 'form-label' }, 'Size'),
               React.createElement('select', { className: 'form-input', value: productForm.size, onChange: e => setProductForm(f => ({ ...f, size: e.target.value })) },
                 React.createElement('option', { value: '' }, '— Select size —'),
-                React.createElement('option', { value: 'XXS' }, 'XXS'),
-                React.createElement('option', { value: 'XS' }, 'XS'),
-                React.createElement('option', { value: 'S' }, 'Small (S)'),
-                React.createElement('option', { value: 'M' }, 'Medium (M)'),
-                React.createElement('option', { value: 'L' }, 'Large (L)'),
-                React.createElement('option', { value: 'XL' }, 'XL'),
-                React.createElement('option', { value: 'XXL' }, 'XXL'),
-                React.createElement('option', { value: '3XL' }, '3XL'),
-                React.createElement('option', { value: 'Free Size' }, 'Free Size'),
-                React.createElement('option', { value: '6' }, '6'),
-                React.createElement('option', { value: '8' }, '8'),
-                React.createElement('option', { value: '10' }, '10'),
-                React.createElement('option', { value: '12' }, '12'),
-                React.createElement('option', { value: '14' }, '14'),
-                React.createElement('option', { value: '16' }, '16')
+                ...PRODUCT_SIZE_OPTIONS.map((option) => React.createElement('option', { key: `product-size-${option.value}`, value: option.value }, option.label))
               )
-            ),
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Color'),
-              React.createElement('input', { className: 'form-input', value: productForm.color, onChange: e => setProductForm(f => ({ ...f, color: e.target.value })) })
             )
           ),
-          React.createElement('div', { className: 'form-group' },
+          React.createElement('div', { className: 'form-group inventory-product-description' },
             React.createElement('label', { className: 'form-label' }, 'Description'),
             React.createElement('textarea', { className: 'form-input', value: productForm.description, onChange: e => setProductForm(f => ({ ...f, description: e.target.value })), rows: 2 })
           ),
-          React.createElement('div', { style: { display: 'flex', gap: 8 } },
+          React.createElement('div', { className: 'inventory-product-form-help', style: { marginBottom: 14, color: 'var(--text-light)', fontSize: 12 } },
+            React.createElement('div', null, `Stock Source: ${editingProductSourceText}.`),
+            (isCreateBaleSource || isEditingBaleProduct) && React.createElement('div', { style: { marginTop: 4 } },
+              isEditingBaleProduct
+                ? 'Product Type (Premium or Standard) is locked for bale-linked products and cannot be changed during edit.'
+                : `Available for ${productFormSelectedGrade === 'premium' ? 'Premium' : 'Standard'}: ${productFormAvailableForSelectedGrade}.`
+            ),
+            isSystemManagedProductQuantity && React.createElement('div', { style: { marginTop: 4 } },
+              isEditingRepairedProduct
+                ? 'Quantity for received repaired products is created from the Damaged tab and cannot be edited here.'
+                : 'Quantity for bale-linked products is created from the bale record flow and cannot be edited here.'
+            )
+          ),
+          React.createElement('div', { className: 'inventory-product-form-actions', style: { display: 'flex', gap: 8 } },
             React.createElement('button', { type: 'submit', className: 'btn btn-primary' }, editingProduct ? 'Update Product' : 'Create Product'),
             React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: () => { setShowProductModal(false); setCategorySearch('') } }, 'Cancel')
           )
         )
       ),
 
-      React.createElement('div', { className: 'table-wrap' },
-        React.createElement('table', null,
+      React.createElement('div', {
+        className: 'inventory-products-table-note',
+        style: {
+          marginBottom: 10,
+          color: 'var(--text-light)',
+          fontSize: 12
+        }
+      },
+        selectedBaleStockOption
+          ? `All active products listed: ${listedProducts.length}. Products linked to selected bale ${selectedBaleStockOption.bale_batch_no || '-'}: ${selectedBaleListedProducts.length}. In-stock products for this selected bale: ${selectedBaleReadyForProductManagement}.`
+          : `All active products listed: ${listedProducts.length}. Repaired items received from Damaged appear here as individual products ready to sell.`
+      ),
+      React.createElement('div', { className: 'table-wrap responsive inventory-products-table' },
+        React.createElement('table', { className: 'inventory-products-grid-table' },
           React.createElement('thead', null,
             React.createElement('tr', null,
-              React.createElement('th', null, 'SKU'),
-              React.createElement('th', null, 'Barcode'),
-              React.createElement('th', null, 'Name'),
-              React.createElement('th', null, 'Brand'),
-              React.createElement('th', null, 'Category'),
+              React.createElement('th', null, 'Product'),
+              React.createElement('th', null, 'Source'),
               React.createElement('th', null, 'Price'),
-              React.createElement('th', null, 'Cost'),
               React.createElement('th', null, 'Stock'),
-              React.createElement('th', null, 'Threshold'),
               React.createElement('th', null, 'Actions')
             )
           ),
           React.createElement('tbody', null,
-            products.map(p => React.createElement('tr', { key: p.id },
-              React.createElement('td', null, p.sku || '—'),
-              React.createElement('td', null, p.barcode || '—'),
-              React.createElement('td', { style: { fontWeight: 500 } }, p.name),
-              React.createElement('td', null, p.brand || '—'),
-              React.createElement('td', null, p.category || '—'),
-              React.createElement('td', null, fmt(p.price)),
-              React.createElement('td', null, fmt(p.cost)),
-              React.createElement('td', { style: { fontWeight: 600, color: p.stock_quantity <= (p.low_stock_threshold || 10) ? 'var(--error)' : 'var(--success)' } }, p.stock_quantity),
-              React.createElement('td', null, p.low_stock_threshold || 10),
-              React.createElement('td', null,
-                React.createElement('div', { className: 'product-table-actions' },
+            listedProducts.length === 0
+              ? React.createElement('tr', null, React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No products found.'))
+              : listedProducts.map((p) => {
+                const linkedBaleOption = Number(p?.bale_purchase_id || 0) > 0
+                  ? baleOptionByPurchaseId.get(String(p.bale_purchase_id))
+                  : null
+
+                return React.createElement('tr', { key: p.id },
+              React.createElement('td', { className: 'inventory-product-cell-main' },
+                React.createElement('div', { className: 'inventory-product-primary' }, p.name || 'Unnamed product'),
+                React.createElement('div', { className: 'inventory-product-meta' }, `${p.sku || 'No SKU'} • ${p.barcode || 'No barcode'}`),
+                React.createElement('div', { className: 'inventory-product-meta' }, `${p.brand || 'No brand'} • ${p.category || 'Uncategorized'}`)
+              ),
+              React.createElement('td', { className: 'inventory-product-cell-source' },
+                React.createElement('div', { className: 'inventory-product-chips' },
+                  React.createElement('span', { className: 'inventory-chip' }, productSourceLabel(p)),
+                  p.condition_grade
+                    ? React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, toTitleCaseWords(p.condition_grade))
+                    : (productSourceKey(p) === 'repaired_damage'
+                        ? React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, 'Ready to Sell')
+                        : null),
+                  linkedBaleOption?.bale_batch_no && React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, linkedBaleOption.bale_batch_no)
+                )
+              ),
+              React.createElement('td', { className: 'inventory-product-cell-price', style: { fontWeight: 600 } }, fmt(p.price)),
+              React.createElement('td', { className: 'inventory-product-cell-stock' },
+                React.createElement('div', {
+                  className: 'inventory-stock-pill',
+                  style: { color: p.stock_quantity <= (p.low_stock_threshold || 10) ? 'var(--error)' : 'var(--success)' }
+                }, p.stock_quantity),
+                React.createElement('div', { className: 'inventory-product-meta' }, `Alert at ${p.low_stock_threshold || 10}`)
+              ),
+              React.createElement('td', { className: 'inventory-product-cell-actions' },
+                React.createElement('div', { className: 'product-table-actions inventory-product-actions' },
                   React.createElement('button', {
                     type: 'button',
                     className: 'product-action-icon',
@@ -1582,11 +3030,12 @@ export default function Inventory() {
                     className: 'product-action-icon product-action-icon--danger',
                     title: 'Delete product',
                     'aria-label': `Delete ${p.name}`,
-                    onClick: () => deleteProduct(p.id)
+                    onClick: () => deleteProduct(p.id),
+                    style: undefined
                   }, deleteActionIcon())
                 )
               )
-            ))
+            )})
           )
         )
       ),
@@ -1771,21 +3220,22 @@ export default function Inventory() {
               const legacySaleLinkInReason = !String(t.reference || '').trim() && /^SALE_LINK[:|]/.test(String(t.reason || '').trim())
               const resolvedReference = legacySaleLinkInReason ? t.reason : t.reference
               const resolvedReason = formatTransactionReason(t.reason, resolvedReference)
+              const typeMeta = getInventoryTransactionTypeMeta(t.transaction_type)
               const qtyColor = t.quantity > 0 ? 'var(--success)' : 'var(--error)'
               const qtyLabel = t.quantity > 0 ? `+${t.quantity}` : t.quantity
 
               return React.createElement('tr', { key: t.id },
                 React.createElement('td', null,
-                  React.createElement('span', { className: `badge ${t.transaction_type === 'IN' ? 'badge-success' : t.transaction_type === 'RETURN' ? 'badge-warning' : 'badge-danger'}` }, t.transaction_type)
+                  React.createElement('span', { className: `badge ${typeMeta.badgeClass}` }, typeMeta.label)
                 ),
                 React.createElement('td', null,
-                  React.createElement('div', { style: { fontWeight: 600 } }, formatTransactionReference(resolvedReference)),
+                  React.createElement('div', { style: { fontWeight: 600, lineHeight: 1.35, wordBreak: 'break-word' } }, formatTransactionReference(resolvedReference)),
                   React.createElement('div', { style: { fontSize: 11, color: 'var(--text-light)' } }, `${t.sku ? t.sku + ' — ' : ''}${t.product_name || ''}`)
                 ),
                 React.createElement('td', null, fmtDate(t.created_at)),
                 React.createElement('td', { style: { fontWeight: 600, color: qtyColor } }, qtyLabel),
                 React.createElement('td', null,
-                  React.createElement('div', null, resolvedReason),
+                  React.createElement('div', { style: { lineHeight: 1.35, wordBreak: 'break-word' } }, resolvedReason),
                   React.createElement('div', { style: { fontSize: 11, color: 'var(--text-light)' } }, `Balance after: ${t.balance_after}`)
                 ),
                 React.createElement('td', null, t.user_name || '—')
@@ -1798,25 +3248,100 @@ export default function Inventory() {
 
     // ═══════════════ DAMAGED ═══════════════
     tab === 'damaged' && React.createElement('div', null,
-      React.createElement('div', { className: 'table-wrap' },
-        React.createElement('table', null,
+      React.createElement('div', { className: 'card inventory-damaged-toolbar' },
+        React.createElement('div', { className: 'inventory-damaged-toolbar-grid' },
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'Source'),
+            React.createElement('select', { className: 'form-input', value: damagedSourceFilter, onChange: (event) => setDamagedSourceFilter(event.target.value) },
+              React.createElement('option', { value: '' }, 'All damage records'),
+              React.createElement('option', { value: 'bale_breakdown' }, 'Bale Data (Breakdown)'),
+              React.createElement('option', { value: 'sales_return' }, 'Sales Return'),
+              React.createElement('option', { value: 'manual_damage' }, 'Manual Damage')
+            )
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'From'),
+            React.createElement('input', { className: 'form-input', type: 'date', value: damagedFrom, onChange: (event) => setDamagedFrom(event.target.value), max: damagedTo || undefined })
+          ),
+          React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+            React.createElement('label', { className: 'form-label' }, 'To'),
+            React.createElement('input', { className: 'form-input', type: 'date', value: damagedTo, onChange: (event) => setDamagedTo(event.target.value), min: damagedFrom || undefined })
+          ),
+          React.createElement('div', { className: 'inventory-damaged-toolbar-actions' },
+            React.createElement('button', { className: 'btn btn-primary btn-sm', type: 'button', onClick: fetchDamaged }, 'Refresh'),
+            React.createElement('button', {
+              className: 'btn btn-secondary btn-sm',
+              type: 'button',
+              onClick: handleClearDamagedFilters
+            }, 'Clear')
+          )
+        ),
+        React.createElement('div', { className: 'inventory-damaged-toolbar-summary' },
+          React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, `${damaged.length} Records`),
+          React.createElement('span', { className: 'inventory-chip inventory-chip--success' }, `${damagedRepairableRecordCount} Ready to Receive`),
+          React.createElement('span', { className: 'inventory-chip inventory-chip--warning' }, `${damagedRemainingUnitCount} Units Left`),
+          React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, `${damagedFullyRepairedCount} Complete`)
+        ),
+        React.createElement('div', { className: 'inventory-damaged-toolbar-note' }, 'Select Receive Repaired to turn one remaining damaged unit into a sellable individual product.')
+      ),
+      React.createElement('div', { className: 'table-wrap responsive inventory-damaged-table-wrap' },
+        React.createElement('table', { className: 'inventory-damaged-table' },
           React.createElement('thead', null,
             React.createElement('tr', null,
-              React.createElement('th', null, 'Date'),
-              React.createElement('th', null, 'Product'),
-              React.createElement('th', null, 'Qty'),
-              React.createElement('th', null, 'Reason'),
-              React.createElement('th', null, 'Reported By')
+              React.createElement('th', { style: { minWidth: 150 } }, 'Date'),
+              React.createElement('th', { style: { minWidth: 290 } }, 'Record'),
+              React.createElement('th', { style: { minWidth: 215 } }, 'Status'),
+              React.createElement('th', { style: { minWidth: 240 } }, 'Notes'),
+              React.createElement('th', { style: { minWidth: 160, textAlign: 'center' } }, 'Action')
             )
           ),
           React.createElement('tbody', null,
-            damaged.map(d => React.createElement('tr', { key: d.id },
-              React.createElement('td', null, fmtDate(d.created_at)),
-              React.createElement('td', null, `${d.sku ? d.sku + ' — ' : ''}${d.product_name || ''}`),
-              React.createElement('td', { style: { fontWeight: 600, color: 'var(--error)' } }, d.quantity),
-              React.createElement('td', null, formatTransactionReason(d.reason, d.reference)),
-              React.createElement('td', null, d.reported_by_name || '—')
-            ))
+            damaged.length === 0
+              ? React.createElement('tr', null,
+                  React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No damaged records found for this filter.')
+                )
+              : damaged.map((d) => {
+                const rowKey = String(d.record_key || `${d.damage_source_type || 'damage'}-${d.damage_source_id || d.id || ''}`)
+                const originalQty = Number(d.original_quantity ?? d.quantity ?? 0)
+                const repairedQty = Number(d.repaired_quantity || 0)
+                const remainingQty = Number(d.remaining_quantity ?? d.quantity ?? 0)
+                const rowSelected = rowKey === selectedDamagedRecordKey
+
+                return React.createElement('tr', {
+                  key: rowKey,
+                  style: rowSelected ? { background: 'rgba(184, 134, 11, 0.08)' } : undefined
+                },
+                React.createElement('td', null,
+                  React.createElement('div', { className: 'inventory-product-primary', style: { fontSize: 14 } }, fmtDate(d.created_at)),
+                  React.createElement('div', { className: 'inventory-product-meta' }, d.reported_by_name ? `Reported by ${d.reported_by_name}` : 'Reporter not set')
+                ),
+                React.createElement('td', null,
+                  React.createElement('div', { className: 'inventory-product-primary' }, d.product_name || 'Damaged item'),
+                  React.createElement('div', { className: 'inventory-product-meta' }, d.sku ? `SKU ${d.sku}` : `Source ID #${d.damage_source_id || '-'}`),
+                  React.createElement('div', { className: 'inventory-product-chips', style: { marginTop: 8 } },
+                    React.createElement('span', { className: 'inventory-chip' }, d.source_label || 'Inventory'),
+                    rowSelected ? React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, 'Selected') : null
+                  )
+                ),
+                React.createElement('td', null,
+                  React.createElement('div', { className: 'inventory-damaged-status' },
+                    React.createElement('span', { className: 'inventory-chip inventory-chip--danger' }, `Original ${originalQty}`),
+                    React.createElement('span', { className: 'inventory-chip inventory-chip--warning' }, `Received ${repairedQty}`),
+                    React.createElement('span', { className: `inventory-chip ${remainingQty > 0 ? 'inventory-chip--success' : 'inventory-chip--subtle'}` }, `Left ${remainingQty}`)
+                  )
+                ),
+                React.createElement('td', null,
+                  React.createElement('div', { className: 'inventory-damaged-reason' }, formatTransactionReason(d.reason, d.reference))
+                ),
+                React.createElement('td', { style: { textAlign: 'center' } },
+                  React.createElement('button', {
+                    type: 'button',
+                    className: `btn ${remainingQty <= 0 ? 'btn-secondary' : 'btn-primary'} btn-sm inventory-damaged-repair-btn`,
+                    onClick: () => startRepairDamagedItem(d),
+                    disabled: remainingQty <= 0
+                  }, remainingQty <= 0 ? 'Complete' : 'Receive Repaired')
+                ))
+              })
           )
         )
       )
@@ -1908,7 +3433,6 @@ export default function Inventory() {
               React.createElement('th', null, 'Product'),
               React.createElement('th', null, 'Category'),
               React.createElement('th', null, 'Stock'),
-              React.createElement('th', null, 'Cost'),
               React.createElement('th', null, 'Price'),
               React.createElement('th', null, 'Stock Value')
             )
@@ -1919,7 +3443,6 @@ export default function Inventory() {
               React.createElement('td', null, p.name),
               React.createElement('td', null, p.category || '—'),
               React.createElement('td', { style: { fontWeight: 600, color: p.stock_quantity <= p.low_stock_threshold ? 'var(--error)' : 'var(--text-dark)' } }, p.stock_quantity),
-              React.createElement('td', null, fmt(p.cost)),
               React.createElement('td', null, fmt(p.price)),
               React.createElement('td', { style: { fontWeight: 500 } }, fmt(p.stock_value))
             ))
@@ -1928,6 +3451,7 @@ export default function Inventory() {
       )
     ),
 
+    renderRepairModal(),
     renderQrPreviewModal()
   )
 }

@@ -26,3 +26,14 @@ test('findProductByScannedCode falls back to SKU when barcode does not match', a
   const product = await findProductByScannedCode(conn, 'sku-003')
   assert.equal(product?.id, 3)
 })
+
+test('findProductByScannedCode resolves scan links to the underlying barcode', async () => {
+  const conn = createMockConnection({
+    products: [
+      { id: 4, sku: 'SKU-004', barcode: 'BAR-004', name: 'Dress D' }
+    ]
+  })
+
+  const product = await findProductByScannedCode(conn, 'https://pos.local/sales?tab=pos&scan=bar-004')
+  assert.equal(product?.id, 4)
+})

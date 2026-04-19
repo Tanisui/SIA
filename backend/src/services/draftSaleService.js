@@ -96,10 +96,123 @@ async function createDraftSale(conn, clerkId) {
   return getSaleById(conn, result.insertId)
 }
 
-async function ensureDraftSale(conn, { saleId, clerkId }) {
+async function findLatestDraftSaleForClerk(conn, clerkId) {
+  const normalizedClerkId = Number(clerkId)
+  if (!Number.isFinite(normalizedClerkId) || normalizedClerkId <= 0) return null
+
+  const [rows] = await conn.query(
+    `SELECT id
+     FROM sales
+     WHERE clerk_id = ?
+       AND status = 'DRAFT'
+     ORDER BY id DESC
+     LIMIT 1
+     FOR UPDATE`,
+    [normalizedClerkId]
+  )
+
+  if (!rows.length) return null
+  return getSaleById(conn, rows[0].id)
+}
+
+async function ensureDraftSale(conn, { saleId, clerkId, requireExisting = false, forceNew = false }) {
   const existingDraft = saleId ? await getLockedDraftSale(conn, saleId) : null
   if (existingDraft) return existingDraft
+  if (saleId && requireExisting) {
+    throw createHttpError(404, 'draft sale not found')
+  }
+
+  if (!forceNew) {
+    const recentDraft = await findLatestDraftSaleForClerk(conn, clerkId)
+    if (recentDraft) return recentDraft
+  }
+
   return createDraftSale(conn, clerkId)
+}
+
+async function loadCustomerForDraft(conn, customerId) {
+  const normalizedCustomerId = Number(customerId)
+  if (!Number.isFinite(normalizedCustomerId) || normalizedCustomerId <= 0) {
+    throw createHttpError(400, 'customer_id must be a valid positive integer')
+  }
+
+  const [rows] = await conn.query(
+    `SELECT
+       id,
+       customer_code,
+       COALESCE(NULLIF(full_name, ''), NULLIF(name, ''), CONCAT('Customer #', id)) AS full_name,
+       phone,
+       email
+     FROM customers
+     WHERE id = ?
+     LIMIT 1`,
+    [normalizedCustomerId]
+  )
+
+  if (!rows.length) {
+    throw createHttpError(404, 'customer not found')
+  }
+
+  return rows[0]
+}
+
+async function updateDraftSaleCustomer(conn, saleId, customerId) {
+  const normalizedSaleId = Number(saleId)
+  if (!Number.isFinite(normalizedSaleId) || normalizedSaleId <= 0) {
+    throw createHttpError(400, 'sale_id must be a valid positive integer')
+  }
+
+  const [saleRows] = await conn.query(
+    `SELECT id, status
+     FROM sales
+     WHERE id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [normalizedSaleId]
+  )
+
+  if (!saleRows.length) {
+    throw createHttpError(404, 'sale not found')
+  }
+
+  if (String(saleRows[0].status || '').toUpperCase() !== 'DRAFT') {
+    throw createHttpError(400, 'customer can only be assigned to a draft sale')
+  }
+
+  if (customerId === null) {
+    await conn.query(
+      `UPDATE sales
+       SET customer_id = NULL,
+           customer_name_snapshot = ?,
+           customer_phone_snapshot = NULL,
+           customer_email_snapshot = NULL
+       WHERE id = ?
+         AND status = 'DRAFT'`,
+      [WALK_IN_CUSTOMER_LABEL, normalizedSaleId]
+    )
+
+    return getSaleById(conn, normalizedSaleId)
+  }
+
+  const customer = await loadCustomerForDraft(conn, customerId)
+  await conn.query(
+    `UPDATE sales
+     SET customer_id = ?,
+         customer_name_snapshot = ?,
+         customer_phone_snapshot = ?,
+         customer_email_snapshot = ?
+     WHERE id = ?
+       AND status = 'DRAFT'`,
+    [
+      customer.id,
+      customer.full_name || WALK_IN_CUSTOMER_LABEL,
+      customer.phone || null,
+      customer.email || null,
+      normalizedSaleId
+    ]
+  )
+
+  return getSaleById(conn, normalizedSaleId)
 }
 
 async function syncDraftSaleTotals(conn, saleId) {
@@ -155,7 +268,14 @@ function validateRequestedStock(product, requestedQty, existingRows, excludingIt
   }, 0)
 
   if (requestedQty + alreadyReserved > stockQuantity) {
-    throw createHttpError(409, 'out of stock')
+    const reservedInDraft = Math.max(alreadyReserved, 0)
+    const error = createHttpError(409, reservedInDraft > 0 ? 'draft stock limit reached' : 'out of stock')
+    error.meta = {
+      stock_quantity: stockQuantity,
+      already_reserved: reservedInDraft,
+      remaining_available: Math.max(stockQuantity - reservedInDraft, 0)
+    }
+    throw error
   }
 }
 
@@ -409,6 +529,7 @@ module.exports = {
   addDraftSaleItem,
   updateDraftSaleItem,
   removeDraftSaleItem,
+  updateDraftSaleCustomer,
   findRecentScanEvent,
   recordScanEvent,
   prepareDraftSaleForCheckout,
