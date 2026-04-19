@@ -9,48 +9,7 @@ import { PRODUCT_SIZE_OPTIONS } from '../constants/productSizes.js'
 // ─── Helpers ───
 const fmt = (n) => Number(n || 0).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
-const safeDecodeScannedValue = (value) => {
-  try {
-    return decodeURIComponent(value)
-  } catch {
-    return value
-  }
-}
-const extractScannedCodeToken = (value) => {
-  const raw = String(value || '').trim()
-  if (!raw) return ''
-
-  const compact = raw.replace(/[\r\n]+/g, '').trim()
-  if (!compact) return ''
-
-  const queryParamMatch = compact.match(/[?&](?:scan|code|barcode|sku)=([^&#\s]+)/i)
-  if (queryParamMatch?.[1]) {
-    return safeDecodeScannedValue(queryParamMatch[1])
-  }
-
-  const keyValueMatch = compact.match(/\b(?:scan|code|barcode|sku)\s*[:=]\s*([A-Za-z0-9._-]{1,128})\b/i)
-  if (keyValueMatch?.[1]) {
-    return keyValueMatch[1]
-  }
-
-  if (compact.startsWith('{') && compact.endsWith('}')) {
-    try {
-      const parsed = JSON.parse(compact)
-      if (parsed && typeof parsed === 'object') {
-        for (const key of ['scan', 'code', 'barcode', 'sku']) {
-          if (parsed[key] !== undefined && parsed[key] !== null && String(parsed[key]).trim()) {
-            return String(parsed[key])
-          }
-        }
-      }
-    } catch {
-      // Fall through and treat the raw value as the product code.
-    }
-  }
-
-  return compact
-}
-const normalizeScanCode = (v) => extractScannedCodeToken(v).trim().toUpperCase()
+const normalizeScanCode = (v) => String(v || '').trim().toUpperCase()
 
 function escapeHtml(value) {
   return String(value || '')
@@ -327,27 +286,7 @@ function formatTransactionReference(value) {
   if (tag === 'BALE_BREAKDOWN') {
     return `Bale breakdown${meta.grade ? ` • ${toTitleCaseWords(meta.grade)}` : ''}${meta.breakdown_id ? ` • Breakdown #${meta.breakdown_id}` : ''}${meta.bale_purchase_id ? ` • Bale #${meta.bale_purchase_id}` : ''}${meta.disposition ? ` • ${toTitleCaseWords(meta.disposition)}` : ''}`
   }
-  if (tag === 'BALE_PRODUCT_CREATE') {
-    return `Bale product created${meta.grade ? ` • ${toTitleCaseWords(meta.grade)}` : ''}${meta.breakdown_id ? ` • Breakdown #${meta.breakdown_id}` : ''}${meta.bale_purchase_id ? ` • Bale #${meta.bale_purchase_id}` : ''}`
-  }
-  if (tag === 'DAMAGE_REPAIR') {
-    const sourceType = String(meta.source_type || '').trim().toLowerCase()
-    const sourceLabel = DAMAGE_SOURCE_LABELS[sourceType] || toTitleCaseWords(sourceType)
-    const sourceId = Number(meta.source_id)
-    const sourceSuffix = Number.isInteger(sourceId) && sourceId > 0 ? ` #${sourceId}` : ''
-    if (sourceLabel) return `Repaired item from ${sourceLabel}${sourceSuffix}`
-    return 'Repaired item intake'
-  }
   return value
-}
-
-function getInventoryTransactionTypeMeta(transactionType) {
-  const normalized = String(transactionType || '').trim().toUpperCase()
-  if (normalized === 'IN') return { label: 'Stock In', badgeClass: 'badge-success' }
-  if (normalized === 'OUT') return { label: 'Stock Out', badgeClass: 'badge-danger' }
-  if (normalized === 'RETURN') return { label: 'Return', badgeClass: 'badge-warning' }
-  if (normalized === 'ADJUST') return { label: 'Adjustment', badgeClass: 'badge-info' }
-  return { label: normalized || 'N/A', badgeClass: 'badge-neutral' }
 }
 
 function formatTransactionReason(reason, reference = '') {
@@ -508,7 +447,6 @@ export default function Inventory() {
   const labelScanInputRef = useRef(null)
   const qrPreviewScanInputRef = useRef(null)
   const qrPreviewScanTimerRef = useRef(null)
-  const posSendStateRef = useRef({ code: '', at: 0, pending: false })
   const tab = useMemo(() => {
     const params = new URLSearchParams(location.search)
     const searchTab = String(params.get('tab') || '').trim()
@@ -1057,7 +995,7 @@ export default function Inventory() {
     return false
   }, [])
 
-  const sendProductToPos = useCallback(async (product) => {
+  const sendProductToPos = useCallback((product) => {
     const normalizedCode = normalizeScanCode(product?.barcode)
     if (!normalizedCode) {
       setError('Selected product has no barcode/QR code yet')
@@ -1065,24 +1003,12 @@ export default function Inventory() {
     }
     if (!productAvailableForPos(product)) return false
 
-    const now = Date.now()
-    const lastSend = posSendStateRef.current
-    if (lastSend.pending && lastSend.code === normalizedCode) {
-      return true
-    }
-    if (lastSend.code === normalizedCode && (now - lastSend.at) < 250) {
-      return true
-    }
-
-    posSendStateRef.current = { code: normalizedCode, at: now, pending: true }
-    clearMessages()
-    posSendStateRef.current = { code: normalizedCode, at: Date.now(), pending: false }
     closeQrPreview()
-    navigate(`/sales?tab=pos&scan=${encodeURIComponent(normalizedCode)}`, { preventScrollReset: true })
+    navigate(`/sales?scan=${encodeURIComponent(normalizedCode)}`, { preventScrollReset: true })
     return true
   }, [closeQrPreview, navigate, productAvailableForPos])
 
-  const submitQrPreviewScan = useCallback(async (rawValue) => {
+  const submitQrPreviewScan = useCallback((rawValue) => {
     clearQrPreviewScanTimer()
     const normalizedCode = normalizeScanCode(rawValue)
     const previewCode = normalizeScanCode(qrPreviewProduct?.barcode)
@@ -1101,8 +1027,9 @@ export default function Inventory() {
     }
 
     setQrPreviewScanValue('')
-    const sent = await sendProductToPos(qrPreviewProduct)
-    if (!sent) {
+    if (sendProductToPos(qrPreviewProduct)) {
+      showMsg(`Scanned ${qrPreviewProduct?.name || 'product'} from the digital QR preview`)
+    } else {
       focusQrPreviewScanInput()
     }
   }, [clearQrPreviewScanTimer, focusQrPreviewScanInput, qrPreviewProduct, sendProductToPos])
@@ -1140,7 +1067,7 @@ export default function Inventory() {
         submitQrPreviewScan(e.currentTarget.value)
       },
       autoComplete: 'off',
-      'aria-label': 'QR preview scanner capture',
+      'aria-hidden': 'true',
       tabIndex: -1,
       style: {
         position: 'absolute',
@@ -1245,7 +1172,8 @@ export default function Inventory() {
       setLabelProductId(String(product.id))
       setLabelCopies('1')
       setLabelScanValue('')
-      return await sendProductToPos(product)
+      sendProductToPos(product)
+      return true
     } catch (err) {
       setLabelScanValue('')
       const apiError = String(err?.response?.data?.error || '').trim()
@@ -2101,15 +2029,23 @@ export default function Inventory() {
         const availableForGrade = conditionGrade === 'premium'
           ? Number(baleOption?.pending_premium ?? 0)
           : Number(baleOption?.pending_standard ?? 0)
+        const requestedBaleQuantity = Math.floor(Number(payload.stock_quantity || 0))
         const gradeLabel = conditionGrade === 'premium' ? 'Premium' : 'Standard'
 
         if (availableForGrade <= 0) {
           return setError(`No more ${gradeLabel} quantity available for this bale record.`)
         }
+        if (!Number.isFinite(requestedBaleQuantity) || requestedBaleQuantity <= 0) {
+          return setError('Quantity must be a positive whole number for bale products')
+        }
+        if (requestedBaleQuantity > availableForGrade) {
+          return setError(`Requested ${gradeLabel} quantity (${requestedBaleQuantity}) exceeds available (${availableForGrade}).`)
+        }
 
         payload.product_source = 'bale_breakdown'
         payload.bale_purchase_id = balePurchaseId
         payload.condition_grade = conditionGrade
+        payload.stock_quantity = requestedBaleQuantity
       } else if (!isEditing) {
         payload.product_source = 'manual'
         delete payload.bale_purchase_id
@@ -2175,14 +2111,22 @@ export default function Inventory() {
         showMsg('Product updated')
         await fetchAll()
       } else {
-        await api.post('/products', payload)
+        const createResponse = await api.post('/products', payload)
         const gradeLabel = payload.condition_grade === 'premium'
           ? 'Premium'
           : payload.condition_grade === 'standard'
             ? 'Standard'
             : null
 
-        showMsg(gradeLabel ? `${gradeLabel} product created successfully.` : 'Product created')
+        if (createResponse?.data?.merged) {
+          const adjustedQuantity = Number(createResponse?.data?.adjusted_quantity || 0)
+          const sourceLabel = gradeLabel ? `${gradeLabel} product` : 'Product'
+          const quantitySuffix = adjustedQuantity > 0 ? ` (+${adjustedQuantity})` : ''
+          showMsg(`${sourceLabel} quantity adjusted for similar existing product${quantitySuffix}.`)
+        } else {
+          showMsg(gradeLabel ? `${gradeLabel} product created successfully.` : 'Product created')
+        }
+
         await Promise.all([
           fetchAll(),
           fetchBaleStockOptions(),
@@ -2260,8 +2204,12 @@ export default function Inventory() {
       ? []
       : listedProducts.filter((product) => String(product?.bale_purchase_id || '') === String(selectedBaleStockOptionId))
   ), [listedProducts, selectedBaleStockOption, selectedBaleStockOptionId])
-  const selectedBaleReadyProducts = useMemo(() => (
-    selectedBaleListedProducts.filter((product) => Number(product?.stock_quantity || 0) > 0)
+  const selectedBaleReadyUnits = useMemo(() => (
+    selectedBaleListedProducts.reduce((total, product) => {
+      const stockQuantity = Number(product?.stock_quantity || 0)
+      if (!Number.isFinite(stockQuantity) || stockQuantity <= 0) return total
+      return total + Math.floor(stockQuantity)
+    }, 0)
   ), [selectedBaleListedProducts])
   const baleStockSummary = useMemo(() => {
     return (baleStockOptions || []).reduce((acc, row) => {
@@ -2286,7 +2234,7 @@ export default function Inventory() {
   )
   const selectedBaleLeftToStockIn = Number(selectedBaleStockOption?.left_to_stock_in ?? selectedBaleStockOption?.pending_total ?? 0)
   const selectedBaleReadyForProductManagement = selectedBaleStockOption
-    ? selectedBaleReadyProducts.length
+    ? selectedBaleReadyUnits
     : 0
   const selectedBalePendingPremium = Number(
     selectedBaleStockOption?.pending_premium
@@ -2315,7 +2263,7 @@ export default function Inventory() {
   const isCreateBaleSource = !editingProduct && String(productForm.product_source || 'manual').toLowerCase() === 'bale_breakdown'
   const isEditingBaleProduct = Boolean(editingProduct) && String(productForm.product_source || 'manual').toLowerCase() === 'bale_breakdown'
   const isEditingRepairedProduct = Boolean(editingProduct) && String(productForm.product_source || 'manual').toLowerCase() === 'repaired_damage'
-  const isSystemManagedProductQuantity = isCreateBaleSource || isEditingBaleProduct || isEditingRepairedProduct
+  const isSystemManagedProductQuantity = isEditingBaleProduct || isEditingRepairedProduct
   const productFormBaleOption = useMemo(() => (
     baleStockOptions.find((row) => String(row.bale_purchase_id) === String(productForm.bale_purchase_id || '')) || null
   ), [baleStockOptions, productForm.bale_purchase_id])
@@ -2909,7 +2857,7 @@ export default function Inventory() {
               React.createElement('input', {
                 className: 'form-input',
                 type: 'number',
-                min: 0,
+                min: isCreateBaleSource ? 1 : 0,
                 step: 1,
                 value: productForm.stock_quantity,
                 onChange: (e) => setProductForm((f) => ({ ...f, stock_quantity: e.target.value })),
@@ -2939,6 +2887,9 @@ export default function Inventory() {
               isEditingBaleProduct
                 ? 'Product Type (Premium or Standard) is locked for bale-linked products and cannot be changed during edit.'
                 : `Available for ${productFormSelectedGrade === 'premium' ? 'Premium' : 'Standard'}: ${productFormAvailableForSelectedGrade}.`
+            ),
+            isCreateBaleSource && React.createElement('div', { style: { marginTop: 4 } },
+              'Set Quantity to add multiple units from this bale grade. If a similar product exists, the quantity is added to that existing product.'
             ),
             isSystemManagedProductQuantity && React.createElement('div', { style: { marginTop: 4 } },
               isEditingRepairedProduct
@@ -3220,22 +3171,21 @@ export default function Inventory() {
               const legacySaleLinkInReason = !String(t.reference || '').trim() && /^SALE_LINK[:|]/.test(String(t.reason || '').trim())
               const resolvedReference = legacySaleLinkInReason ? t.reason : t.reference
               const resolvedReason = formatTransactionReason(t.reason, resolvedReference)
-              const typeMeta = getInventoryTransactionTypeMeta(t.transaction_type)
               const qtyColor = t.quantity > 0 ? 'var(--success)' : 'var(--error)'
               const qtyLabel = t.quantity > 0 ? `+${t.quantity}` : t.quantity
 
               return React.createElement('tr', { key: t.id },
                 React.createElement('td', null,
-                  React.createElement('span', { className: `badge ${typeMeta.badgeClass}` }, typeMeta.label)
+                  React.createElement('span', { className: `badge ${t.transaction_type === 'IN' ? 'badge-success' : t.transaction_type === 'RETURN' ? 'badge-warning' : 'badge-danger'}` }, t.transaction_type)
                 ),
                 React.createElement('td', null,
-                  React.createElement('div', { style: { fontWeight: 600, lineHeight: 1.35, wordBreak: 'break-word' } }, formatTransactionReference(resolvedReference)),
+                  React.createElement('div', { style: { fontWeight: 600 } }, formatTransactionReference(resolvedReference)),
                   React.createElement('div', { style: { fontSize: 11, color: 'var(--text-light)' } }, `${t.sku ? t.sku + ' — ' : ''}${t.product_name || ''}`)
                 ),
                 React.createElement('td', null, fmtDate(t.created_at)),
                 React.createElement('td', { style: { fontWeight: 600, color: qtyColor } }, qtyLabel),
                 React.createElement('td', null,
-                  React.createElement('div', { style: { lineHeight: 1.35, wordBreak: 'break-word' } }, resolvedReason),
+                  React.createElement('div', null, resolvedReason),
                   React.createElement('div', { style: { fontSize: 11, color: 'var(--text-light)' } }, `Balance after: ${t.balance_after}`)
                 ),
                 React.createElement('td', null, t.user_name || '—')

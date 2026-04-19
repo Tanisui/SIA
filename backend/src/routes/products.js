@@ -7,20 +7,26 @@ const {
   isBarcodeBlank,
   validateBarcodeFormat,
   barcodeExists,
-  generateUniqueBarcodeForProduct,
   getNextSequentialBarcode,
   getNextSequentialSKU
 } = require('../utils/barcodeSupport')
 const { normalizeScannedCode, isScannedCodeValid } = require('../utils/scannerSupport')
 const { ensureScannerSchema } = require('../services/scannerSchemaService')
 const { generateProductQrImage } = require('../services/qrCodeService')
+const { applyProductStockDelta } = require('../utils/inventoryStock')
 const {
   findProductByScannedCode,
   updateProductQrImagePath
 } = require('../repositories/productRepository')
 const { logAuditEventSafe } = require('../utils/auditLog')
+const { ensureAutomatedReportsSchema } = require('../utils/automatedReports')
 
 const BARCODE_FORMAT_ERROR = 'barcode must be 4-64 chars using letters, numbers, ".", "_" or "-"'
+const BALE_GRADE_VALUES = new Set(['premium', 'standard'])
+
+function roundMoney(value) {
+  return Math.round((Number(value) || 0) * 100) / 100
+}
 
 function createHttpError(statusCode, message) {
   const err = new Error(message)
@@ -41,6 +47,109 @@ function duplicateFieldMessage(field) {
   return 'Duplicate value already exists'
 }
 
+function normalizeComparableText(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function asPositiveWhole(value, fallback = 0) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  return Math.floor(parsed)
+}
+
+async function getBaleStockedByGrade(conn, balePurchaseId) {
+  const [rows] = await conn.query(`
+    SELECT
+      p.condition_grade,
+      COALESCE(bale_create.stocked_units, 0) AS stocked_units
+    FROM products p
+    LEFT JOIN (
+      SELECT
+        it.product_id,
+        SUM(
+          CASE
+            WHEN it.transaction_type = 'IN'
+              AND it.reference LIKE 'BALE_PRODUCT_CREATE|%'
+              AND COALESCE(it.quantity, 0) > 0
+              THEN it.quantity
+            ELSE 0
+          END
+        ) AS stocked_units
+      FROM inventory_transactions it
+      GROUP BY it.product_id
+    ) bale_create ON bale_create.product_id = p.id
+    WHERE p.bale_purchase_id = ?
+      AND p.condition_grade IN ('premium', 'standard')
+    FOR UPDATE
+  `, [Number(balePurchaseId)])
+
+  const stockedByGrade = { premium: 0, standard: 0 }
+  for (const row of rows) {
+    const grade = String(row.condition_grade || '').trim().toLowerCase()
+    if (!BALE_GRADE_VALUES.has(grade)) continue
+
+    // Older rows may not have historical BALE_PRODUCT_CREATE entries.
+    const stockedUnits = asPositiveWhole(row.stocked_units, 0)
+    stockedByGrade[grade] += stockedUnits > 0 ? stockedUnits : 1
+  }
+
+  return stockedByGrade
+}
+
+async function findSimilarProductForMerge(conn, options = {}) {
+  const normalizedName = normalizeComparableText(options.name)
+  if (!normalizedName) return null
+
+  const normalizedBrand = normalizeComparableText(options.brand)
+  const normalizedSize = normalizeComparableText(options.size)
+  const normalizedSource = String(options.productSource || 'manual').trim().toLowerCase() || 'manual'
+  const normalizedCategoryId = Number.isInteger(Number(options.categoryId)) && Number(options.categoryId) > 0
+    ? Number(options.categoryId)
+    : null
+  const normalizedBalePurchaseId = Number.isInteger(Number(options.balePurchaseId)) && Number(options.balePurchaseId) > 0
+    ? Number(options.balePurchaseId)
+    : null
+  const normalizedConditionGrade = String(options.conditionGrade || '').trim().toLowerCase() || null
+  const normalizedPrice = roundMoney(options.price)
+
+  const [rows] = await conn.query(`
+    SELECT
+      p.id,
+      p.sku,
+      p.name,
+      p.barcode,
+      p.qr_image_path,
+      p.stock_quantity
+    FROM products p
+    WHERE COALESCE(p.is_active, 1) = 1
+      AND LOWER(TRIM(COALESCE(p.name, ''))) = ?
+      AND LOWER(TRIM(COALESCE(p.brand, ''))) = ?
+      AND LOWER(TRIM(COALESCE(p.size, ''))) = ?
+      AND COALESCE(NULLIF(LOWER(TRIM(p.product_source)), ''), 'manual') = ?
+      AND ((? IS NULL AND p.category_id IS NULL) OR p.category_id = ?)
+      AND ((? IS NULL AND p.bale_purchase_id IS NULL) OR p.bale_purchase_id = ?)
+      AND ((? IS NULL AND p.condition_grade IS NULL) OR p.condition_grade = ?)
+      AND ROUND(COALESCE(p.price, 0), 2) = ?
+    ORDER BY p.id ASC
+    LIMIT 1
+    FOR UPDATE
+  `, [
+    normalizedName,
+    normalizedBrand,
+    normalizedSize,
+    normalizedSource,
+    normalizedCategoryId,
+    normalizedCategoryId,
+    normalizedBalePurchaseId,
+    normalizedBalePurchaseId,
+    normalizedConditionGrade,
+    normalizedConditionGrade,
+    normalizedPrice
+  ])
+
+  return rows[0] || null
+}
+
 // Low stock alerts — MUST be before /:id
 router.get('/alerts/low-stock', verifyToken, authorize('inventory.view'), async (req, res) => {
   try {
@@ -59,10 +168,13 @@ router.get('/alerts/low-stock', verifyToken, authorize('inventory.view'), async 
 })
 
 // List all products
-router.get('/', verifyToken, authorize('products.view'), async (req, res) => {
+router.get('/', verifyToken, authorize(['products.view', 'inventory.view', 'inventory.adjust']), async (req, res) => {
+  const conn = await db.pool.getConnection()
   try {
     await ensureScannerSchema()
-    const [rows] = await db.pool.query(`
+    await ensureAutomatedReportsSchema()
+
+    const [rows] = await conn.query(`
       SELECT p.*, c.name AS category
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
@@ -72,6 +184,8 @@ router.get('/', verifyToken, authorize('products.view'), async (req, res) => {
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'failed to fetch products' })
+  } finally {
+    conn.release()
   }
 })
 
@@ -105,7 +219,7 @@ router.get('/by-code/:code', verifyToken, authorize(['sales.create', 'sales.view
 })
 
 // Get single product
-router.get('/:id', verifyToken, authorize('products.view'), async (req, res) => {
+router.get('/:id', verifyToken, authorize(['products.view', 'inventory.view', 'inventory.adjust']), async (req, res) => {
   try {
     await ensureScannerSchema()
     const [rows] = await db.pool.query(`
@@ -126,34 +240,283 @@ router.get('/:id', verifyToken, authorize('products.view'), async (req, res) => 
 router.post('/', express.json(), verifyToken, authorize('products.create'), async (req, res) => {
   const conn = await db.pool.getConnection()
   try {
+    await ensureAutomatedReportsSchema()
     await conn.beginTransaction()
     await ensureScannerSchema(conn)
 
-    const { sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode } = req.body
+    const {
+      sku,
+      name,
+      brand,
+      description,
+      category_id,
+      price,
+      cost,
+      stock_quantity,
+      low_stock_threshold,
+      size,
+      color,
+      barcode,
+      product_source,
+      bale_purchase_id,
+      condition_grade
+    } = req.body || {}
+
+    const requestedSku = String(sku || '').trim()
+    const requestedBarcode = String(barcode || '').trim()
 
     const normalizedName = String(name || '').trim()
     if (!normalizedName) throw createHttpError(400, 'name is required')
 
+    const normalizedBrand = String(brand || '').trim() || null
+    const normalizedDescription = String(description || '').trim() || null
+    const normalizedSize = String(size || '').trim() || null
+    const normalizedColor = String(color || '').trim() || null
+
     // Auto-generate SKU if not provided
-    let normalizedSku = String(sku || '').trim() || null
+    let normalizedSku = requestedSku || null
     if (!normalizedSku) {
       normalizedSku = await getNextSequentialSKU(conn)
     }
 
     let normalizedBarcode = null
+    const requestedInitialStock = Number(stock_quantity)
+    if (stock_quantity !== undefined && (!Number.isFinite(requestedInitialStock) || requestedInitialStock < 0)) {
+      throw createHttpError(400, 'stock_quantity must be zero or greater')
+    }
+    let normalizedStockQuantity = Number.isFinite(requestedInitialStock)
+      ? Math.floor(requestedInitialStock)
+      : 1
 
-    if (!isBarcodeBlank(barcode)) {
-      normalizedBarcode = normalizeBarcode(barcode)
+    const normalizedSourceInput = String(product_source || '').trim().toLowerCase()
+    const isBaleSourceCreate = normalizedSourceInput === 'bale_breakdown'
+      || bale_purchase_id !== undefined
+      || condition_grade !== undefined
+
+    let normalizedProductSource = isBaleSourceCreate ? 'bale_breakdown' : 'manual'
+    let normalizedCategoryId = category_id ? Number(category_id) : null
+    if (normalizedCategoryId !== null && (!Number.isInteger(normalizedCategoryId) || normalizedCategoryId <= 0)) {
+      throw createHttpError(400, 'category_id must be a valid positive integer')
+    }
+
+    const normalizedPrice = roundMoney(price)
+    const normalizedLowStockThreshold = Number.isFinite(Number(low_stock_threshold))
+      ? Math.max(0, Number(low_stock_threshold))
+      : 10
+    const normalizedCostInput = Number.isFinite(Number(cost))
+      ? roundMoney(cost)
+      : 0
+    let requestedBaleQuantity = 1
+
+    let normalizedBalePurchaseId = null
+    let normalizedConditionGrade = null
+    let normalizedSourceBreakdownId = null
+    let normalizedAllocatedCost = normalizedCostInput
+    let normalizedCost = normalizedCostInput
+    let normalizedDateEncoded = null
+    let stockInReference = null
+    let stockInReason = null
+    let stockInCreatedAt = new Date()
+
+    if (!isBarcodeBlank(requestedBarcode)) {
+      normalizedBarcode = normalizeBarcode(requestedBarcode)
       if (!validateBarcodeFormat(normalizedBarcode)) throw createHttpError(400, BARCODE_FORMAT_ERROR)
       if (await barcodeExists(conn, normalizedBarcode)) throw createHttpError(400, 'Barcode already exists')
     }
 
+    if (isBaleSourceCreate) {
+      // Bale-linked create applies stock through inventory transactions.
+      normalizedStockQuantity = 0
+      requestedBaleQuantity = Number.isFinite(requestedInitialStock)
+        ? Math.floor(requestedInitialStock)
+        : 1
+      if (requestedBaleQuantity <= 0) {
+        throw createHttpError(400, 'Quantity must be a positive whole number for bale products')
+      }
+
+      normalizedBalePurchaseId = Number(bale_purchase_id)
+      if (!Number.isInteger(normalizedBalePurchaseId) || normalizedBalePurchaseId <= 0) {
+        throw createHttpError(400, 'bale_purchase_id must be a valid positive integer')
+      }
+
+      normalizedConditionGrade = String(condition_grade || '').trim().toLowerCase()
+      if (!BALE_GRADE_VALUES.has(normalizedConditionGrade)) {
+        throw createHttpError(400, 'condition_grade must be either premium or standard')
+      }
+
+      const [breakdownRows] = await conn.query(`
+        SELECT
+          bb.id AS breakdown_id,
+          bb.bale_purchase_id,
+          COALESCE(bb.premium_items, 0) AS premium_items,
+          COALESCE(bb.standard_items, 0) AS standard_items,
+          COALESCE(bb.cost_per_saleable_item, 0) AS cost_per_saleable_item,
+          COALESCE(bb.breakdown_date, bp.purchase_date) AS breakdown_event_date,
+          bp.bale_batch_no,
+          bp.bale_category
+        FROM bale_breakdowns bb
+        JOIN bale_purchases bp ON bp.id = bb.bale_purchase_id
+        WHERE bb.bale_purchase_id = ?
+        LIMIT 1
+        FOR UPDATE
+      `, [normalizedBalePurchaseId])
+      if (!breakdownRows.length) {
+        throw createHttpError(404, 'bale breakdown not found for selected bale_purchase_id')
+      }
+
+      const breakdown = breakdownRows[0]
+
+      const stockedByGrade = await getBaleStockedByGrade(conn, normalizedBalePurchaseId)
+
+      const totalsByGrade = {
+        premium: Number(breakdown.premium_items) || 0,
+        standard: Number(breakdown.standard_items) || 0
+      }
+      const pendingByGrade = {
+        premium: Math.max(totalsByGrade.premium - stockedByGrade.premium, 0),
+        standard: Math.max(totalsByGrade.standard - stockedByGrade.standard, 0)
+      }
+      const pendingForRequestedGrade = pendingByGrade[normalizedConditionGrade]
+      const gradeLabel = normalizedConditionGrade === 'premium' ? 'Premium' : 'Standard'
+
+      if (pendingForRequestedGrade <= 0) {
+        throw createHttpError(400, `No more ${gradeLabel} quantity available for this bale record.`)
+      }
+      if (requestedBaleQuantity > pendingForRequestedGrade) {
+        throw createHttpError(400, `Requested ${gradeLabel} quantity (${requestedBaleQuantity}) exceeds available (${pendingForRequestedGrade}).`)
+      }
+
+      normalizedSourceBreakdownId = Number(breakdown.breakdown_id) || null
+      normalizedAllocatedCost = roundMoney(Number(breakdown.cost_per_saleable_item) || 0)
+      normalizedCost = normalizedCostInput > 0 ? normalizedCostInput : normalizedAllocatedCost
+
+      if (!normalizedCategoryId && breakdown.bale_category) {
+        const [categoryRows] = await conn.query(`
+          SELECT id
+          FROM categories
+          WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
+          LIMIT 1
+        `, [String(breakdown.bale_category || '').trim()])
+        normalizedCategoryId = Number(categoryRows?.[0]?.id) || null
+      }
+
+      const breakdownDateValue = String(breakdown.breakdown_event_date || '').trim()
+      if (breakdownDateValue) {
+        const breakdownDate = new Date(`${breakdownDateValue.slice(0, 10)}T00:00:00.000Z`)
+        if (!Number.isNaN(breakdownDate.getTime())) {
+          normalizedDateEncoded = breakdownDate.toISOString().slice(0, 10)
+          stockInCreatedAt = breakdownDate
+        }
+      }
+
+      stockInReference = `BALE_PRODUCT_CREATE|bale_purchase_id=${normalizedBalePurchaseId}|breakdown_id=${normalizedSourceBreakdownId || ''}|grade=${normalizedConditionGrade}`
+      stockInReason = `Created from bale record (${gradeLabel})`
+      normalizedProductSource = 'bale_breakdown'
+    }
+
+    const shouldAttemptSimilarMerge = !requestedSku && !requestedBarcode
+    const mergeDeltaQuantity = isBaleSourceCreate ? requestedBaleQuantity : normalizedStockQuantity
+
+    if (shouldAttemptSimilarMerge && mergeDeltaQuantity > 0) {
+      const mergeCandidate = await findSimilarProductForMerge(conn, {
+        name: normalizedName,
+        brand: normalizedBrand,
+        size: normalizedSize,
+        categoryId: normalizedCategoryId,
+        productSource: normalizedProductSource,
+        balePurchaseId: normalizedBalePurchaseId,
+        conditionGrade: normalizedConditionGrade,
+        price: normalizedPrice
+      })
+
+      if (mergeCandidate) {
+        const mergeReference = isBaleSourceCreate ? stockInReference : 'PRODUCT_SIMILAR_MERGE'
+        const mergeReason = isBaleSourceCreate
+          ? stockInReason
+          : 'Quantity adjusted from similar product create'
+
+        const stockResult = await applyProductStockDelta(conn, {
+          productId: mergeCandidate.id,
+          deltaQuantity: mergeDeltaQuantity,
+          userId: req.auth.id,
+          reference: mergeReference,
+          reason: mergeReason,
+          createdAt: stockInCreatedAt,
+          transactionType: 'IN'
+        })
+
+        const [mergedRows] = await conn.query(
+          `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, qr_image_path, product_source, source_breakdown_id, bale_purchase_id, condition_grade
+           FROM products
+           WHERE id = ?
+           LIMIT 1`,
+          [mergeCandidate.id]
+        )
+        const mergedProduct = mergedRows[0] || mergeCandidate
+
+        await conn.commit()
+
+        await logAuditEventSafe(db.pool, {
+          userId: req.auth.id,
+          action: 'PRODUCT_QUANTITY_ADJUSTED',
+          resourceType: 'Product',
+          resourceId: mergeCandidate.id,
+          details: {
+            module: 'catalog',
+            severity: 'low',
+            result: 'adjusted',
+            target_label: mergedProduct?.sku ? `${mergedProduct.name} (${mergedProduct.sku})` : mergedProduct?.name,
+            summary: `Adjusted quantity for "${mergedProduct?.name || normalizedName}" by ${mergeDeltaQuantity}`,
+            before: { stock_quantity: stockResult.beforeQuantity },
+            after: { stock_quantity: stockResult.afterQuantity },
+            metrics: { quantity_adjusted: mergeDeltaQuantity },
+            context: {
+              merged_from_create: true,
+              product_source: normalizedProductSource,
+              bale_purchase_id: normalizedBalePurchaseId,
+              condition_grade: normalizedConditionGrade
+            }
+          }
+        })
+
+        return res.json({
+          id: mergeCandidate.id,
+          barcode: mergedProduct?.barcode || null,
+          qr_image_path: mergedProduct?.qr_image_path || null,
+          merged: true,
+          adjusted_quantity: mergeDeltaQuantity,
+          stock_quantity: stockResult.afterQuantity
+        })
+      }
+    }
+
     const [result] = await conn.query(
-      `INSERT INTO products (sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [normalizedSku, normalizedName, brand || null, description || null, category_id || null,
-       price || 0, cost || 0, stock_quantity || 0, low_stock_threshold || 10,
-       size || null, color || null, normalizedBarcode]
+      `INSERT INTO products (
+        sku, name, brand, description, category_id, price, cost, stock_quantity,
+        low_stock_threshold, size, color, barcode, product_source, source_breakdown_id,
+        bale_purchase_id, condition_grade, allocated_cost, status, date_encoded
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        normalizedSku,
+        normalizedName,
+        normalizedBrand,
+        normalizedDescription,
+        normalizedCategoryId,
+        normalizedPrice || 0,
+        normalizedCost || 0,
+        normalizedStockQuantity,
+        normalizedLowStockThreshold,
+        normalizedSize,
+        normalizedColor,
+        normalizedBarcode,
+        normalizedProductSource,
+        normalizedSourceBreakdownId,
+        normalizedBalePurchaseId,
+        normalizedConditionGrade,
+        normalizedAllocatedCost || 0,
+        'available',
+        normalizedDateEncoded
+      ]
     )
 
     if (!normalizedBarcode) {
@@ -170,8 +533,20 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
     })
     await updateProductQrImagePath(conn, result.insertId, qrAsset.publicPath)
 
+    if (isBaleSourceCreate) {
+      await applyProductStockDelta(conn, {
+        productId: result.insertId,
+        deltaQuantity: requestedBaleQuantity,
+        userId: req.auth.id,
+        reference: stockInReference,
+        reason: stockInReason,
+        createdAt: stockInCreatedAt,
+        transactionType: 'IN'
+      })
+    }
+
     const [createdRows] = await conn.query(
-      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active
+      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, product_source, source_breakdown_id, bale_purchase_id, condition_grade
        FROM products
        WHERE id = ?
        LIMIT 1`,
@@ -214,6 +589,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
 router.put('/:id', express.json(), verifyToken, authorize('products.edit'), async (req, res) => {
   const conn = await db.pool.getConnection()
   try {
+    await ensureAutomatedReportsSchema()
     await conn.beginTransaction()
     await ensureScannerSchema(conn)
 
@@ -221,7 +597,7 @@ router.put('/:id', express.json(), verifyToken, authorize('products.edit'), asyn
     if (!Number.isFinite(id) || id <= 0) throw createHttpError(400, 'invalid product id')
 
     const [existingRows] = await conn.query(
-      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, qr_image_path
+      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, qr_image_path, product_source, source_breakdown_id, bale_purchase_id, condition_grade
        FROM products
        WHERE id = ?
        LIMIT 1
@@ -230,8 +606,44 @@ router.put('/:id', express.json(), verifyToken, authorize('products.edit'), asyn
     )
     if (!existingRows.length) throw createHttpError(404, 'product not found')
     const beforeProduct = { ...existingRows[0] }
+    const existingProductSource = String(beforeProduct.product_source || 'manual').trim().toLowerCase() || 'manual'
 
-    const { sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active } = req.body
+    const {
+      sku,
+      name,
+      brand,
+      description,
+      category_id,
+      price,
+      cost,
+      stock_quantity,
+      low_stock_threshold,
+      size,
+      color,
+      barcode,
+      is_active,
+      product_source,
+      source_breakdown_id,
+      bale_purchase_id,
+      condition_grade
+    } = req.body || {}
+
+    if (
+      product_source !== undefined
+      || source_breakdown_id !== undefined
+      || bale_purchase_id !== undefined
+      || condition_grade !== undefined
+    ) {
+      throw createHttpError(400, 'Product type and bale source link cannot be changed after creation.')
+    }
+
+    if (stock_quantity !== undefined && existingProductSource !== 'manual') {
+      const sourceLabel = existingProductSource === 'repaired_damage'
+        ? 'received repaired'
+        : 'bale-linked'
+      throw createHttpError(400, `Stock quantity for ${sourceLabel} products is managed by its dedicated intake flow.`)
+    }
+
     const updates = []
     const params = []
 
@@ -251,7 +663,14 @@ router.put('/:id', express.json(), verifyToken, authorize('products.edit'), asyn
     if (category_id !== undefined) { updates.push('category_id = ?'); params.push(category_id || null) }
     if (price !== undefined) { updates.push('price = ?'); params.push(price) }
     if (cost !== undefined) { updates.push('cost = ?'); params.push(cost) }
-    if (stock_quantity !== undefined) { updates.push('stock_quantity = ?'); params.push(stock_quantity) }
+    if (stock_quantity !== undefined) {
+      const parsedStockQuantity = Number(stock_quantity)
+      if (!Number.isFinite(parsedStockQuantity) || parsedStockQuantity < 0) {
+        throw createHttpError(400, 'stock_quantity must be zero or greater')
+      }
+      updates.push('stock_quantity = ?')
+      params.push(Math.floor(parsedStockQuantity))
+    }
     if (low_stock_threshold !== undefined) { updates.push('low_stock_threshold = ?'); params.push(low_stock_threshold) }
     if (size !== undefined) { updates.push('size = ?'); params.push(size) }
     if (color !== undefined) { updates.push('color = ?'); params.push(color) }
@@ -295,7 +714,7 @@ router.put('/:id', express.json(), verifyToken, authorize('products.edit'), asyn
     }
 
     const [updatedRows] = await conn.query(
-      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active
+      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, product_source, source_breakdown_id, bale_purchase_id, condition_grade
        FROM products
        WHERE id = ?
        LIMIT 1`,
@@ -338,9 +757,10 @@ router.put('/:id', express.json(), verifyToken, authorize('products.edit'), asyn
 // Delete product
 router.delete('/:id', verifyToken, authorize('products.delete'), async (req, res) => {
   try {
+    await ensureAutomatedReportsSchema()
     const id = Number(req.params.id)
     const [beforeRows] = await db.pool.query(
-      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active
+      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, product_source, source_breakdown_id
        FROM products
        WHERE id = ?
        LIMIT 1`,
