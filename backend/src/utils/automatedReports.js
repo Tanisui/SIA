@@ -21,6 +21,13 @@ function shiftDate(dateOnly, days) {
   return formatDateOnly(base)
 }
 
+function toLocalDateOnly(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function createValidationError(message) {
   const err = new Error(message)
   err.statusCode = 400
@@ -131,6 +138,32 @@ async function getTableColumnSet(tableName) {
   return new Set(rows.map((row) => String(row.COLUMN_NAME || '').toLowerCase()))
 }
 
+async function ensureEnumColumnDefinition(tableName, columnName, expectedDefinition) {
+  const [rows] = await db.pool.query(`
+    SELECT COLUMN_TYPE AS column_type
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = ?
+      AND column_name = ?
+    LIMIT 1
+  `, [tableName, columnName])
+
+  const columnType = String(rows[0]?.column_type || '').toLowerCase()
+  if (!columnType || columnType === String(expectedDefinition || '').toLowerCase()) return
+
+  const expectedValues = String(expectedDefinition || '')
+    .match(/'[^']+'/g)
+    ?.map((value) => value.toLowerCase()) || []
+
+  const hasAllExpectedValues = expectedValues.every((value) => columnType.includes(value))
+  if (!hasAllExpectedValues) {
+    await db.pool.query(`
+      ALTER TABLE ${tableName}
+      MODIFY COLUMN ${columnName} ${expectedDefinition}
+    `)
+  }
+}
+
 async function ensureAutomatedReportsSchema() {
   if (ensureAutomatedReportsSchemaPromise) return ensureAutomatedReportsSchemaPromise
 
@@ -150,6 +183,18 @@ async function ensureAutomatedReportsSchema() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `)
+
+    await runSchemaChange('ALTER TABLE bale_purchases ADD COLUMN supplier_id BIGINT UNSIGNED NULL')
+    await runSchemaChange('ALTER TABLE bale_purchases ADD COLUMN bale_category VARCHAR(120) NULL')
+    await runSchemaChange('ALTER TABLE bale_purchases ADD COLUMN bale_cost DECIMAL(12,2) DEFAULT 0.00')
+    await runSchemaChange('ALTER TABLE bale_purchases ADD COLUMN total_purchase_cost DECIMAL(12,2) DEFAULT 0.00')
+    await runSchemaChange("ALTER TABLE bale_purchases ADD COLUMN payment_status ENUM('PAID', 'PARTIAL', 'UNPAID') DEFAULT 'UNPAID'")
+    await runSchemaChange('ALTER TABLE bale_purchases ADD COLUMN quantity_ordered INT NOT NULL DEFAULT 0')
+    await runSchemaChange('ALTER TABLE bale_purchases ADD COLUMN quantity_received INT NOT NULL DEFAULT 0')
+    await runSchemaChange("ALTER TABLE bale_purchases ADD COLUMN po_status ENUM('PENDING', 'ORDERED', 'RECEIVED', 'COMPLETED', 'CANCELLED') DEFAULT 'PENDING'")
+    await runSchemaChange('ALTER TABLE bale_purchases ADD COLUMN expected_delivery_date DATE NULL')
+    await runSchemaChange('ALTER TABLE bale_purchases ADD COLUMN actual_delivery_date DATE NULL')
+    await runSchemaChange('ALTER TABLE bale_purchases ADD COLUMN notes TEXT NULL')
 
     await db.pool.query(`
       CREATE TABLE IF NOT EXISTS bale_breakdowns (
@@ -171,9 +216,30 @@ async function ensureAutomatedReportsSchema() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `)
 
-    const balePurchaseColumns = await getTableColumnSet('bale_purchases')
+    await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN premium_items INT DEFAULT 0 AFTER saleable_items')
+    await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN standard_items INT DEFAULT 0 AFTER premium_items')
+    await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN low_grade_items INT DEFAULT 0 AFTER standard_items')
+    await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN damaged_items INT DEFAULT 0 AFTER low_grade_items')
+    await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN cost_per_saleable_item DECIMAL(12,2) DEFAULT 0.00 AFTER damaged_items')
+    await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN encoded_by BIGINT UNSIGNED NULL AFTER cost_per_saleable_item')
+    await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN breakdown_date DATE NULL AFTER encoded_by')
+    await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN notes TEXT NULL AFTER breakdown_date')
+
+    await ensureEnumColumnDefinition(
+      'bale_purchases',
+      'payment_status',
+      "ENUM('PAID', 'PARTIAL', 'UNPAID') DEFAULT 'UNPAID'"
+    )
+    await ensureEnumColumnDefinition(
+      'bale_purchases',
+      'po_status',
+      "ENUM('PENDING', 'ORDERED', 'RECEIVED', 'COMPLETED', 'CANCELLED') DEFAULT 'PENDING'"
+    )
+
+    let balePurchaseColumns = await getTableColumnSet('bale_purchases')
     if (!balePurchaseColumns.has('supplier_name')) {
       await runSchemaChange('ALTER TABLE bale_purchases ADD COLUMN supplier_name VARCHAR(255) NULL AFTER bale_batch_no')
+      balePurchaseColumns = await getTableColumnSet('bale_purchases')
     }
 
     const hasSupplierId = balePurchaseColumns.has('supplier_id')
@@ -204,6 +270,15 @@ async function ensureAutomatedReportsSchema() {
     }
 
     await db.pool.query(`
+      UPDATE bale_purchases
+      SET quantity_ordered = COALESCE(quantity_ordered, 0),
+          quantity_received = COALESCE(quantity_received, 0),
+          total_purchase_cost = COALESCE(total_purchase_cost, bale_cost, 0),
+          payment_status = COALESCE(NULLIF(payment_status, ''), 'UNPAID'),
+          po_status = COALESCE(NULLIF(po_status, ''), 'PENDING')
+    `)
+
+    await db.pool.query(`
       CREATE TABLE IF NOT EXISTS inventory_adjustments (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         product_id BIGINT UNSIGNED NULL,
@@ -218,13 +293,29 @@ async function ensureAutomatedReportsSchema() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `)
 
+    await runSchemaChange('ALTER TABLE inventory_adjustments ADD COLUMN product_id BIGINT UNSIGNED NULL')
+    await runSchemaChange('ALTER TABLE inventory_adjustments ADD COLUMN bale_purchase_id BIGINT UNSIGNED NULL')
+    await runSchemaChange("ALTER TABLE inventory_adjustments ADD COLUMN adjustment_type ENUM('damaged', 'unsellable', 'shrinkage', 'correction') NOT NULL DEFAULT 'correction'")
+    await runSchemaChange('ALTER TABLE inventory_adjustments ADD COLUMN quantity INT NOT NULL DEFAULT 0')
+    await runSchemaChange('ALTER TABLE inventory_adjustments ADD COLUMN reason TEXT NULL')
+    await runSchemaChange('ALTER TABLE inventory_adjustments ADD COLUMN adjustment_date DATE NULL')
+    await runSchemaChange('ALTER TABLE inventory_adjustments ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+
+    await ensureEnumColumnDefinition(
+      'inventory_adjustments',
+      'adjustment_type',
+      "ENUM('damaged', 'unsellable', 'shrinkage', 'correction') NOT NULL DEFAULT 'correction'"
+    )
+
     await runSchemaChange('ALTER TABLE suppliers ADD COLUMN notes TEXT NULL')
     await runSchemaChange('ALTER TABLE suppliers ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP')
 
     await runSchemaChange('ALTER TABLE products ADD COLUMN item_code VARCHAR(128) NULL AFTER id')
     await runSchemaChange('ALTER TABLE products ADD COLUMN bale_purchase_id BIGINT UNSIGNED NULL AFTER id')
+    await runSchemaChange('ALTER TABLE products ADD COLUMN source_breakdown_id BIGINT UNSIGNED NULL AFTER bale_purchase_id')
     await runSchemaChange('ALTER TABLE products ADD COLUMN subcategory VARCHAR(150) NULL AFTER category_id')
     await runSchemaChange("ALTER TABLE products ADD COLUMN condition_grade ENUM('premium','standard','low_grade','damaged','unsellable') NULL AFTER color")
+    await runSchemaChange("ALTER TABLE products ADD COLUMN product_source ENUM('manual','bale_breakdown','repaired_damage') DEFAULT 'manual' AFTER condition_grade")
     await runSchemaChange('ALTER TABLE products ADD COLUMN allocated_cost DECIMAL(12,2) DEFAULT 0.00 AFTER cost')
     await runSchemaChange('ALTER TABLE products ADD COLUMN selling_price DECIMAL(12,2) DEFAULT 0.00 AFTER price')
     await runSchemaChange("ALTER TABLE products ADD COLUMN status ENUM('available','sold','damaged','reserved','archived') DEFAULT 'available' AFTER selling_price")
@@ -232,8 +323,12 @@ async function ensureAutomatedReportsSchema() {
 
     await runSchemaChange('CREATE UNIQUE INDEX idx_products_item_code ON products(item_code)')
     await runSchemaChange('CREATE INDEX idx_products_bale_purchase_id ON products(bale_purchase_id)')
+    await runSchemaChange('CREATE INDEX idx_products_source_breakdown_id ON products(source_breakdown_id)')
+    await runSchemaChange('CREATE INDEX idx_products_product_source ON products(product_source)')
     await runSchemaChange('CREATE INDEX idx_products_date_encoded ON products(date_encoded)')
     await runSchemaChange('CREATE INDEX idx_bale_purchase_date ON bale_purchases(purchase_date)')
+    await runSchemaChange('CREATE INDEX idx_bale_purchase_supplier_id ON bale_purchases(supplier_id)')
+    await runSchemaChange('CREATE INDEX idx_bale_purchase_po_status ON bale_purchases(po_status)')
     await runSchemaChange('CREATE INDEX idx_bale_breakdown_date ON bale_breakdowns(breakdown_date)')
     await runSchemaChange('CREATE INDEX idx_inventory_adjustments_date ON inventory_adjustments(adjustment_date)')
     await runSchemaChange('CREATE INDEX idx_inventory_adjustments_type ON inventory_adjustments(adjustment_type)')
@@ -245,6 +340,22 @@ async function ensureAutomatedReportsSchema() {
       ON DELETE SET NULL
     `)
 
+    await db.pool.query(`
+      UPDATE products p
+      LEFT JOIN bale_breakdowns bb ON bb.bale_purchase_id = p.bale_purchase_id
+      SET p.product_source = CASE
+            WHEN p.bale_purchase_id IS NOT NULL
+             AND COALESCE(p.condition_grade, '') IN ('premium', 'standard')
+              THEN 'bale_breakdown'
+            ELSE COALESCE(NULLIF(p.product_source, ''), 'manual')
+          END,
+          p.source_breakdown_id = CASE
+            WHEN p.bale_purchase_id IS NOT NULL
+             AND COALESCE(p.condition_grade, '') IN ('premium', 'standard')
+              THEN COALESCE(p.source_breakdown_id, bb.id)
+            ELSE p.source_breakdown_id
+          END
+    `)
     await db.pool.query(`
       UPDATE products
       SET selling_price = COALESCE(NULLIF(selling_price, 0), price, 0)
@@ -263,6 +374,35 @@ async function ensureAutomatedReportsSchema() {
       END
       WHERE status IS NULL OR status = ''
     `)
+    await ensureEnumColumnDefinition(
+      'products',
+      'product_source',
+      "ENUM('manual','bale_breakdown','repaired_damage') DEFAULT 'manual'"
+    )
+
+    await db.pool.query(`
+      CREATE TABLE IF NOT EXISTS damage_repair_events (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        damage_source_type ENUM('bale_breakdown', 'manual_damage', 'sales_return') NOT NULL,
+        damage_source_id BIGINT UNSIGNED NOT NULL,
+        product_id BIGINT UNSIGNED NOT NULL,
+        quantity INT UNSIGNED NOT NULL DEFAULT 1,
+        created_by BIGINT UNSIGNED NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `)
+
+    await runSchemaChange("ALTER TABLE damage_repair_events ADD COLUMN damage_source_type ENUM('bale_breakdown', 'manual_damage', 'sales_return') NOT NULL")
+    await runSchemaChange('ALTER TABLE damage_repair_events ADD COLUMN damage_source_id BIGINT UNSIGNED NOT NULL')
+    await runSchemaChange('ALTER TABLE damage_repair_events ADD COLUMN product_id BIGINT UNSIGNED NOT NULL')
+    await runSchemaChange('ALTER TABLE damage_repair_events ADD COLUMN quantity INT UNSIGNED NOT NULL DEFAULT 1')
+    await runSchemaChange('ALTER TABLE damage_repair_events ADD COLUMN created_by BIGINT UNSIGNED NULL')
+    await runSchemaChange('ALTER TABLE damage_repair_events ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+    await runSchemaChange('CREATE INDEX idx_damage_repair_events_source ON damage_repair_events(damage_source_type, damage_source_id)')
+    await runSchemaChange('CREATE INDEX idx_damage_repair_events_product_id ON damage_repair_events(product_id)')
+    await runSchemaChange('CREATE INDEX idx_damage_repair_events_created_at ON damage_repair_events(created_at)')
   })().catch((err) => {
     ensureAutomatedReportsSchemaPromise = null
     throw err
@@ -332,11 +472,16 @@ async function getDamageLossTotal(range, mode = 'range') {
 
 async function getSummary(range) {
   const salesParams = []
+  const salesPurchasePredicate = buildRangePredicate('bp', 'purchase_date', range, salesParams)
   const salesDateFilter = buildDateRangeClause('s', 'date', range, salesParams)
   const [salesRows] = await db.pool.query(`
-    SELECT COALESCE(SUM(s.total), 0) AS total_sales
-    FROM sales s
+    SELECT COALESCE(SUM(si.line_total), 0) AS total_sales
+    FROM sale_items si
+    JOIN sales s ON s.id = si.sale_id
+    JOIN products p ON p.id = si.product_id
+    JOIN bale_purchases bp ON bp.id = p.bale_purchase_id
     WHERE s.status <> 'CANCELLED'
+      AND (${salesPurchasePredicate})
       ${salesDateFilter}
   `, salesParams)
 
@@ -351,22 +496,29 @@ async function getSummary(range) {
   `, baleParams)
 
   const itemsAddedParams = []
-  const itemsAddedDateFilter = buildDateRangeClause('p', 'date_encoded', range, itemsAddedParams)
+  const itemsAddedDateFilter = buildDateRangeClause('x', 'event_date', range, itemsAddedParams)
   const [itemsAddedRows] = await db.pool.query(`
-    SELECT COUNT(*) AS items_added
-    FROM products p
-    WHERE p.bale_purchase_id IS NOT NULL
-      ${itemsAddedDateFilter}
+    SELECT COALESCE(SUM(x.saleable_items), 0) AS items_added
+    FROM (
+      SELECT
+        COALESCE(bb.saleable_items, 0) AS saleable_items,
+        COALESCE(bb.breakdown_date, bp.purchase_date) AS event_date
+      FROM bale_breakdowns bb
+      JOIN bale_purchases bp ON bp.id = bb.bale_purchase_id
+    ) x
+    WHERE 1=1${itemsAddedDateFilter}
   `, itemsAddedParams)
 
   const itemsSoldParams = []
+  const itemsSoldPurchasePredicate = buildRangePredicate('bp', 'purchase_date', range, itemsSoldParams)
   const itemsSoldDateFilter = buildDateRangeClause('s', 'date', range, itemsSoldParams)
   const [itemsSoldRows] = await db.pool.query(`
     SELECT COALESCE(SUM(si.qty), 0) AS items_sold
     FROM sale_items si
     JOIN sales s ON s.id = si.sale_id
     JOIN products p ON p.id = si.product_id
-    WHERE p.bale_purchase_id IS NOT NULL
+    JOIN bale_purchases bp ON bp.id = p.bale_purchase_id
+    WHERE (${itemsSoldPurchasePredicate})
       AND s.status <> 'CANCELLED'
       ${itemsSoldDateFilter}
   `, itemsSoldParams)
@@ -385,6 +537,8 @@ async function getSummary(range) {
     WHERE 1=1${breakdownDamagedDateFilter}
   `, breakdownDamagedParams)
 
+  const remainingParams = []
+  const remainingPurchasePredicate = buildRangePredicate('bp', 'purchase_date', range, remainingParams)
   const [remainingRows] = await db.pool.query(`
     SELECT
       COALESCE(SUM(
@@ -394,8 +548,9 @@ async function getSummary(range) {
         END
       ), 0) AS remaining_saleable_items
     FROM products p
-    WHERE p.bale_purchase_id IS NOT NULL
-  `)
+    JOIN bale_purchases bp ON bp.id = p.bale_purchase_id
+    WHERE (${remainingPurchasePredicate})
+  `, remainingParams)
 
   const totalSales = roundMoney(salesRows[0]?.total_sales)
   const totalBalePurchases = roundMoney(baleRows[0]?.total_bale_purchases)
@@ -485,16 +640,22 @@ async function getBaleBreakdowns(range) {
     ORDER BY COALESCE(bb.breakdown_date, bp.purchase_date) DESC, bp.id DESC
   `, params)
 
-  return rows.map((row) => ({
-    ...row,
-    total_pieces: toNumber(row.total_pieces),
-    saleable_items: toNumber(row.saleable_items),
-    premium_items: toNumber(row.premium_items),
-    standard_items: toNumber(row.standard_items),
-    low_grade_items: toNumber(row.low_grade_items),
-    damaged_items: toNumber(row.damaged_items),
-    cost_per_saleable_item: roundMoney(row.cost_per_saleable_item)
-  }))
+  return rows.map((row) => {
+    const premiumItems = toNumber(row.premium_items)
+    const standardItems = toNumber(row.standard_items) + toNumber(row.low_grade_items)
+    const saleableItems = toNumber(row.saleable_items) || (premiumItems + standardItems)
+
+    return {
+      ...row,
+      total_pieces: toNumber(row.total_pieces),
+      saleable_items: saleableItems,
+      premium_items: premiumItems,
+      standard_items: standardItems,
+      low_grade_items: 0,
+      damaged_items: toNumber(row.damaged_items),
+      cost_per_saleable_item: roundMoney(row.cost_per_saleable_item)
+    }
+  })
 }
 
 async function getSalesByBale(range) {
@@ -587,7 +748,7 @@ async function getBaleProfitability(range) {
       WHERE p.bale_purchase_id IS NOT NULL
       GROUP BY p.bale_purchase_id
     ) inventory_data ON inventory_data.bale_purchase_id = bp.id
-    WHERE (${purchasePredicate}) OR sales_data.bale_purchase_id IS NOT NULL
+    WHERE (${purchasePredicate})
     ORDER BY revenue_generated DESC, bp.id DESC
   `, params)
 
@@ -616,8 +777,9 @@ async function getBaleProfitability(range) {
     }
   })
 
-  const best = mappedRows.length
-    ? mappedRows.reduce((current, row) => (row.gross_profit > current.gross_profit ? row : current), mappedRows[0])
+  const profitableRows = mappedRows.filter((row) => row.gross_profit > 0)
+  const best = profitableRows.length
+    ? profitableRows.reduce((current, row) => (row.gross_profit > current.gross_profit ? row : current), profitableRows[0])
     : null
   const worst = mappedRows.length
     ? mappedRows.reduce((current, row) => (row.gross_profit < current.gross_profit ? row : current), mappedRows[0])
@@ -645,9 +807,31 @@ async function getBaleProfitability(range) {
 }
 
 function isDateWithinRange(dateValue, range) {
-  if (!dateValue) return false
-  const normalized = String(dateValue).slice(0, 10)
-  if (!normalized) return false
+  if (!dateValue) return true
+
+  let normalized = null
+  if (dateValue instanceof Date) {
+    if (Number.isNaN(dateValue.getTime())) return true
+    normalized = toLocalDateOnly(dateValue)
+  } else {
+    const rawValue = String(dateValue || '').trim()
+    if (!rawValue) return true
+
+    if (DATE_PATTERN.test(rawValue)) {
+      normalized = rawValue
+    } else {
+      const datePrefixMatch = rawValue.match(/^(\d{4}-\d{2}-\d{2})/)
+      if (datePrefixMatch) {
+        normalized = datePrefixMatch[1]
+      } else {
+        const parsed = new Date(rawValue)
+        if (Number.isNaN(parsed.getTime())) return true
+        normalized = toLocalDateOnly(parsed)
+      }
+    }
+  }
+
+  if (!normalized) return true
   if (range.from && normalized < range.from) return false
   if (range.to && normalized > range.to) return false
   return true
@@ -657,6 +841,9 @@ function getSupplierPerformance(baleProfitabilityRows, range) {
   const grouped = new Map()
 
   for (const row of baleProfitabilityRows) {
+    const purchasedInRange = isDateWithinRange(row.purchase_date, range)
+    if (!purchasedInRange) continue
+
     const supplierName = row.supplier_name || 'Unknown Supplier'
     if (!grouped.has(supplierName)) {
       grouped.set(supplierName, {
@@ -672,15 +859,11 @@ function getSupplierPerformance(baleProfitabilityRows, range) {
     }
 
     const item = grouped.get(supplierName)
+    item.number_of_bales_purchased += 1
+    item.purchased_bale_cost_total += toNumber(row.total_purchase_cost)
+    item.purchased_saleable_total += toNumber(row.saleable_items)
+    item.purchased_damaged_total += toNumber(row.damaged_items)
     item.total_revenue_generated += toNumber(row.revenue_generated)
-
-    const purchasedInRange = isDateWithinRange(row.purchase_date, range)
-    if (purchasedInRange) {
-      item.number_of_bales_purchased += 1
-      item.purchased_bale_cost_total += toNumber(row.total_purchase_cost)
-      item.purchased_saleable_total += toNumber(row.saleable_items)
-      item.purchased_damaged_total += toNumber(row.damaged_items)
-    }
 
     if (toNumber(row.gross_profit) > item.best_performing_gross_profit) {
       item.best_performing_gross_profit = toNumber(row.gross_profit)
@@ -699,7 +882,7 @@ function getSupplierPerformance(baleProfitabilityRows, range) {
       estimated_gross_profit: roundMoney(row.total_revenue_generated - row.purchased_bale_cost_total),
       best_performing_bale: row.best_performing_bale || '-'
     }))
-    .filter((row) => row.number_of_bales_purchased > 0 || row.total_revenue_generated > 0)
+    .filter((row) => row.number_of_bales_purchased > 0)
     .sort((a, b) => b.estimated_gross_profit - a.estimated_gross_profit)
 }
 
@@ -821,14 +1004,14 @@ function buildAutomatedReportsCsv(reportPayload) {
   lines.push(csvLine(['Section', 'Metric', 'Value']))
 
   const summary = reportPayload.summary || {}
-  lines.push(csvLine(['Summary', 'Total Sales', summary.totalSales]))
+  lines.push(csvLine(['Summary', 'Bale-linked Sales', summary.totalSales]))
   lines.push(csvLine(['Summary', 'Total Bale Purchases', summary.totalBalePurchases]))
-  lines.push(csvLine(['Summary', 'Gross Profit', summary.grossProfit]))
+  lines.push(csvLine(['Summary', 'Bale Gross Profit', summary.grossProfit]))
   lines.push(csvLine(['Summary', 'Bales Purchased', summary.balesPurchased]))
-  lines.push(csvLine(['Summary', 'Items Added to Inventory', summary.itemsAddedToInventory]))
+  lines.push(csvLine(['Summary', 'Saleable Pieces From Breakdown', summary.itemsAddedToInventory]))
   lines.push(csvLine(['Summary', 'Items Sold', summary.itemsSold]))
   lines.push(csvLine(['Summary', 'Damaged / Unsellable Items', summary.damagedUnsellableItems]))
-  lines.push(csvLine(['Summary', 'Remaining Saleable Items', summary.remainingSaleableItems]))
+  lines.push(csvLine(['Summary', 'Current Remaining Stock', summary.remainingSaleableItems]))
 
   lines.push('')
   lines.push(csvLine([
@@ -836,10 +1019,9 @@ function buildAutomatedReportsCsv(reportPayload) {
     'Bale Batch No.',
     'Purchase Date',
     'Supplier Name',
-    'Bale Type / Category',
+    'Bale Category',
     'Bale Cost',
-    'Total Purchase Cost',
-    'Payment Status'
+    'Total Purchase Cost'
   ]))
   for (const row of reportPayload.balePurchases || []) {
     lines.push(csvLine([
@@ -847,10 +1029,9 @@ function buildAutomatedReportsCsv(reportPayload) {
       row.bale_batch_no,
       row.purchase_date,
       row.supplier_name,
-      row.bale_type,
+      row.bale_category,
       row.bale_cost,
-      row.total_purchase_cost,
-      row.payment_status
+      row.total_purchase_cost
     ]))
   }
 
@@ -888,6 +1069,9 @@ function buildAutomatedReportsCsv(reportPayload) {
 module.exports = {
   ensureAutomatedReportsSchema,
   normalizeDateRange,
+  getSummary,
+  getBaleProfitability,
+  getSupplierPerformance,
   getAutomatedReports,
   buildAutomatedReportsCsv
 }

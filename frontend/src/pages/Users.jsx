@@ -3,7 +3,45 @@ import { useNavigate } from 'react-router-dom'
 import api from '../api/api.js'
 import { ConfirmModal } from '../components/Modal.js'
 
-export default function Users(){
+function ActionIcon({ children }) {
+  return (
+    <span className="users-action-icon" aria-hidden="true">
+      {children}
+    </span>
+  )
+}
+
+function ViewIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+      <circle cx="12" cy="12" r="2.8" />
+    </svg>
+  )
+}
+
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 20h9" />
+      <path d="m16.5 3.5 4 4L8 20l-5 1 1-5 12.5-12.5Z" />
+    </svg>
+  )
+}
+
+function DeleteIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="m19 6-1 14H6L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
+  )
+}
+
+export default function Users() {
   const navigate = useNavigate()
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(false)
@@ -14,7 +52,7 @@ export default function Users(){
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
 
-  useEffect(()=>{
+  useEffect(() => {
     fetchUsers()
   }, [])
 
@@ -23,7 +61,7 @@ export default function Users(){
     try {
       const res = await api.get('/users')
       setUsers(res.data || [])
-    } catch (err) {
+    } catch {
       setError('Failed to fetch users')
     }
     setLoading(false)
@@ -50,8 +88,26 @@ export default function Users(){
     setShowDetails(true)
   }
 
+  const formatDate = (value) => {
+    if (!value) return '-'
+    const parsed = new Date(value)
+    return Number.isNaN(parsed.getTime()) ? '-' : parsed.toLocaleDateString()
+  }
+
+  const formatCurrency = (value) => {
+    if (value === null || value === undefined || value === '') return '-'
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? `\u20b1${parsed.toFixed(2)}` : '-'
+  }
+
+  const detailsRowStyle = {
+    marginBottom: 12,
+    borderBottom: '1px solid #eee',
+    paddingBottom: 12
+  }
+
   return (
-    <div className="page">
+    <div className="page users-page">
       <div className="page-header">
         <h1 className="page-title">Users</h1>
         <button className="btn btn-primary" onClick={() => navigate('/users/new')}>
@@ -70,48 +126,100 @@ export default function Users(){
         </div>
       )}
 
-      <div className="table-wrap" style={{ marginBottom: 40 }}>
+      <div className="table-wrap responsive users-table-wrap" style={{ marginBottom: 40 }}>
         {loading ? (
           <p>Loading...</p>
         ) : (
-          <table>
+          <table className="users-table">
             <thead>
               <tr>
-                <th>Username</th>
-                <th>Email</th>
-                <th>Full Name</th>
-                <th>Primary Role</th>
+                <th>Account</th>
+                <th>Profile</th>
                 <th>Status</th>
                 <th>Contact</th>
-                <th>Hire Date</th>
-                <th>Pay Rate</th>
-                <th>Actions</th>
+                <th>Employment</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {users.map(u => (
-                <tr key={u.id}>
-                  <td>{u.username}</td>
-                  <td>{u.email}</td>
-                  <td>{u.full_name || '-'}</td>
-                  <td>{(u.roles || [])[0] || '-'}</td>
-                  <td>{u.is_active === 1 ? 'Active' : 'Inactive'}</td>
-                  <td>{u.employee?.mobile_number || u.employee?.contact || '-'}</td>
-                  <td>{u.employee?.hire_date ? new Date(u.employee.hire_date).toLocaleDateString() : '-'}</td>
-                  <td>{u.employee?.pay_rate ? '₱' + parseFloat(u.employee.pay_rate).toFixed(2) : '-'}</td>
-                  <td style={{ display: 'flex', gap: 8 }}>
-                    <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12, marginRight: 4 }} onClick={() => showUserDetails(u)}>
-                      View
-                    </button>
-                    <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12, marginRight: 4 }} onClick={() => navigate(`/users/${u.id}/edit`)}>
-                      Edit
-                    </button>
-                    <button className="btn btn-danger" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => setDeleteTarget(u)}>
-                      Delete
-                    </button>
+              {users.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="text-center text-muted">
+                    No users found.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                users.map((user) => {
+                  const primaryRole = (user.roles || [])[0] || '-'
+                  const isActive = user.is_active === 1
+                  const contactNumber = user.employee?.mobile_number || user.employee?.contact || '-'
+
+                  return (
+                    <tr key={user.id}>
+                      <td>
+                        <div className="users-cell-stack">
+                          <div className="users-cell-primary">{user.username || '-'}</div>
+                          <div className="users-cell-secondary">{user.email || '-'}</div>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="users-cell-stack">
+                          <div className="users-cell-primary">{user.full_name || '-'}</div>
+                          <div className="users-cell-secondary">{primaryRole}</div>
+                        </div>
+                      </td>
+                      <td>
+                        <span className={`badge ${isActive ? 'badge-success' : 'badge-neutral'}`}>
+                          {isActive ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="users-cell-stack">
+                          <div className="users-cell-primary">{contactNumber}</div>
+                          <div className="users-cell-secondary">{user.employee?.employment_type || 'No employment type'}</div>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="users-cell-stack">
+                          <div className="users-cell-primary">{formatDate(user.employee?.hire_date)}</div>
+                          <div className="users-cell-secondary">Pay Rate {formatCurrency(user.employee?.pay_rate)}</div>
+                        </div>
+                      </td>
+                      <td className="text-right users-actions-cell">
+                        <div className="table-actions users-table-actions">
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-icon users-action-btn"
+                            title={`View ${user.username || 'user'}`}
+                            aria-label={`View ${user.username || 'user'}`}
+                            onClick={() => showUserDetails(user)}
+                          >
+                            <ActionIcon><ViewIcon /></ActionIcon>
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-icon users-action-btn"
+                            title={`Edit ${user.username || 'user'}`}
+                            aria-label={`Edit ${user.username || 'user'}`}
+                            onClick={() => navigate(`/users/${user.id}/edit`)}
+                          >
+                            <ActionIcon><EditIcon /></ActionIcon>
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-icon users-action-btn"
+                            title={`Delete ${user.username || 'user'}`}
+                            aria-label={`Delete ${user.username || 'user'}`}
+                            onClick={() => setDeleteTarget(user)}
+                          >
+                            <ActionIcon><DeleteIcon /></ActionIcon>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })
+              )}
             </tbody>
           </table>
         )}
@@ -122,23 +230,23 @@ export default function Users(){
           <div style={{ background: 'white', padding: 30, borderRadius: 8, maxWidth: 700, maxHeight: '90vh', overflow: 'auto', width: '90%' }}>
             <h2>User Details</h2>
             <div style={{ marginBottom: 20 }}>
-              <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
+              <div style={detailsRowStyle}>
                 <strong>Username: </strong>
                 <span>{selectedUser.username}</span>
               </div>
-              <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
+              <div style={detailsRowStyle}>
                 <strong>Email: </strong>
                 <span>{selectedUser.email}</span>
               </div>
-              <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
+              <div style={detailsRowStyle}>
                 <strong>Full Name: </strong>
                 <span>{selectedUser.full_name || '-'}</span>
               </div>
-              <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
+              <div style={detailsRowStyle}>
                 <strong>Roles: </strong>
                 <span>{(selectedUser.roles || []).join(', ') || '-'}</span>
               </div>
-              <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
+              <div style={detailsRowStyle}>
                 <strong>Active: </strong>
                 <span>{selectedUser.is_active === 1 ? 'Yes' : 'No'}</span>
               </div>
@@ -146,34 +254,34 @@ export default function Users(){
               {selectedUser.employee && (
                 <>
                   <h4 style={{ marginTop: 20, marginBottom: 10 }}>Employee Information</h4>
-                  <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
+                  <div style={detailsRowStyle}>
                     <strong>Mobile Number: </strong>
                     <span>{selectedUser.employee.mobile_number || selectedUser.employee.contact || '-'}</span>
                   </div>
-                  <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
+                  <div style={detailsRowStyle}>
                     <strong>Position Title: </strong>
                     <span>{selectedUser.employee.position_title || '-'}</span>
                   </div>
-                  <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
+                  <div style={detailsRowStyle}>
                     <strong>Department / Store: </strong>
                     <span>{selectedUser.employee.department_name || '-'}</span>
                   </div>
-                  <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
+                  <div style={detailsRowStyle}>
                     <strong>Hire Date: </strong>
-                    <span>{selectedUser.employee.hire_date ? new Date(selectedUser.employee.hire_date).toLocaleDateString() : '-'}</span>
+                    <span>{formatDate(selectedUser.employee.hire_date)}</span>
                   </div>
-                  <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
+                  <div style={detailsRowStyle}>
                     <strong>Employment Type: </strong>
                     <span>{selectedUser.employee.employment_type || '-'}</span>
                   </div>
-                  <div style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
+                  <div style={detailsRowStyle}>
                     <strong>Pay Rate: </strong>
-                    <span>{selectedUser.employee.pay_rate ? '₱' + parseFloat(selectedUser.employee.pay_rate).toFixed(2) : '-'}</span>
+                    <span>{formatCurrency(selectedUser.employee.pay_rate)}</span>
                   </div>
                 </>
               )}
             </div>
-            <button onClick={() => setShowDetails(false)} className="btn btn-secondary" style={{ width: '100%' }}>
+            <button type="button" onClick={() => setShowDetails(false)} className="btn btn-secondary" style={{ width: '100%' }}>
               Close
             </button>
           </div>

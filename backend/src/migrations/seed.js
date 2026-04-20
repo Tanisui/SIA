@@ -126,7 +126,18 @@ async function seed() {
 	const runtimeConfigs = [
 		['scanner.debounce_ms', '250'],
 		['sales.currency', 'PHP'],
-		['sales.tax_rate', '0']
+		['sales.tax_rate', '0.12'],
+		['invoice.display_name', "Cecille's N'Style"],
+		['invoice.registered_name', ''],
+		['invoice.registration_type', 'VAT'],
+		['invoice.seller_tin', ''],
+		['invoice.branch_code', ''],
+		['invoice.registered_business_address', ''],
+		['invoice.bir_permit_number', ''],
+		['invoice.bir_permit_date_issued', ''],
+		['invoice.atp_number', ''],
+		['invoice.atp_date_issued', ''],
+		['invoice.approved_series', '']
 	]
 
 	for (const [configKey, configValue] of runtimeConfigs) {

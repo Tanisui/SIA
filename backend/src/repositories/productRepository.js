@@ -8,7 +8,7 @@ async function findProductByScannedCode(conn, rawCode) {
     `
       SELECT *
       FROM products
-      WHERE is_active = 1
+      WHERE COALESCE(is_active, 1) = 1
         AND (
           UPPER(TRIM(barcode)) = ?
           OR UPPER(TRIM(sku)) = ?

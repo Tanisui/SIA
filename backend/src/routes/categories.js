@@ -4,7 +4,7 @@ const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 
 // List all categories
-router.get('/', verifyToken, authorize('products.view'), async (req, res) => {
+router.get('/', verifyToken, authorize(['products.view', 'inventory.view', 'inventory.adjust']), async (req, res) => {
   try {
     const [rows] = await db.pool.query('SELECT id, name, description FROM categories ORDER BY name')
     res.json(rows)
@@ -15,7 +15,7 @@ router.get('/', verifyToken, authorize('products.view'), async (req, res) => {
 })
 
 // Get single category
-router.get('/:id', verifyToken, authorize('products.view'), async (req, res) => {
+router.get('/:id', verifyToken, authorize(['products.view', 'inventory.view', 'inventory.adjust']), async (req, res) => {
   try {
     const [rows] = await db.pool.query('SELECT id, name, description FROM categories WHERE id = ? LIMIT 1', [req.params.id])
     if (!rows.length) return res.status(404).json({ error: 'category not found' })

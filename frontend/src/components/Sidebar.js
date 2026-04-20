@@ -28,6 +28,7 @@ const NAV_ITEMS = [
     ]
   },
   { to: '/sales', label: 'Sales', icon: 'SL', perm: ['sales.view', 'sales.create'] },
+  { to: '/customers', label: 'Customers', icon: 'CU', perm: 'customers.view' },
   {
     to: '/purchasing',
     label: 'Purchasing',
@@ -56,6 +57,7 @@ const NAV_ITEMS = [
   { section: 'System' },
   { to: '/users', label: 'Users', icon: 'US', perm: 'users.view' },
   { to: '/roles', label: 'Roles', icon: 'RL', perm: 'roles.view' },
+  { to: '/settings', label: 'Settings', icon: 'ST', perm: 'system.config.update' },
   { to: '/audit', label: 'Audit', icon: 'AD', perm: 'system.audit.view' },
   { section: 'Account' },
   { to: '/change-password', label: 'Change Password', icon: 'PW', perm: null }

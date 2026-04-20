@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/api.js'
-import Badge from '../components/Badge.js'
 import Pagination, { PaginationInfo } from '../components/Pagination.js'
 import ReportSummaryCards from '../components/reports/ReportSummaryCards.jsx'
 import ReportTable from '../components/reports/ReportTable.jsx'
@@ -24,12 +23,12 @@ const REPORT_TABS = [
   {
     key: 'balePurchases',
     label: 'Bale Purchases',
-    description: 'All bale purchases for the selected period, including landed costs and payment status.'
+    description: 'All bale purchases for the selected period, including supplier, category, and total cost.'
   },
   {
     key: 'baleBreakdowns',
     label: 'Bale Breakdown',
-    description: 'Opening and sorting outcomes per bale, including quality tiers and cost per saleable item.'
+    description: 'Opening and sorting outcomes per bale, including Class A - Premium, Class B - Standard, and cost per saleable item.'
   },
   {
     key: 'salesByBale',
@@ -74,14 +73,6 @@ function withQuery(from, to) {
   if (from) params.push(`from=${encodeURIComponent(from)}`)
   if (to) params.push(`to=${encodeURIComponent(to)}`)
   return params.length ? `?${params.join('&')}` : ''
-}
-
-function paymentStatusVariant(status) {
-  const normalized = String(status || '').toLowerCase()
-  if (normalized === 'paid') return 'success'
-  if (normalized === 'partial') return 'warning'
-  if (normalized === 'unpaid') return 'danger'
-  return 'neutral'
 }
 
 function sectionHasRows(payload) {
@@ -211,16 +202,16 @@ export default function Reports() {
   const summaryCards = useMemo(() => {
     const summary = report?.summary || {}
     return [
-      { key: 'total-sales', label: 'Total Sales', value: formatCurrency(summary.totalSales), tone: 'default' },
+      { key: 'total-sales', label: 'Bale-linked Sales', value: formatCurrency(summary.totalSales), tone: 'default' },
       { key: 'total-bale-purchases', label: 'Total Bale Purchases', value: formatCurrency(summary.totalBalePurchases), tone: 'default' },
       {
         key: 'gross-profit',
-        label: 'Gross Profit',
+        label: 'Bale Gross Profit',
         value: formatCurrency(summary.grossProfit),
         tone: toNumber(summary.grossProfit) >= 0 ? 'success' : 'danger'
       },
       { key: 'bales-purchased', label: 'Bales Purchased', value: formatNumber(summary.balesPurchased), tone: 'default' },
-      { key: 'items-added', label: 'Items Added to Inventory', value: formatNumber(summary.itemsAddedToInventory), tone: 'default' },
+      { key: 'items-added', label: 'Saleable Pieces From Breakdown', value: formatNumber(summary.itemsAddedToInventory), tone: 'default' },
       { key: 'items-sold', label: 'Items Sold', value: formatNumber(summary.itemsSold), tone: 'default' },
       {
         key: 'damaged-unsellable',
@@ -230,7 +221,7 @@ export default function Reports() {
       },
       {
         key: 'remaining-saleable',
-        label: 'Remaining Saleable Items',
+        label: 'Current Remaining Stock',
         value: formatNumber(summary.remainingSaleableItems),
         tone: 'info'
       }
@@ -268,18 +259,9 @@ export default function Reports() {
               { key: 'bale_batch_no', label: 'Bale Batch No.' },
               { key: 'purchase_date', label: 'Purchase Date', render: (value) => formatDate(value) },
               { key: 'supplier_name', label: 'Supplier Name' },
-              { key: 'bale_type', label: 'Bale Type / Category' },
+              { key: 'bale_category', label: 'Bale Category' },
               { key: 'bale_cost', label: 'Bale Cost', align: 'right', render: (value) => formatCurrency(value) },
-              { key: 'total_purchase_cost', label: 'Total Purchase Cost', align: 'right', render: (value) => formatCurrency(value) },
-              {
-                key: 'payment_status',
-                label: 'Payment Status',
-                render: (value) => (
-                  <Badge variant={paymentStatusVariant(value)}>
-                    {String(value || 'UNPAID').toUpperCase()}
-                  </Badge>
-                )
-              }
+              { key: 'total_purchase_cost', label: 'Total Purchase Cost', align: 'right', render: (value) => formatCurrency(value) }
             ]}
             footer={{
               bale_batch_no: 'TOTAL',
@@ -308,9 +290,13 @@ export default function Reports() {
               { key: 'bale_batch_no', label: 'Bale Batch No.' },
               { key: 'total_pieces', label: 'Total Pieces', align: 'right', render: (value) => formatNumber(value) },
               { key: 'saleable_items', label: 'Saleable Items', align: 'right', render: (value) => formatNumber(value) },
-              { key: 'premium_items', label: 'Premium Items', align: 'right', render: (value) => formatNumber(value) },
-              { key: 'standard_items', label: 'Standard Items', align: 'right', render: (value) => formatNumber(value) },
-              { key: 'low_grade_items', label: 'Low-grade Items', align: 'right', render: (value) => formatNumber(value) },
+              { key: 'premium_items', label: 'Class A - Premium', align: 'right', render: (value) => formatNumber(value) },
+              {
+                key: 'standard_items',
+                label: 'Class B - Standard',
+                align: 'right',
+                render: (value, row) => formatNumber(toNumber(value) + toNumber(row.low_grade_items))
+              },
               { key: 'damaged_items', label: 'Damaged / Unsellable', align: 'right', render: (value) => formatNumber(value) },
               { key: 'cost_per_saleable_item', label: 'Cost per Saleable Item', align: 'right', render: (value) => formatCurrency(value) }
             ]}
@@ -434,19 +420,38 @@ export default function Reports() {
     if (activeTab === 'supplierPerformance') {
       return (
         <>
+          <div className="reports-inline-note">
+            Supplier performance now uses only the bales purchased within the selected date range, so bale count, averages, revenue, and gross profit stay aligned.
+          </div>
           <ReportTable
             rows={supplierPerformancePage.rows}
             emptyTitle="No supplier performance records found."
             emptyDescription="No supplier-linked bale activity was found for this period."
             columns={[
-              { key: 'supplier_name', label: 'Supplier Name' },
-              { key: 'number_of_bales_purchased', label: 'Number of Bales Purchased', align: 'right', render: (value) => formatNumber(value) },
-              { key: 'average_bale_cost', label: 'Average Bale Cost', align: 'right', render: (value) => formatCurrency(value) },
-              { key: 'average_saleable_items', label: 'Average Saleable Items', align: 'right', render: (value) => formatNumber(value) },
-              { key: 'average_damaged_items', label: 'Average Damaged Items', align: 'right', render: (value) => formatNumber(value) },
-              { key: 'total_revenue_generated', label: 'Total Revenue Generated', align: 'right', render: (value) => formatCurrency(value) },
-              { key: 'estimated_gross_profit', label: 'Estimated Gross Profit', align: 'right', render: (value) => formatCurrency(value) },
-              { key: 'best_performing_bale', label: 'Best Performing Bale' }
+              { key: 'supplier_name', label: 'Supplier' },
+              { key: 'number_of_bales_purchased', label: 'Bales', align: 'right', render: (value) => formatNumber(value) },
+              {
+                key: 'averages',
+                label: 'Bale Averages',
+                render: (_, row) => (
+                  <div className="reports-metric-stack">
+                    <strong>{formatCurrency(row.average_bale_cost)}</strong>
+                    <span>{formatNumber(row.average_saleable_items)} saleable | {formatNumber(row.average_damaged_items)} damaged</span>
+                  </div>
+                )
+              },
+              { key: 'total_revenue_generated', label: 'Revenue', align: 'right', render: (value) => formatCurrency(value) },
+              {
+                key: 'estimated_gross_profit',
+                label: 'Gross Profit',
+                align: 'right',
+                render: (value) => (
+                  <span style={{ color: toNumber(value) >= 0 ? 'var(--success)' : 'var(--error)', fontWeight: 600 }}>
+                    {formatCurrency(value)}
+                  </span>
+                )
+              },
+              { key: 'best_performing_bale', label: 'Best Bale' }
             ]}
           />
           <TablePagination

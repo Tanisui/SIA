@@ -1,23 +1,8 @@
 const db = require('../database')
 
 const DEFAULT_TAX_RATE = 0.12
-const PAYMENT_METHODS = ['cash', 'mobile_bank_transfer']
+const PAYMENT_METHODS = ['cash']
 const WALK_IN_CUSTOMER_LABEL = 'Walk-in Customer'
-const MOBILE_BANK_APPS = [
-  'BDO Online',
-  'BPI Online',
-  'Landbank Mobile Banking',
-  'Metrobank App',
-  'RCBC Pulz',
-  'Security Bank App',
-  'UnionBank Online',
-  'PNB Digital',
-  'Chinabank Start',
-  'Maya',
-  'GoTyme',
-  'Tonik',
-  'Other Mobile Bank'
-]
 const RETURN_DISPOSITIONS = ['RESTOCK', 'DAMAGE', 'SHRINKAGE']
 
 let ensureSalesSchemaPromise = null
@@ -39,6 +24,38 @@ function normalizeTaxRate(value) {
   return parsed
 }
 
+function calculateSaleTaxBreakdown(totalAmount, taxRateValue) {
+  const total = roundMoney(totalAmount)
+  const taxRate = normalizeTaxRate(taxRateValue)
+
+  if (total <= 0 || taxRate <= 0) {
+    return {
+      total,
+      taxRate,
+      taxRatePercentage: roundMoney(Math.max(taxRate, 0) * 100),
+      vatableSales: 0,
+      vatAmount: 0,
+      nonVatSales: total,
+      taxCalculationMethod: 'NON_VAT',
+      invoiceType: 'Non-VAT Invoice'
+    }
+  }
+
+  const vatableSales = roundMoney(total / (1 + taxRate))
+  const vatAmount = roundMoney(total - vatableSales)
+
+  return {
+    total,
+    taxRate,
+    taxRatePercentage: roundMoney(taxRate * 100),
+    vatableSales,
+    vatAmount,
+    nonVatSales: 0,
+    taxCalculationMethod: 'INCLUSIVE',
+    invoiceType: 'VAT Invoice'
+  }
+}
+
 async function ensureSalesSchema() {
   if (ensureSalesSchemaPromise) return ensureSalesSchemaPromise
 
@@ -58,8 +75,6 @@ async function ensureSalesSchema() {
         amount_received DECIMAL(12,2) DEFAULT 0.00,
         change_amount DECIMAL(12,2) DEFAULT 0.00,
         payment_method VARCHAR(64),
-        bank_app_used VARCHAR(128),
-        reference_number VARCHAR(255),
         received_by BIGINT UNSIGNED,
         received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
@@ -132,14 +147,19 @@ async function ensureSalesSchema() {
     await db.pool.query('ALTER TABLE sales ADD COLUMN customer_phone_snapshot VARCHAR(64) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sales ADD COLUMN customer_email_snapshot VARCHAR(255) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sales ADD COLUMN order_note TEXT NULL').catch(() => {})
-    await db.pool.query('ALTER TABLE sales_payments ADD COLUMN bank_app_used VARCHAR(128) NULL').catch(() => {})
+    await db.pool.query("ALTER TABLE sales ADD COLUMN tax_calculation_method VARCHAR(16) NULL DEFAULT 'INCLUSIVE'").catch(() => {})
+    await db.pool.query('ALTER TABLE sales ADD COLUMN vatable_sales DECIMAL(12,2) DEFAULT 0.00').catch(() => {})
+    await db.pool.query('ALTER TABLE sales ADD COLUMN vat_amount DECIMAL(12,2) DEFAULT 0.00').catch(() => {})
     await db.pool.query('ALTER TABLE sale_items ADD COLUMN product_name_snapshot VARCHAR(255) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sale_items ADD COLUMN sku_snapshot VARCHAR(100) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sale_items ADD COLUMN brand_snapshot VARCHAR(255) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sale_items ADD COLUMN barcode_snapshot VARCHAR(128) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sale_items ADD COLUMN size_snapshot VARCHAR(64) NULL').catch(() => {})
     await db.pool.query('ALTER TABLE sale_items ADD COLUMN color_snapshot VARCHAR(64) NULL').catch(() => {})
+    await db.pool.query('ALTER TABLE sale_items ADD COLUMN vat_amount DECIMAL(12,2) DEFAULT 0.00').catch(() => {})
     await db.pool.query("ALTER TABLE products ADD COLUMN status ENUM('available','sold','damaged','reserved','archived') DEFAULT 'available'").catch(() => {})
+    await db.pool.query('CREATE INDEX idx_sales_tax_calculation_method ON sales(tax_calculation_method)').catch(() => {})
+    await db.pool.query('CREATE INDEX idx_sales_vatable_sales ON sales(vatable_sales)').catch(() => {})
 
     // Keep older databases compatible when this column was introduced after table creation.
     await db.pool.query('ALTER TABLE sale_return_items ADD COLUMN accounting_reference VARCHAR(255) NULL')
@@ -200,14 +220,24 @@ function enrichSaleRecord(sale) {
   const soldQty = Number(sale.sold_qty) || 0
   const returnedAmount = roundMoney(sale.returned_amount)
   const discountPercentage = subtotal > 0 ? roundMoney((discount / subtotal) * 100) : 0
-  const taxableBase = Math.max(subtotal - discount, 0)
-  const taxRate = taxableBase > 0 ? roundMoney((tax / taxableBase) * 100) : 0
+  const storedVatableSales = roundMoney(sale.vatable_sales)
+  const storedVatAmount = roundMoney(sale.vat_amount || tax)
+  const derivedVatableSales = storedVatAmount > 0
+    ? roundMoney(storedVatableSales > 0 ? storedVatableSales : Math.max(total - storedVatAmount, 0))
+    : 0
+  const nonVatSales = storedVatAmount > 0 ? 0 : total
+  const taxRate = storedVatAmount > 0 && derivedVatableSales > 0
+    ? roundMoney((storedVatAmount / derivedVatableSales) * 100)
+    : 0
 
   return {
     ...sale,
     subtotal,
     discount,
     tax,
+    vatable_sales: derivedVatableSales,
+    vat_amount: storedVatAmount,
+    non_vat_sales: roundMoney(nonVatSales),
     total,
     amount_received: roundMoney(sale.amount_received),
     change_amount: roundMoney(sale.change_amount),
@@ -216,6 +246,8 @@ function enrichSaleRecord(sale) {
     sold_qty: soldQty,
     discount_percentage: discountPercentage,
     tax_rate_percentage: taxRate,
+    tax_calculation_method: sale.tax_calculation_method || (storedVatAmount > 0 ? 'INCLUSIVE' : 'NON_VAT'),
+    invoice_type: storedVatAmount > 0 ? 'VAT Invoice' : 'Non-VAT Invoice',
     return_status: buildSalesReturnStatus(soldQty, returnedQty)
   }
 }
@@ -432,14 +464,12 @@ async function getSaleById(conn, saleId) {
     SELECT
       s.*,
       u.username AS clerk_name,
-      COALESCE(s.customer_name_snapshot, c.name) AS customer_name,
+      c.customer_code AS customer_code,
+      COALESCE(s.customer_name_snapshot, NULLIF(c.full_name, ''), c.name) AS customer_name,
       COALESCE(s.customer_phone_snapshot, c.phone) AS customer_phone,
       COALESCE(s.customer_email_snapshot, c.email) AS customer_email,
       sp.amount_received,
       sp.change_amount,
-      sp.bank_app_used,
-      sp.reference_number,
-      sp.reference_number AS payment_reference,
       sp.received_at AS payment_received_at,
       COALESCE(sold.sold_qty, 0) AS sold_qty,
       COALESCE(ret.returned_qty, 0) AS returned_qty,
@@ -689,10 +719,10 @@ module.exports = {
   DEFAULT_TAX_RATE,
   PAYMENT_METHODS,
   WALK_IN_CUSTOMER_LABEL,
-  MOBILE_BANK_APPS,
   roundMoney,
   normalizeDiscountPercentage,
   normalizeTaxRate,
+  calculateSaleTaxBreakdown,
   ensureSalesSchema,
   getSalesTaxRate,
   buildDateFilter,

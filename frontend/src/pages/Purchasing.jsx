@@ -2,26 +2,18 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSelector } from 'react-redux'
 import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/api.js'
-import Badge from '../components/Badge.js'
-
-const PAYMENT_STATUSES = ['PAID', 'PARTIAL', 'UNPAID']
-const PO_STATUSES = ['PENDING', 'ORDERED', 'RECEIVED', 'COMPLETED', 'CANCELLED']
 const PURCHASING_TAB_KEYS = new Set(['bale-purchases', 'bale-breakdowns'])
 const DEFAULT_PURCHASING_TAB = 'bale-purchases'
 
 function createDefaultBaleForm() {
   return {
     bale_batch_no: '',
-    po_number: '',
     supplier_id: '',
     supplier_name: '',
     purchase_date: '',
     bale_category: '',
     bale_cost: '',
     quantity_ordered: '',
-    expected_delivery_date: '',
-    payment_status: 'UNPAID',
-    po_status: 'PENDING',
     notes: ''
   }
 }
@@ -30,8 +22,8 @@ function createDefaultBreakdownForm() {
   return {
     bale_purchase_id: '',
     total_pieces: '',
+    premium_items: '',
     standard_items: '',
-    low_grade_items: '',
     damaged_items: '',
     breakdown_date: '',
     notes: ''
@@ -80,40 +72,14 @@ function toNonNegativeInteger(value) {
   return Math.floor(parsed)
 }
 
-function statusVariant(status) {
-  const normalized = String(status || '').toUpperCase()
-  if (normalized === 'PAID') return 'success'
-  if (normalized === 'PARTIAL') return 'warning'
-  if (normalized === 'UNPAID') return 'danger'
-  return 'neutral'
-}
-
-function poStatusVariant(status) {
-  const normalized = String(status || '').toUpperCase()
-  if (normalized === 'COMPLETED') return 'success'
-  if (normalized === 'RECEIVED') return 'warning'
-  if (normalized === 'PENDING') return 'warning'
-  if (normalized === 'ORDERED') return 'info'
-  if (normalized === 'CANCELLED') return 'danger'
-  return 'neutral'
-}
-
-function PaymentStatusBadge({ status }) {
-  const normalized = String(status || 'UNPAID').toUpperCase()
-  return <Badge variant={statusVariant(normalized)}>{normalized}</Badge>
-}
-
-function PoStatusBadge({ status }) {
-  const normalized = String(status || 'PENDING').toUpperCase()
-  return <Badge variant={poStatusVariant(normalized)}>{normalized}</Badge>
-}
-
 function mapBreakdownToForm(row) {
+  const premiumItems = Number(row?.premium_items || 0)
+  const standardItems = Number(row?.standard_items || 0) + Number(row?.low_grade_items || 0)
   return {
     bale_purchase_id: row?.bale_purchase_id ? String(row.bale_purchase_id) : '',
     total_pieces: String(row?.total_pieces ?? ''),
-    standard_items: String(row?.standard_items ?? ''),
-    low_grade_items: String(row?.low_grade_items ?? ''),
+    premium_items: premiumItems > 0 ? String(premiumItems) : '',
+    standard_items: standardItems > 0 ? String(standardItems) : '',
     damaged_items: String(row?.damaged_items ?? ''),
     breakdown_date: toDateInput(row?.breakdown_date),
     notes: row?.notes || ''
@@ -141,7 +107,7 @@ export default function Purchasing() {
   const [baleForm, setBaleForm] = useState(createDefaultBaleForm)
   const [breakdownForm, setBreakdownForm] = useState(createDefaultBreakdownForm)
   const [editingBaleId, setEditingBaleId] = useState(null)
-  const [baleFilters, setBaleFilters] = useState({ from: '', to: '', payment_status: '', search: '' })
+  const [baleFilters, setBaleFilters] = useState({ from: '', to: '', search: '' })
   const activeTab = useMemo(() => {
     const params = new URLSearchParams(location.search)
     const searchTab = String(params.get('tab') || '').trim()
@@ -191,7 +157,6 @@ export default function Purchasing() {
     const query = []
     if (filters.from) query.push(`from=${encodeURIComponent(filters.from)}`)
     if (filters.to) query.push(`to=${encodeURIComponent(filters.to)}`)
-    if (filters.payment_status) query.push(`payment_status=${encodeURIComponent(filters.payment_status)}`)
     if (filters.search) query.push(`search=${encodeURIComponent(filters.search)}`)
     const endpoint = query.length ? `/bale-purchases?${query.join('&')}` : '/bale-purchases'
 
@@ -287,7 +252,7 @@ export default function Purchasing() {
   }
 
   async function clearBaleFilters() {
-    const nextFilters = { from: '', to: '', payment_status: '', search: '' }
+    const nextFilters = { from: '', to: '', search: '' }
     setBaleFilters(nextFilters)
     clearMessages()
     try {
@@ -304,7 +269,6 @@ export default function Purchasing() {
     setEditingBaleId(row.id)
     setBaleForm({
       bale_batch_no: row.bale_batch_no || '',
-      po_number: row.po_number || '',
       supplier_id: String(row.supplier_id || ''),
       supplier_name: row.supplier_name || '',
       purchase_date: toDateInput(row.purchase_date),
@@ -312,9 +276,6 @@ export default function Purchasing() {
       bale_category: row.bale_category || '',
       bale_cost: String(row.bale_cost ?? ''),
       quantity_ordered: String(row.quantity_ordered ?? ''),
-      expected_delivery_date: toDateInput(row.expected_delivery_date),
-      payment_status: row.payment_status || 'UNPAID',
-      po_status: row.po_status || 'PENDING',
       notes: row.notes || ''
     })
     goToTab('bale-purchases')
@@ -329,30 +290,28 @@ export default function Purchasing() {
       setError('Bale Batch No. is required.')
       return
     }
-    if (!baleForm.supplier_id) {
-      setError('Supplier is required. Please select a valid supplier from the list.')
-      return
-    }
     if (!baleForm.purchase_date) {
       setError('Purchase date is required.')
       return
     }
 
     const selectedSupplier = suppliers.find((s) => String(s.id) === String(baleForm.supplier_id))
+    const normalizedSupplierName = String(selectedSupplier?.name || baleForm.supplier_name || '').trim()
+    if (!baleForm.supplier_id && !normalizedSupplierName) {
+      setError('Supplier is required. Select a supplier or enter supplier name.')
+      return
+    }
+
     const payload = {
       bale_batch_no: baleForm.bale_batch_no.trim(),
-      po_number: baleForm.po_number || null,
-      supplier_id: Number(baleForm.supplier_id),
-      supplier_name: selectedSupplier?.name || baleForm.supplier_name,
+      supplier_id: baleForm.supplier_id ? Number(baleForm.supplier_id) : null,
+      supplier_name: normalizedSupplierName || null,
       purchase_date: baleForm.purchase_date,
       bale_type: baleForm.bale_type || null,
       bale_category: baleForm.bale_category || null,
       bale_cost: toMoney(baleForm.bale_cost),
       total_purchase_cost: toMoney(baleForm.bale_cost),
       quantity_ordered: toNonNegativeInteger(baleForm.quantity_ordered),
-      expected_delivery_date: baleForm.expected_delivery_date || null,
-      payment_status: baleForm.payment_status || 'UNPAID',
-      po_status: baleForm.po_status || 'PENDING',
       notes: baleForm.notes || null
     }
 
@@ -445,23 +404,29 @@ export default function Purchasing() {
 
     const payload = {
       total_pieces: toNonNegativeInteger(breakdownForm.total_pieces),
+      premium_items: toNonNegativeInteger(breakdownForm.premium_items),
       standard_items: toNonNegativeInteger(breakdownForm.standard_items),
-      low_grade_items: toNonNegativeInteger(breakdownForm.low_grade_items),
       damaged_items: toNonNegativeInteger(breakdownForm.damaged_items),
       breakdown_date: breakdownForm.breakdown_date || todayDateInput(),
       notes: breakdownForm.notes || null
     }
 
-    payload.saleable_items = payload.standard_items + payload.low_grade_items
-    payload.premium_items = 0
-    if (payload.saleable_items + payload.damaged_items > payload.total_pieces && payload.total_pieces > 0) {
-      setError('Standard + Low-grade + Damaged cannot exceed Total Pieces.')
+    payload.saleable_items = payload.premium_items + payload.standard_items
+    const classifiedItems = payload.saleable_items + payload.damaged_items
+    if (classifiedItems > 0 && payload.total_pieces <= 0) {
+      setError('Total Pieces must be greater than 0 when breakdown counts are entered.')
+      return
+    }
+
+    if (classifiedItems > payload.total_pieces && payload.total_pieces > 0) {
+      setError('Class A - Premium + Class B - Standard + Damaged cannot exceed Total Pieces.')
       return
     }
 
     try {
       setSubmitting(true)
-      await api.put(`/bale-purchases/${balePurchaseId}/breakdown`, payload)
+      const response = await api.put(`/bale-purchases/${balePurchaseId}/breakdown`, payload)
+      setBreakdownForm(mapBreakdownToForm(response?.data || { ...payload, bale_purchase_id: balePurchaseId }))
       await fetchBreakdowns(baleFilters)
       showMsg('Bale breakdown saved successfully.')
     } catch (err) {
@@ -477,7 +442,7 @@ export default function Purchasing() {
         <div>
           <h1 className="page-title">Bale Workflow</h1>
           <p className="page-subtitle">
-            Manage bale purchases, breakdown encoding, and inventory cost tracking in one workspace.
+            Manage bale purchases, bale breakdown records, and inventory cost tracking in one workspace.
           </p>
         </div>
       </div>
@@ -537,25 +502,12 @@ export default function Purchasing() {
                   />
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Payment Status</label>
-                  <select
-                    className="form-input"
-                    value={baleFilters.payment_status}
-                    onChange={(event) => setBaleFilters((prev) => ({ ...prev, payment_status: event.target.value }))}
-                  >
-                    <option value="">All statuses</option>
-                    {PAYMENT_STATUSES.map((status) => (
-                      <option key={status} value={status}>{status}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label">Search</label>
                   <input
                     className="form-input"
                     value={baleFilters.search}
                     onChange={(event) => setBaleFilters((prev) => ({ ...prev, search: event.target.value }))}
-                    placeholder="Batch no., bale type, category"
+                    placeholder="Batch no., supplier, category"
                   />
                 </div>
               </div>
@@ -587,7 +539,6 @@ export default function Purchasing() {
                     <label className="form-label">Supplier *</label>
                     <select
                       className="form-input"
-                      required
                       value={baleForm.supplier_id}
                       onChange={(event) => {
                         const supplierId = event.target.value
@@ -595,7 +546,7 @@ export default function Purchasing() {
                         setBaleForm((prev) => ({
                           ...prev,
                           supplier_id: supplierId,
-                          supplier_name: supplier?.name || ''
+                          supplier_name: supplier ? (supplier.name || '') : prev.supplier_name
                         }))
                       }}
                     >
@@ -611,6 +562,15 @@ export default function Purchasing() {
                         No suppliers available. Create suppliers first in the Suppliers module.
                       </div>
                     )}
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Supplier Name (Fallback)</label>
+                    <input
+                      className="form-input"
+                      value={baleForm.supplier_name}
+                      onChange={(event) => setBaleForm((prev) => ({ ...prev, supplier_name: event.target.value }))}
+                      placeholder="Used when supplier record was deleted"
+                    />
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Purchase Date *</label>
@@ -631,18 +591,6 @@ export default function Purchasing() {
                     />
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Payment Status</label>
-                    <select
-                      className="form-input"
-                      value={baleForm.payment_status}
-                      onChange={(event) => setBaleForm((prev) => ({ ...prev, payment_status: event.target.value }))}
-                    >
-                      {PAYMENT_STATUSES.map((status) => (
-                        <option key={status} value={status}>{status}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Bale Cost</label>
                     <input
                       className="form-input"
@@ -654,15 +602,6 @@ export default function Purchasing() {
                     />
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">P.O. Number</label>
-                    <input
-                      className="form-input"
-                      value={baleForm.po_number}
-                      onChange={(event) => setBaleForm((prev) => ({ ...prev, po_number: event.target.value }))}
-                      placeholder="e.g., PO-2026-001"
-                    />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Quantity Ordered</label>
                     <input
                       className="form-input"
@@ -671,27 +610,6 @@ export default function Purchasing() {
                       value={baleForm.quantity_ordered}
                       onChange={(event) => setBaleForm((prev) => ({ ...prev, quantity_ordered: event.target.value }))}
                     />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Expected Delivery Date</label>
-                    <input
-                      className="form-input"
-                      type="date"
-                      value={baleForm.expected_delivery_date}
-                      onChange={(event) => setBaleForm((prev) => ({ ...prev, expected_delivery_date: event.target.value }))}
-                    />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">P.O. Status</label>
-                    <select
-                      className="form-input"
-                      value={baleForm.po_status}
-                      onChange={(event) => setBaleForm((prev) => ({ ...prev, po_status: event.target.value }))}
-                    >
-                      {PO_STATUSES.map((status) => (
-                        <option key={status} value={status}>{status}</option>
-                      ))}
-                    </select>
                   </div>
                   <div className="form-group" style={{ gridColumn: '1 / -1', marginBottom: 0 }}>
                     <label className="form-label">Notes</label>
@@ -734,14 +652,13 @@ export default function Purchasing() {
                     <th>Category</th>
                     <th>Bale Cost</th>
                     <th>Total Cost</th>
-                    <th>Payment</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {bales.length === 0 ? (
                     <tr>
-                      <td colSpan={10} style={{ textAlign: 'center', color: 'var(--text-light)' }}>
+                      <td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-light)' }}>
                         {loading ? 'Loading bale purchases...' : 'No bale purchases found for this filter.'}
                       </td>
                     </tr>
@@ -753,11 +670,10 @@ export default function Purchasing() {
                       <td>{row.bale_category || '-'}</td>
                       <td>{fmtCurrency(row.bale_cost)}</td>
                       <td>{fmtCurrency(row.total_purchase_cost)}</td>
-                      <td><PaymentStatusBadge status={row.payment_status} /></td>
                       <td>
                         <div className="table-actions">
                           <button className="btn btn-secondary btn-sm" type="button" onClick={() => startBreakdownFromBale(row)}>
-                            Breakdown
+                            Open Breakdown
                           </button>
                           {canManageBales ? (
                             <button className="btn btn-outline btn-sm" type="button" onClick={() => startEditBale(row)}>
@@ -794,10 +710,10 @@ export default function Purchasing() {
         <>
           <div className="card" style={{ marginBottom: 16 }}>
             <div className="card-header">
-              <h3>Encode Bale Breakdown</h3>
+              <h3>Bale Breakdown Entry</h3>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button className="btn btn-secondary btn-sm" type="button" onClick={loadExistingBreakdown} disabled={submitting}>
-                  Load Existing
+                  Load Existing Record
                 </button>
                 <button className="btn btn-secondary btn-sm" type="button" onClick={resetBreakdownForm} disabled={submitting}>
                   Clear Form
@@ -815,7 +731,7 @@ export default function Purchasing() {
                     value={breakdownForm.bale_purchase_id}
                     onChange={(event) => setBreakdownForm((prev) => ({ ...prev, bale_purchase_id: event.target.value }))}
                   >
-                    <option value="">Select bale batch</option>
+                    <option value="">Choose bale batch</option>
                     {bales.map((row) => (
                       <option key={row.id} value={row.id}>
                         {`${row.bale_batch_no} - ${row.supplier_name || 'Unknown Supplier'}`}
@@ -843,23 +759,23 @@ export default function Purchasing() {
                   />
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Standard Items</label>
+                  <label className="form-label">Class A - Premium</label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    min={0}
+                    value={breakdownForm.premium_items}
+                    onChange={(event) => setBreakdownForm((prev) => ({ ...prev, premium_items: event.target.value }))}
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Class B - Standard</label>
                   <input
                     className="form-input"
                     type="number"
                     min={0}
                     value={breakdownForm.standard_items}
                     onChange={(event) => setBreakdownForm((prev) => ({ ...prev, standard_items: event.target.value }))}
-                  />
-                </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Low-grade Items</label>
-                  <input
-                    className="form-input"
-                    type="number"
-                    min={0}
-                    value={breakdownForm.low_grade_items}
-                    onChange={(event) => setBreakdownForm((prev) => ({ ...prev, low_grade_items: event.target.value }))}
                   />
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
@@ -895,14 +811,14 @@ export default function Purchasing() {
                   </div>
                   <div>
                     <div style={{ color: 'var(--text-light)', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Computed Saleable Items</div>
-                    <div style={{ fontWeight: 700 }}>{fmtNumber((Number(breakdownForm.standard_items) || 0) + (Number(breakdownForm.low_grade_items) || 0))}</div>
+                    <div style={{ fontWeight: 700 }}>{fmtNumber((Number(breakdownForm.premium_items) || 0) + (Number(breakdownForm.standard_items) || 0))}</div>
                   </div>
                 </div>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
                 <button className="btn btn-primary" type="submit" disabled={submitting}>
-                  {submitting ? 'Saving...' : 'Save Breakdown'}
+                  {submitting ? 'Saving...' : 'Save Bale Breakdown'}
                 </button>
               </div>
             </form>
@@ -923,17 +839,19 @@ export default function Purchasing() {
                     <th>Supplier</th>
                     <th>Breakdown Date</th>
                     <th>Total Pieces</th>
-                    <th>Standard</th>
-                    <th>Low-grade</th>
+                    <th>Class A - Premium</th>
+                    <th>Class B - Standard</th>
                     <th>Damaged</th>
+                    <th>Saleable Pieces</th>
+                    <th>Damaged Pieces</th>
                     <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {breakdowns.length === 0 ? (
                     <tr>
-                      <td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-light)' }}>
-                        {loading ? 'Loading breakdown records...' : 'No bale breakdown records found for this filter.'}
+                      <td colSpan={10} style={{ textAlign: 'center', color: 'var(--text-light)' }}>
+                        {loading ? 'Loading bale records...' : 'No bale breakdown records found for this filter.'}
                       </td>
                     </tr>
                   ) : breakdowns.map((row) => (
@@ -942,8 +860,10 @@ export default function Purchasing() {
                       <td>{row.supplier_name || '-'}</td>
                       <td>{fmtDate(row.breakdown_date || row.purchase_date)}</td>
                       <td>{fmtNumber(row.total_pieces)}</td>
-                      <td>{fmtNumber(row.standard_items)}</td>
-                      <td>{fmtNumber(row.low_grade_items)}</td>
+                      <td>{fmtNumber(row.premium_items)}</td>
+                      <td>{fmtNumber(Number(row.standard_items || 0) + Number(row.low_grade_items || 0))}</td>
+                      <td>{fmtNumber(row.damaged_items)}</td>
+                      <td>{fmtNumber(Number(row.premium_items || 0) + Number(row.standard_items || 0) + Number(row.low_grade_items || 0))}</td>
                       <td>{fmtNumber(row.damaged_items)}</td>
                       <td>
                         <button

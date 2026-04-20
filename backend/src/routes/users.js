@@ -12,7 +12,7 @@ const { logAuditEventSafe } = require('../utils/auditLog')
 
 const PRIVATE_UPLOAD_ROOT = path.join(__dirname, '..', '..', 'private_uploads')
 const EMPLOYEE_DOCS_DIR = path.join(PRIVATE_UPLOAD_ROOT, 'employee-docs')
-const MAX_DOCUMENT_SIZE = 10 * 1024 * 1024
+const MAX_DOCUMENT_SIZE = 50 * 1024 * 1024
 const DOCUMENT_STATUSES = ['NOT_SUBMITTED', 'SUBMITTED', 'VERIFIED', 'REJECTED', 'EXPIRED']
 const EMPLOYMENT_TYPES = ['PROBATIONARY', 'REGULAR', 'CONTRACTUAL', 'PART_TIME', 'SEASONAL', 'INTERN']
 const EMPLOYMENT_STATUSES = ['ACTIVE', 'INACTIVE', 'TERMINATED']
@@ -140,7 +140,7 @@ function handleDocumentUpload(req, res, next) {
     }
 
     if (err.code === 'LIMIT_FILE_SIZE') {
-      res.status(400).json({ error: 'Document files must be 10MB or smaller' })
+      res.status(400).json({ error: 'Document files must be 50MB or smaller' })
       return
     }
 
