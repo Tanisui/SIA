@@ -3,6 +3,7 @@ const router = express.Router()
 const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 const { logAuditEventSafe } = require('../utils/auditLog')
+const { ensureRuntimeConfig } = require('../services/runtimeConfigService')
 
 async function getConfigRow(conn, key) {
   const [rows] = await conn.query('SELECT * FROM configs WHERE config_key = ? LIMIT 1', [key])
@@ -11,6 +12,7 @@ async function getConfigRow(conn, key) {
 
 router.get('/', verifyToken, authorize('system.config.update'), async (req, res) => {
   try {
+    await ensureRuntimeConfig()
     const [rows] = await db.pool.query('SELECT * FROM configs ORDER BY config_key')
     res.json(rows)
   } catch (err) {
@@ -21,6 +23,7 @@ router.get('/', verifyToken, authorize('system.config.update'), async (req, res)
 
 router.get('/:key', verifyToken, authorize('system.config.update'), async (req, res) => {
   try {
+    await ensureRuntimeConfig()
     const [rows] = await db.pool.query('SELECT * FROM configs WHERE config_key = ? LIMIT 1', [req.params.key])
     if (!rows.length) return res.status(404).json({ error: 'config key not found' })
     res.json(rows[0])

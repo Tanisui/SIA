@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import EntityPage from '../components/EntityPage.js'
 import api from '../api/api.js'
+import { PRODUCT_SIZE_OPTIONS } from '../constants/productSizes.js'
 
 const toNumber = (v) => {
   const n = Number(v)
@@ -94,19 +95,14 @@ export default function Products() {
       inputProps: { min: 0, step: '0.01' }
     },
     {
-      name: 'cost',
-      label: 'Cost Price (₱)',
-      type: 'number',
-      placeholder: '₱0.00',
-      inputProps: { min: 0, step: '0.01' }
-    },
-    {
       name: 'stock_quantity',
       label: 'Stock Quantity',
       type: 'number',
       placeholder: '0',
+      hideInForm: true,
       validate: (value) => (toNumber(value) >= 0 ? '' : 'Quantity cannot be negative'),
-      inputProps: { min: 0, step: '1' }
+      inputProps: { min: 0, step: '1' },
+      renderList: (value) => String(Math.max(0, toNumber(value)))
     },
     {
       name: 'low_stock_threshold',
@@ -121,20 +117,7 @@ export default function Products() {
       label: 'Size',
       type: 'select',
       placeholder: 'Select size',
-      options: [
-        { value: 'XS', label: 'XS' },
-        { value: 'S', label: 'S' },
-        { value: 'M', label: 'M' },
-        { value: 'L', label: 'L' },
-        { value: 'XL', label: 'XL' },
-        { value: 'Free Size', label: 'Free Size' },
-        { value: 'N/A', label: 'N/A' }
-      ]
-    },
-    {
-      name: 'color',
-      label: 'Color',
-      placeholder: 'e.g. Black, White, Beige'
+      options: [...PRODUCT_SIZE_OPTIONS, { value: 'N/A', label: 'N/A' }]
     },
     {
       name: 'description',
@@ -146,6 +129,17 @@ export default function Products() {
       name: 'category',
       label: 'Category',
       hideInForm: true
+    },
+    {
+      name: 'product_source',
+      label: 'Source',
+      hideInForm: true,
+      renderList: (value) => {
+        const source = String(value || '').toLowerCase()
+        if (source === 'bale_breakdown') return 'Bale Breakdown'
+        if (source === 'repaired_damage') return 'Repaired Damage'
+        return 'Manual'
+      }
     },
     {
       name: 'is_active',
@@ -165,21 +159,27 @@ export default function Products() {
     next.sku = String(next.sku || '').trim()
     next.barcode = String(next.barcode || '').trim()
     next.brand = String(next.brand || '').trim()
-    next.color = String(next.color || '').trim()
     next.description = String(next.description || '').trim()
 
     next.category_id = next.category_id ? Number(next.category_id) : null
     next.price = toNumber(next.price)
-    next.cost = toNumber(next.cost)
-    next.stock_quantity = Math.max(0, toNumber(next.stock_quantity))
     next.low_stock_threshold = next.low_stock_threshold === '' || next.low_stock_threshold === undefined
       ? 10
       : Math.max(0, toNumber(next.low_stock_threshold))
 
+    delete next.stock_quantity
+    delete next.product_source
+    delete next.source_breakdown_id
+    delete next.bale_purchase_id
+    delete next.condition_grade
+    delete next.allocated_cost
+    delete next.status
+    delete next.date_encoded
+    delete next.category
+
     if (!next.sku) delete next.sku
     if (!next.barcode && mode === 'create') delete next.barcode
     if (!next.brand) delete next.brand
-    if (!next.color) delete next.color
     if (!next.description) delete next.description
 
     return next
@@ -187,13 +187,13 @@ export default function Products() {
 
   return React.createElement(EntityPage, {
     title: 'Products',
-    subtitle: 'Manage inventory items, pricing, and stock levels for your POS system',
+    subtitle: 'Manage product details and selling prices. Repaired items received from Damaged appear here ready to sell.',
     apiPath: '/products',
     schema,
     createButtonLabel: '+ Add Product',
     createTitle: 'Create Product',
     editTitle: 'Edit Product',
-    formIntro: 'Fill in the product details below to add a new item to inventory. Product ID is internal and auto-generated. SKU is your tracking code. Barcode is optional for scanning/manual entry.',
+    formIntro: 'Fill in the product details below to add a new item to inventory. Product ID is internal and auto-generated. SKU is your tracking code. Barcode is optional for scanning/manual entry. Stock quantity is not edited here: use Inventory Stock In for manual products, Bale Breakdown for bale items, and Damaged > Receive Repaired for repaired items.',
     submitLabelCreate: 'Save Product',
     submitLabelEdit: 'Save Product',
     cancelLabel: 'Cancel',

@@ -11,6 +11,23 @@ const fmt = (n) => Number(n || 0).toLocaleString('en-PH', { style: 'currency', c
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
 const normalizeScanCode = (v) => String(v || '').trim().toUpperCase()
 
+function formatDateStackParts(value) {
+  const parsedValue = value ? new Date(value) : null
+  if (!parsedValue || Number.isNaN(parsedValue.getTime())) return { date: '—', time: '' }
+
+  return {
+    date: parsedValue.toLocaleDateString('en-PH', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    }),
+    time: parsedValue.toLocaleTimeString('en-PH', {
+      hour: 'numeric',
+      minute: '2-digit'
+    })
+  }
+}
+
 function escapeHtml(value) {
   return String(value || '')
     .replace(/&/g, '&amp;')
@@ -92,7 +109,7 @@ function parseReferenceMeta(rawValue) {
 }
 
 const STOCK_OUT_REASON_LABELS = {
-  DAMAGE: 'Damage',
+  DAMAGE: 'Damaged',
   SHRINKAGE: 'Shrinkage'
 }
 
@@ -258,14 +275,26 @@ function parseStockOutReason(value) {
   return { type: String(match[1] || '').toUpperCase(), detail: String(match[2] || '').trim() }
 }
 
+function humanizeReasonText(value) {
+  const normalized = String(value || '').trim()
+  if (!normalized) return ''
+  if (/^pos sale deduction$/i.test(normalized)) return 'Sold at checkout'
+  if (/^missing after audit$/i.test(normalized)) return 'Missing after audit'
+  if (/^missing after stock check$/i.test(normalized)) return 'Missing after audit'
+  const lostByMatch = normalized.match(/^lost\s*\((.+)\)$/i)
+  if (lostByMatch) return `Lost (${lostByMatch[1]})`
+  if (/^lost$/i.test(normalized)) return 'Lost'
+  if (/^manual correction$/i.test(normalized)) return 'Manual correction'
+  return normalized
+}
+
 function formatStockOutReason(type, detail) {
   const label = getStockOutTypeLabel(type)
   if (!label) return String(detail || '').trim()
 
-  const normalizedDetail = String(detail || '').trim()
+  const normalizedDetail = humanizeReasonText(detail)
   if (!normalizedDetail) return label
   if (normalizedDetail.toLowerCase() === label.toLowerCase()) return label
-  if (normalizedDetail.toLowerCase().startsWith(`${label.toLowerCase()} - `)) return normalizedDetail
   return `${label} - ${normalizedDetail}`
 }
 
@@ -278,10 +307,10 @@ function formatTransactionReference(value) {
     return `Sale ${sale}${meta.receipt ? ` • Receipt ${meta.receipt}` : ''}`
   }
   if (tag === 'SALE_RETURN') {
-    return `Sale return${meta.receipt ? ` • Receipt ${meta.receipt}` : ''}${meta.disposition ? ` • ${meta.disposition}` : ''}${meta.acct_ref ? ` • Acct Ref ${meta.acct_ref}` : ''}`
+    return `Return${meta.receipt ? ` • Receipt ${meta.receipt}` : ''}${meta.disposition ? ` • ${getStockOutTypeLabel(meta.disposition)}` : ''}${meta.acct_ref ? ` • Ref ${meta.acct_ref}` : ''}`
   }
   if (tag === 'STOCK_OUT') {
-    return `Stock out${meta.disposition ? ` • ${meta.disposition}` : ''}${meta.receipt ? ` • Receipt ${meta.receipt}` : ''}${meta.acct_ref ? ` • Acct Ref ${meta.acct_ref}` : ''}`
+    return `Manual change${meta.disposition ? ` • ${getStockOutTypeLabel(meta.disposition)}` : ''}${meta.receipt ? ` • Receipt ${meta.receipt}` : ''}${meta.acct_ref ? ` • Ref ${meta.acct_ref}` : ''}`
   }
   if (tag === 'BALE_BREAKDOWN') {
     return `Bale breakdown${meta.grade ? ` • ${toTitleCaseWords(meta.grade)}` : ''}${meta.breakdown_id ? ` • Breakdown #${meta.breakdown_id}` : ''}${meta.bale_purchase_id ? ` • Bale #${meta.bale_purchase_id}` : ''}${meta.disposition ? ` • ${toTitleCaseWords(meta.disposition)}` : ''}`
@@ -289,13 +318,23 @@ function formatTransactionReference(value) {
   return value
 }
 
+function formatPosReference(value) {
+  const label = String(formatTransactionReference(value) || '').trim()
+  if (!label || label === '—') return ''
+
+  return label
+    .replace(/Sale\s+SAL-\d+-([A-Za-z0-9]+)/gi, 'Sale #$1')
+    .replace(/Receipt\s+RCT-\d+-([A-Za-z0-9]+)/gi, 'Receipt #$1')
+    .replace(/Acct Ref\s+([A-Za-z0-9-]+)/gi, 'Ref #$1')
+}
+
 function formatTransactionReason(reason, reference = '') {
   const rawReason = String(reason || '').trim()
   if (!rawReason) return '—'
-  if (/^SALE_LINK[:|]/.test(rawReason)) return 'POS sale deduction'
+  if (/^SALE_LINK[:|]/.test(rawReason)) return 'Sold at checkout'
 
   const parsedRef = parseReferenceMeta(reference)
-  if (parsedRef?.tag === 'SALE_LINK' && rawReason === 'POS sale deduction') return rawReason
+  if (parsedRef?.tag === 'SALE_LINK' && rawReason === 'POS sale deduction') return 'Sold at checkout'
 
   const parsedReason = parseStockOutReason(rawReason)
   if (parsedReason) return formatStockOutReason(parsedReason.type, parsedReason.detail)
@@ -305,7 +344,7 @@ function formatTransactionReason(reason, reference = '') {
     return formatStockOutReason(parsedRef.meta.disposition, rawReason)
   }
 
-  return rawReason
+  return humanizeReasonText(rawReason)
 }
 
 function formatGroupedTransactionReasons(value) {
@@ -319,6 +358,45 @@ function formatGroupedTransactionReasons(value) {
 
   if (grouped.length <= 1) return formatTransactionReason(rawValue)
   return grouped.map((part) => formatTransactionReason(part)).join(' | ')
+}
+
+function formatGroupedTransactionReasonList(value) {
+  const formatted = formatGroupedTransactionReasons(value)
+  if (formatted === '—') return []
+
+  return formatted
+    .split(/\s+\|\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+function getPosTransactionDisplay(transaction, reference = '') {
+  const parsedRef = parseReferenceMeta(reference)
+  const parsedReason = parseStockOutReason(transaction?.reason)
+  const disposition = String(parsedRef?.meta?.disposition || parsedReason?.type || '').trim().toUpperCase()
+
+  if (parsedRef?.tag === 'SALE_LINK' || /^SALE_LINK[:|]/.test(String(transaction?.reason || '').trim())) {
+    return { label: 'Sale', badgeClass: 'badge-danger' }
+  }
+  if (parsedRef?.tag === 'SALE_RETURN' || String(transaction?.transaction_type || '').trim().toUpperCase() === 'RETURN') {
+    return { label: 'Return', badgeClass: 'badge-warning' }
+  }
+  if (disposition === 'SHRINKAGE') {
+    return { label: 'Shrinkage', badgeClass: 'badge-danger' }
+  }
+  if (disposition === 'DAMAGE') {
+    return { label: 'Damage', badgeClass: 'badge-warning' }
+  }
+  if (String(transaction?.transaction_type || '').trim().toUpperCase() === 'IN') {
+    return { label: 'Stock In', badgeClass: 'badge-success' }
+  }
+  if (String(transaction?.transaction_type || '').trim().toUpperCase() === 'ADJUST') {
+    return { label: 'Adjustment', badgeClass: 'badge-info' }
+  }
+  if (String(transaction?.transaction_type || '').trim().toUpperCase() === 'OUT') {
+    return { label: 'Stock Out', badgeClass: 'badge-danger' }
+  }
+  return { label: 'Transaction', badgeClass: 'badge-neutral' }
 }
 
 const infoTip = (text) => React.createElement('span', {
@@ -2302,13 +2380,59 @@ export default function Inventory() {
     'stock-out': { title: 'Stock Out', subtitle: 'Record adjustments, shrinkage, and damage.' },
     'products': { title: 'Product Management', subtitle: 'Create, edit, and manage sellable products, including received repaired items.' },
     'barcode-labels': { title: 'Barcode Labels', subtitle: 'Print barcodes and QR labels for products.' },
-    'transactions': { title: 'Inventory Transactions', subtitle: 'View all inventory transactions and adjustments.' },
+    'transactions': { title: 'Inventory Transactions', subtitle: 'View sales, returns, stock in, stock out, and adjustments.' },
     'damaged': { title: 'Damaged Items', subtitle: 'Track damage recorded from manual stock-out, sales returns, and bale breakdown data, then receive repaired items back into Product Management.' },
     'low-stock': { title: 'Low Stock Alerts', subtitle: 'Monitor products below threshold quantity.' },
     'shrinkage': { title: 'Shrinkage Report', subtitle: 'Losses from theft, errors, or unexplained causes.' },
     'reports': { title: 'Inventory Reports', subtitle: 'Analytics and detailed inventory reports.' }
   }
   const currentLabel = tabLabels[tab] || tabLabels['overview']
+  const transactionSummary = useMemo(() => {
+    return transactions.reduce((acc, row) => {
+      const quantity = Number(row?.quantity) || 0
+      const legacySaleLinkInReason = !String(row?.reference || '').trim() && /^SALE_LINK[:|]/.test(String(row?.reason || '').trim())
+      const resolvedReference = legacySaleLinkInReason ? row.reason : row.reference
+      const parsedRef = parseReferenceMeta(resolvedReference)
+      const parsedReason = parseStockOutReason(row?.reason)
+      const disposition = String(parsedRef?.meta?.disposition || parsedReason?.type || '').trim().toUpperCase()
+
+      acc.rows += 1
+      if (quantity > 0) acc.unitsIn += quantity
+      if (quantity < 0) acc.unitsOut += Math.abs(quantity)
+      if (disposition === 'SHRINKAGE') acc.shrinkageRows += 1
+      return acc
+    }, {
+      rows: 0,
+      unitsIn: 0,
+      unitsOut: 0,
+      shrinkageRows: 0
+    })
+  }, [transactions])
+  const shrinkageSummary = useMemo(() => {
+    return shrinkage.reduce((acc, row) => {
+      const totalShrinkage = Number(row?.total_shrinkage) || 0
+      const incidents = Number(row?.incidents) || 0
+      const label = String(row?.product_name || row?.sku || 'Unassigned item').trim() || 'Unassigned item'
+
+      acc.products += 1
+      acc.totalLoss += totalShrinkage
+      acc.incidents += incidents
+
+      if (!acc.largestItem || totalShrinkage > acc.largestItem.totalLoss) {
+        acc.largestItem = {
+          label,
+          totalLoss: totalShrinkage
+        }
+      }
+
+      return acc
+    }, {
+      products: 0,
+      totalLoss: 0,
+      incidents: 0,
+      largestItem: null
+    })
+  }, [shrinkage])
   const editingProductRow = products.find((p) => Number(p.id) === Number(editingProduct)) || null
   const editingProductSourceText = editingProductRow
     ? productSourceLabel(editingProductRow)
@@ -3139,58 +3263,98 @@ export default function Inventory() {
       )
     ),
 
-    tab === 'transactions' && React.createElement('div', { className: 'card' },
-      React.createElement('div', { style: { marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 } },
-        React.createElement('h3', { style: { flex: 1, margin: 0 } }, 'Inventory Transactions'),
-        React.createElement('select', { className: 'form-input', style: { width: 200 }, value: filterType, onChange: e => setFilterType(e.target.value) },
-          React.createElement('option', { value: '' }, 'All types'),
-          React.createElement('option', { value: 'IN' }, 'Stock In'),
-          React.createElement('option', { value: 'OUT' }, 'Stock Out'),
-          React.createElement('option', { value: 'ADJUST' }, 'Adjustments'),
-          React.createElement('option', { value: 'RETURN' }, 'Returns')
+    tab === 'transactions' && React.createElement('div', { className: 'inventory-report-page' },
+      React.createElement('div', { className: 'reports-summary-grid inventory-report-summary-grid' },
+        React.createElement('div', { className: 'card reports-summary-card inventory-report-summary-card' },
+          React.createElement('div', { className: 'card-title' }, 'Total Transactions'),
+          React.createElement('div', { className: 'card-value reports-summary-value reports-summary-value-default' }, transactionSummary.rows)
+        ),
+        React.createElement('div', { className: 'card reports-summary-card inventory-report-summary-card' },
+          React.createElement('div', { className: 'card-title' }, 'Units In'),
+          React.createElement('div', { className: 'card-value reports-summary-value reports-summary-value-success' }, transactionSummary.unitsIn)
+        ),
+        React.createElement('div', { className: 'card reports-summary-card inventory-report-summary-card' },
+          React.createElement('div', { className: 'card-title' }, 'Units Out'),
+          React.createElement('div', { className: 'card-value reports-summary-value reports-summary-value-danger' }, transactionSummary.unitsOut)
+        ),
+        React.createElement('div', { className: 'card reports-summary-card inventory-report-summary-card' },
+          React.createElement('div', { className: 'card-title' }, 'Shrinkage Reports'),
+          React.createElement('div', { className: 'card-value reports-summary-value reports-summary-value-danger' }, transactionSummary.shrinkageRows)
         )
       ),
-      React.createElement('div', { className: 'table-wrap' },
-        React.createElement('table', null,
-          React.createElement('thead', null,
-            React.createElement('tr', null,
-              React.createElement('th', null, 'Type'),
-              React.createElement('th', null, 'Reference'),
-              React.createElement('th', null, 'Date'),
-              React.createElement('th', null, 'Quantity'),
-              React.createElement('th', null, 'Details'),
-              React.createElement('th', null, 'User')
-            )
+      React.createElement('div', { className: 'card reports-section-card inventory-report-panel' },
+        React.createElement('div', { className: 'inventory-report-toolbar' },
+          React.createElement('div', { className: 'inventory-report-title-group' },
+            React.createElement('h3', null, 'Transaction History'),
+            React.createElement('p', null, `${transactionSummary.rows} ${transactionSummary.rows === 1 ? 'transaction' : 'transactions'} shown`)
           ),
-          React.createElement('tbody', null,
-            transactions.length === 0
-              ? React.createElement('tr', null,
-                  React.createElement('td', { colSpan: 6, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No transactions found.')
-                )
-              : transactions.map((t) => {
-              const legacySaleLinkInReason = !String(t.reference || '').trim() && /^SALE_LINK[:|]/.test(String(t.reason || '').trim())
-              const resolvedReference = legacySaleLinkInReason ? t.reason : t.reference
-              const resolvedReason = formatTransactionReason(t.reason, resolvedReference)
-              const qtyColor = t.quantity > 0 ? 'var(--success)' : 'var(--error)'
-              const qtyLabel = t.quantity > 0 ? `+${t.quantity}` : t.quantity
-
-              return React.createElement('tr', { key: t.id },
-                React.createElement('td', null,
-                  React.createElement('span', { className: `badge ${t.transaction_type === 'IN' ? 'badge-success' : t.transaction_type === 'RETURN' ? 'badge-warning' : 'badge-danger'}` }, t.transaction_type)
-                ),
-                React.createElement('td', null,
-                  React.createElement('div', { style: { fontWeight: 600 } }, formatTransactionReference(resolvedReference)),
-                  React.createElement('div', { style: { fontSize: 11, color: 'var(--text-light)' } }, `${t.sku ? t.sku + ' — ' : ''}${t.product_name || ''}`)
-                ),
-                React.createElement('td', null, fmtDate(t.created_at)),
-                React.createElement('td', { style: { fontWeight: 600, color: qtyColor } }, qtyLabel),
-                React.createElement('td', null,
-                  React.createElement('div', null, resolvedReason),
-                  React.createElement('div', { style: { fontSize: 11, color: 'var(--text-light)' } }, `Balance after: ${t.balance_after}`)
-                ),
-                React.createElement('td', null, t.user_name || '—')
+          React.createElement('div', { className: 'inventory-report-toolbar-actions inventory-report-filter-group' },
+            React.createElement('span', { className: 'inventory-report-filter-label' }, 'Show'),
+            React.createElement('select', { className: 'form-input inventory-report-filter', value: filterType, onChange: e => setFilterType(e.target.value), 'aria-label': 'Filter inventory transactions by type' },
+              React.createElement('option', { value: '' }, 'All types'),
+              React.createElement('option', { value: 'IN' }, 'Stock In'),
+              React.createElement('option', { value: 'OUT' }, 'Stock Out'),
+              React.createElement('option', { value: 'ADJUST' }, 'Adjustments'),
+              React.createElement('option', { value: 'RETURN' }, 'Returns')
+            )
+          )
+        ),
+        React.createElement('div', { className: 'table-wrap responsive inventory-report-table-wrap' },
+          React.createElement('table', { className: 'inventory-report-table inventory-transaction-table' },
+            React.createElement('thead', null,
+              React.createElement('tr', null,
+                React.createElement('th', null, 'Type'),
+                React.createElement('th', null, 'Item'),
+                React.createElement('th', null, 'Date'),
+                React.createElement('th', { className: 'text-right' }, 'Qty'),
+                React.createElement('th', null, 'Details')
               )
-            })
+            ),
+            React.createElement('tbody', null,
+              transactions.length === 0
+                ? React.createElement('tr', null,
+                    React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No transactions found.')
+                  )
+                : transactions.map((t) => {
+                    const legacySaleLinkInReason = !String(t.reference || '').trim() && /^SALE_LINK[:|]/.test(String(t.reason || '').trim())
+                    const resolvedReference = legacySaleLinkInReason ? t.reason : t.reference
+                    const resolvedReason = formatTransactionReason(t.reason, resolvedReference)
+                    const transactionDisplay = getPosTransactionDisplay(t, resolvedReference)
+                    const quantity = Number(t.quantity) || 0
+                    const qtyLabel = quantity > 0 ? `+${quantity}` : `${quantity}`
+                    const dateParts = formatDateStackParts(t.created_at)
+                    const itemMeta = []
+                    if (t.sku) itemMeta.push(t.sku)
+                    const compactReference = formatPosReference(resolvedReference)
+                    if (compactReference) itemMeta.push(compactReference)
+
+                    const detailMeta = [`Stock after: ${t.balance_after ?? '—'}`]
+                    if (t.user_name) detailMeta.push(`By ${t.user_name}`)
+
+                    return React.createElement('tr', { key: t.id },
+                      React.createElement('td', { className: 'inventory-transaction-type-cell' },
+                        React.createElement('span', { className: `badge ${transactionDisplay.badgeClass}` }, transactionDisplay.label)
+                      ),
+                      React.createElement('td', { className: 'inventory-transaction-main-cell' },
+                        React.createElement('div', { className: 'inventory-report-primary' }, t.product_name || 'Unassigned item'),
+                        React.createElement('div', { className: 'inventory-report-secondary' }, itemMeta.join(' • '))
+                      ),
+                      React.createElement('td', { className: 'inventory-transaction-date-cell' },
+                        React.createElement('div', { className: 'inventory-date-stack' },
+                          React.createElement('strong', null, dateParts.date),
+                          React.createElement('span', null, dateParts.time || '—')
+                        )
+                      ),
+                      React.createElement('td', { className: 'text-right inventory-transaction-qty-cell' },
+                        React.createElement('span', { className: `inventory-quantity ${quantity >= 0 ? 'inventory-quantity--positive' : 'inventory-quantity--negative'}` }, qtyLabel)
+                      ),
+                      React.createElement('td', { className: 'inventory-transaction-details-cell' },
+                        React.createElement('div', { className: 'inventory-report-primary' }, resolvedReason),
+                        React.createElement('div', { className: 'inventory-report-secondary' }, detailMeta.join(' • '))
+                      )
+                    )
+                  })
+            )
           )
         )
       )
@@ -3326,29 +3490,72 @@ export default function Inventory() {
     ),
 
     // ═══════════════ SHRINKAGE ═══════════════
-    tab === 'shrinkage' && React.createElement('div', null,
-      React.createElement('h3', { style: { marginBottom: 12 } }, 'Shrinkage Report (Losses from Theft or Errors)'),
-      React.createElement('div', { className: 'table-wrap' },
-        React.createElement('table', null,
-          React.createElement('thead', null,
-            React.createElement('tr', null,
-              React.createElement('th', null, 'SKU'),
-              React.createElement('th', null, 'Product'),
-              React.createElement('th', null, 'Total Shrinkage'),
-              React.createElement('th', null, 'Incidents'),
-              React.createElement('th', null, 'Reason')
-            )
+    tab === 'shrinkage' && React.createElement('div', { className: 'inventory-report-page' },
+      React.createElement('div', { className: 'reports-summary-grid inventory-report-summary-grid' },
+        React.createElement('div', { className: 'card reports-summary-card inventory-report-summary-card' },
+          React.createElement('div', { className: 'card-title' }, 'Affected Products'),
+          React.createElement('div', { className: 'card-value reports-summary-value reports-summary-value-default' }, shrinkageSummary.products)
+        ),
+        React.createElement('div', { className: 'card reports-summary-card inventory-report-summary-card' },
+          React.createElement('div', { className: 'card-title' }, 'Total Shrinkage'),
+          React.createElement('div', { className: 'card-value reports-summary-value reports-summary-value-danger' }, shrinkageSummary.totalLoss)
+        ),
+        React.createElement('div', { className: 'card reports-summary-card inventory-report-summary-card' },
+          React.createElement('div', { className: 'card-title' }, 'Incidents'),
+          React.createElement('div', { className: 'card-value reports-summary-value reports-summary-value-default' }, shrinkageSummary.incidents)
+        ),
+        React.createElement('div', { className: 'card reports-summary-card inventory-report-summary-card' },
+          React.createElement('div', { className: 'card-title' }, 'Highest Shrinkage'),
+          React.createElement('div', { className: 'card-value reports-summary-value reports-summary-value-danger' }, shrinkageSummary.largestItem?.totalLoss || 0),
+          React.createElement('div', { className: 'card-subtitle' }, shrinkageSummary.largestItem?.label || 'Unassigned item')
+        )
+      ),
+      React.createElement('div', { className: 'card reports-section-card inventory-report-panel' },
+        React.createElement('div', { className: 'inventory-report-toolbar' },
+          React.createElement('div', { className: 'inventory-report-title-group' },
+            React.createElement('h3', null, 'Shrinkage Details'),
+            React.createElement('p', null, `${shrinkageSummary.products} ${shrinkageSummary.products === 1 ? 'product affected' : 'products affected'}`)
           ),
-          React.createElement('tbody', null,
-            shrinkage.length === 0
-              ? React.createElement('tr', null, React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No shrinkage recorded'))
-              : shrinkage.map(s => React.createElement('tr', { key: s.product_id },
-                  React.createElement('td', null, s.sku || '—'),
-                  React.createElement('td', null, s.product_name),
-                  React.createElement('td', { style: { fontWeight: 600, color: 'var(--error)' } }, s.total_shrinkage),
-                  React.createElement('td', null, s.incidents),
-                  React.createElement('td', null, formatGroupedTransactionReasons(s.reasons))
-                ))
+          React.createElement('span', { className: 'inventory-chip inventory-chip--danger' }, `${shrinkageSummary.totalLoss} units lost`)
+        ),
+        React.createElement('div', { className: 'table-wrap responsive inventory-report-table-wrap' },
+          React.createElement('table', { className: 'inventory-report-table inventory-shrinkage-table' },
+            React.createElement('thead', null,
+              React.createElement('tr', null,
+                React.createElement('th', { className: 'inventory-shrinkage-sku-cell' }, 'SKU'),
+                React.createElement('th', null, 'Product'),
+                React.createElement('th', { className: 'text-right' }, 'Total Shrinkage'),
+                React.createElement('th', { className: 'text-right' }, 'Incidents'),
+                React.createElement('th', null, 'Reason')
+              )
+            ),
+            React.createElement('tbody', null,
+              shrinkage.length === 0
+                ? React.createElement('tr', null, React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No shrinkage recorded.'))
+                : shrinkage.map((s, index) => {
+                    const shrinkageReasons = formatGroupedTransactionReasonList(s.reasons)
+
+                    return React.createElement('tr', { key: s.product_id || s.sku || `shrinkage-${index}` },
+                      React.createElement('td', { className: 'inventory-shrinkage-sku-cell' }, s.sku || '—'),
+                      React.createElement('td', { className: 'inventory-shrinkage-product-cell' },
+                        React.createElement('div', { className: 'inventory-report-primary' }, s.product_name || 'Unassigned item')
+                      ),
+                      React.createElement('td', { className: 'text-right inventory-shrinkage-loss-cell' },
+                        React.createElement('span', { className: 'inventory-quantity inventory-quantity--negative' }, Number(s.total_shrinkage) || 0)
+                      ),
+                      React.createElement('td', { className: 'text-right inventory-shrinkage-loss-cell' },
+                        React.createElement('span', { className: 'inventory-report-count' }, Number(s.incidents) || 0)
+                      ),
+                      React.createElement('td', { className: 'inventory-shrinkage-reason-cell' },
+                        shrinkageReasons.length === 0
+                          ? React.createElement('div', { className: 'inventory-report-secondary' }, 'No reason listed')
+                          : React.createElement('div', { className: 'inventory-reason-list' },
+                              ...shrinkageReasons.map((reason, reasonIndex) => React.createElement('div', { key: `${s.product_id || s.sku || index}-${reasonIndex}`, className: 'inventory-reason-item' }, reason))
+                            )
+                      )
+                    )
+                  })
+            )
           )
         )
       )

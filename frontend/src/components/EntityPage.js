@@ -246,7 +246,9 @@ export default function EntityPage({
   submitLabelCreate,
   submitLabelEdit,
   cancelLabel,
-  onBeforeSubmit
+  onBeforeSubmit,
+  canDelete,
+  deleteDisabledTitle
 }) {
   const pk = idField || 'id'
   const [items, setItems] = useState([])
@@ -454,7 +456,10 @@ export default function EntityPage({
                 )
               ),
               React.createElement('tbody', null,
-                items.map((it) => React.createElement('tr', { key: it[pk] || JSON.stringify(it) },
+                items.map((it) => {
+                  const deleteAllowed = typeof canDelete === 'function' ? !!canDelete(it) : true
+                  const deleteTitle = typeof deleteDisabledTitle === 'function' ? deleteDisabledTitle(it) : (deleteDisabledTitle || 'Delete')
+                  return React.createElement('tr', { key: it[pk] || JSON.stringify(it) },
                   visibleSchema.map((f) => React.createElement('td', { key: f.name }, (() => {
                     const val = it[f.name]
                     if (typeof f.renderList === 'function') {
@@ -493,9 +498,15 @@ export default function EntityPage({
                   })())),
                   React.createElement('td', { style: { textAlign: 'right' } },
                     React.createElement('button', { className: 'btn btn-secondary', onClick: () => startEdit(it), style: { marginRight: 8, padding: '6px 12px', fontSize: 12 } }, 'Edit'),
-                    React.createElement('button', { className: 'btn btn-danger', onClick: () => remove(it[pk]), style: { padding: '6px 12px', fontSize: 12 } }, 'Delete')
+                    React.createElement('button', {
+                      className: 'btn btn-danger',
+                      onClick: () => remove(it[pk]),
+                      style: { padding: '6px 12px', fontSize: 12, ...(deleteAllowed ? null : { opacity: 0.55, cursor: 'not-allowed' }) },
+                      disabled: !deleteAllowed,
+                      title: deleteAllowed ? 'Delete' : deleteTitle
+                    }, 'Delete')
                   )
-                ))
+                )})
               )
             )
           )

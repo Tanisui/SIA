@@ -28,11 +28,20 @@ const PROFILE_SECTIONS = [
 
 const DOCUMENT_STATUS_OPTIONS = [
   { value: 'NOT_SUBMITTED', label: 'Not submitted' },
-  { value: 'SUBMITTED', label: 'Submitted' },
-  { value: 'VERIFIED', label: 'Verified' },
-  { value: 'REJECTED', label: 'Rejected' },
-  { value: 'EXPIRED', label: 'Expired' }
+  { value: 'SUBMITTED', label: 'Pending' },
+  { value: 'VERIFIED', label: 'Approved' }
 ]
+
+const PLACEHOLDER_DOCUMENT_NAME_PATTERN = /^dummy\s+document(?:\s*\(\d+\))?\.[a-z0-9]+$/i
+const MAX_DOCUMENT_FILE_SIZE_BYTES = 50 * 1024 * 1024
+const MAX_DOCUMENT_FILE_SIZE_LABEL = '50MB'
+
+function normalizeDocumentStatus(value) {
+  const normalized = String(value || '').trim().toUpperCase()
+  if (normalized === 'VERIFIED' || normalized === 'APPROVED') return 'VERIFIED'
+  if (normalized === 'SUBMITTED' || normalized === 'PENDING' || normalized === 'REJECTED' || normalized === 'EXPIRED') return 'SUBMITTED'
+  return 'NOT_SUBMITTED'
+}
 
 const SECTION_FIELDS = {
   account: ['email', 'full_name', 'roles'],
@@ -130,6 +139,7 @@ function mergeDocuments(rows = []) {
       ...(existing || {}),
       required: definition.required,
       label: definition.label,
+      status: normalizeDocumentStatus(existing?.status),
       pending_file: null,
       pending_file_name: '',
       marked_for_deletion: false
@@ -156,7 +166,7 @@ function sanitizeDocumentsForDirty(rows = []) {
     issuing_agency: row.issuing_agency || '',
     issue_date: row.issue_date || '',
     expiry_date: row.expiry_date || '',
-    status: row.status || 'NOT_SUBMITTED',
+    status: normalizeDocumentStatus(row.status),
     remarks: row.remarks || '',
     has_file: Boolean(row.has_file),
     original_name: row.original_name || '',
@@ -169,8 +179,33 @@ function hasText(value) {
   return Boolean(String(value ?? '').trim())
 }
 
+function isPlaceholderDocumentName(value) {
+  const normalized = String(value || '').trim()
+  if (!normalized) return false
+  return PLACEHOLDER_DOCUMENT_NAME_PATTERN.test(normalized)
+}
+
+function hasStoredDocumentFile(row) {
+  if (!row?.has_file) return false
+  const originalName = String(row.original_name || '').trim()
+  if (!originalName) return false
+  return !isPlaceholderDocumentName(originalName)
+}
+
 function hasDocumentFile(row) {
-  return Boolean(row.has_file || row.pending_file)
+  return Boolean(row?.pending_file || hasStoredDocumentFile(row))
+}
+
+function getDocumentFileName(row) {
+  if (row?.pending_file_name) return row.pending_file_name
+  if (hasStoredDocumentFile(row)) return row.original_name
+  return 'No file uploaded'
+}
+
+function getDocumentFileSizeLabel(row) {
+  if (row?.pending_file?.size) return formatFileSize(row.pending_file.size)
+  if (hasStoredDocumentFile(row) && row?.size) return formatFileSize(row.size)
+  return ''
 }
 
 function isValidMobileNumber(value) {
@@ -280,11 +315,12 @@ function loadCredentialsSnapshot(userId) {
 }
 
 function getDocumentStatusLabel(status) {
-  return DOCUMENT_STATUS_OPTIONS.find((option) => option.value === status)?.label || status
+  const normalizedStatus = normalizeDocumentStatus(status)
+  return DOCUMENT_STATUS_OPTIONS.find((option) => option.value === normalizedStatus)?.label || normalizedStatus
 }
 
 function getDocumentStatusClass(status) {
-  return `user-document-status user-document-status-${String(status || 'NOT_SUBMITTED').toLowerCase().replace(/_/g, '-')}`
+  return `user-document-status user-document-status-${normalizeDocumentStatus(status).toLowerCase().replace(/_/g, '-')}`
 }
 
 export default function UserFormPage({ mode = 'create' }) {
@@ -520,15 +556,26 @@ export default function UserFormPage({ mode = 'create' }) {
     clearFieldError(`document:${documentType}`)
     setError(null)
     setSuccess(null)
+    const nextValue = field === 'status' ? normalizeDocumentStatus(value) : value
     updateDocumentRow(documentType, (row) => ({
       ...row,
-      [field]: value,
+      [field]: nextValue,
       marked_for_deletion: false
     }))
   }
 
   const handleDocumentFileChange = (documentType, file) => {
     if (!file) return
+    if (file.size > MAX_DOCUMENT_FILE_SIZE_BYTES) {
+      const definition = DOCUMENT_TYPES.find((item) => item.type === documentType)
+      const label = definition?.label || 'Selected file'
+      const message = `${label} exceeds the ${MAX_DOCUMENT_FILE_SIZE_LABEL} upload limit`
+      setFieldErrors((prev) => ({ ...prev, [`document:${documentType}`]: message }))
+      setError(message)
+      setSuccess(null)
+      return
+    }
+
     clearFieldError(`document:${documentType}`)
     setError(null)
     setSuccess(null)
@@ -536,6 +583,8 @@ export default function UserFormPage({ mode = 'create' }) {
       ...row,
       pending_file: file,
       pending_file_name: file.name,
+      size: file.size,
+      status: normalizeDocumentStatus(row.status) === 'VERIFIED' ? 'VERIFIED' : 'SUBMITTED',
       marked_for_deletion: false
     }))
   }
@@ -555,7 +604,7 @@ export default function UserFormPage({ mode = 'create' }) {
   }
 
   const handleDownloadDocument = async (row) => {
-    if (!row.download_url) return
+    if (!row.download_url || !hasDocumentFile(row)) return
     try {
       const response = await api.get(row.download_url, { responseType: 'blob' })
       const blobUrl = window.URL.createObjectURL(new Blob([response.data]))
@@ -606,8 +655,9 @@ export default function UserFormPage({ mode = 'create' }) {
 
     for (const row of documents) {
       if (row.marked_for_deletion) continue
-      if (row.status === 'VERIFIED' && !hasDocumentFile(row)) {
-        nextErrors[`document:${row.document_type}`] = `${row.label} must have a file before it can be verified`
+      const normalizedStatus = normalizeDocumentStatus(row.status)
+      if ((normalizedStatus === 'SUBMITTED' || normalizedStatus === 'VERIFIED') && !hasDocumentFile(row)) {
+        nextErrors[`document:${row.document_type}`] = `${row.label} must have a file before it can be marked pending or approved`
       }
     }
 
@@ -676,7 +726,7 @@ export default function UserFormPage({ mode = 'create' }) {
       uploadForm.append('issuing_agency', row.issuing_agency || '')
       uploadForm.append('issue_date', row.issue_date || '')
       uploadForm.append('expiry_date', row.expiry_date || '')
-      uploadForm.append('status', row.status || 'NOT_SUBMITTED')
+      uploadForm.append('status', normalizeDocumentStatus(row.status))
       uploadForm.append('remarks', row.remarks || '')
       if (row.pending_file) {
         uploadForm.append('file', row.pending_file)
@@ -1034,7 +1084,10 @@ export default function UserFormPage({ mode = 'create' }) {
 
   const renderDocumentCard = (row) => {
     const isExpanded = expandedDocumentType === row.document_type
-    const fileName = row.pending_file_name || row.original_name || 'No file uploaded'
+    const normalizedStatus = normalizeDocumentStatus(row.status)
+    const fileName = getDocumentFileName(row)
+    const fileSizeLabel = getDocumentFileSizeLabel(row)
+    const canDownload = Boolean(row.download_url && hasDocumentFile(row))
 
     return (
       <div key={row.document_type} className={`user-document-item${row.marked_for_deletion ? ' is-muted' : ''}`}>
@@ -1057,11 +1110,11 @@ export default function UserFormPage({ mode = 'create' }) {
               <span className={`user-document-kind ${row.required ? 'is-required' : 'is-optional'}`}>
                 {row.required ? 'Required' : 'Optional'}
               </span>
-              <span className={getDocumentStatusClass(row.status)}>{getDocumentStatusLabel(row.status)}</span>
+              <span className={getDocumentStatusClass(normalizedStatus)}>{getDocumentStatusLabel(normalizedStatus)}</span>
             </div>
             <div className="user-document-meta">
               <span>{fileName}</span>
-              {row.size ? <span>{formatFileSize(row.size)}</span> : null}
+              {fileSizeLabel ? <span>{fileSizeLabel}</span> : null}
               {row.issue_date ? <span>Issued {row.issue_date}</span> : null}
               {row.expiry_date ? <span>Expires {row.expiry_date}</span> : null}
             </div>
@@ -1070,9 +1123,6 @@ export default function UserFormPage({ mode = 'create' }) {
           <div className="user-document-summary-actions">
             <button type="button" className="btn btn-secondary" onClick={() => fileInputRefs.current[row.document_type]?.click()}>
               {hasDocumentFile(row) ? 'Replace' : 'Upload'}
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={() => setExpandedDocumentType(isExpanded ? null : row.document_type)}>
-              {isExpanded ? 'Hide' : 'Details'}
             </button>
           </div>
         </div>
@@ -1102,7 +1152,7 @@ export default function UserFormPage({ mode = 'create' }) {
               </div>
               <div className="user-form-field">
                 <label className="user-form-label">Status</label>
-                <select className="user-form-control" value={row.status || 'NOT_SUBMITTED'} onChange={(event) => handleDocumentInputChange(row.document_type, 'status', event.target.value)}>
+                <select className="user-form-control" value={normalizedStatus} onChange={(event) => handleDocumentInputChange(row.document_type, 'status', event.target.value)}>
                   {DOCUMENT_STATUS_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
@@ -1122,7 +1172,7 @@ export default function UserFormPage({ mode = 'create' }) {
               <button type="button" className="btn btn-secondary" onClick={() => fileInputRefs.current[row.document_type]?.click()}>
                 {hasDocumentFile(row) ? 'Replace File' : 'Upload File'}
               </button>
-              <button type="button" className="btn btn-secondary" disabled={!row.download_url} onClick={() => handleDownloadDocument(row)}>
+              <button type="button" className="btn btn-secondary" disabled={!canDownload} onClick={() => handleDownloadDocument(row)}>
                 Download
               </button>
               <button type="button" className="btn btn-danger" disabled={!row.id && !row.pending_file_name && !row.original_name} onClick={() => handleDocumentRemove(row.document_type)}>

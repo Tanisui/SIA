@@ -11,11 +11,13 @@ import Categories from './pages/Categories.js'
 import Suppliers from './pages/Suppliers.js'
 import Inventory from './pages/Inventory.js'
 import Sales from './pages/Sales.jsx'
+import Customers from './pages/Customers.jsx'
+import CustomerFormPage from './pages/CustomerFormPage.jsx'
 import Purchasing from './pages/Purchasing.jsx'
 import Expenses from './pages/Expenses.js'
 import Audit from './pages/Audit.jsx'
 import Files from './pages/Files.js'
-import Settings from './pages/Settings.js'
+import Settings from './pages/Settings.jsx'
 import Notifications from './pages/Notifications.js'
 import Reports from './pages/Reports.jsx'
 import Layout from './components/Layout.js'
@@ -42,6 +44,9 @@ export default function App() {
           React.createElement(Route, { path: 'suppliers', element: React.createElement(Suppliers, null) }),
           React.createElement(Route, { path: 'inventory', element: React.createElement(Inventory, null) }),
           React.createElement(Route, { path: 'sales', element: React.createElement(Sales, null) }),
+          React.createElement(Route, { path: 'customers', element: React.createElement(Customers, null) }),
+          React.createElement(Route, { path: 'customers/new', element: React.createElement(CustomerFormPage, { mode: 'create' }) }),
+          React.createElement(Route, { path: 'customers/:id/edit', element: React.createElement(CustomerFormPage, { mode: 'edit' }) }),
           React.createElement(Route, { path: 'purchasing', element: React.createElement(Purchasing, null) }),
           React.createElement(Route, { path: 'expenses', element: React.createElement(Expenses, null) }),
           React.createElement(Route, { path: 'audit', element: React.createElement(Audit, null) }),

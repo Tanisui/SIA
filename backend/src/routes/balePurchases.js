@@ -5,6 +5,7 @@ const { verifyToken, authorize } = require('../middleware/authMiddleware')
 const { ensureAutomatedReportsSchema } = require('../utils/automatedReports')
 const { roundMoney } = require('../utils/salesSupport')
 const { logAuditEventSafe } = require('../utils/auditLog')
+const { ensureScannerSchema } = require('../services/scannerSchemaService')
 
 const PAYMENT_STATUSES = ['PAID', 'PARTIAL', 'UNPAID']
 const PO_STATUSES = ['PENDING', 'ORDERED', 'RECEIVED', 'COMPLETED', 'CANCELLED']
@@ -123,14 +124,29 @@ function buildDateFilter(alias, column, from, to, params) {
   return clause
 }
 
-async function ensureSupplierExists(supplierId) {
-  if (!supplierId) return
-  const [rows] = await db.pool.query('SELECT id FROM suppliers WHERE id = ? LIMIT 1', [supplierId])
-  if (!rows.length) {
-    const err = new Error('supplier_id does not exist')
-    err.statusCode = 400
-    throw err
+async function getSupplierById(supplierId) {
+  if (!supplierId) return null
+  const [rows] = await db.pool.query('SELECT id, name FROM suppliers WHERE id = ? LIMIT 1', [supplierId])
+  return rows[0] || null
+}
+
+async function resolveSupplierReference(payload, options = {}) {
+  if (!payload || !payload.supplier_id) return
+
+  const requestedSupplierId = Number(payload.supplier_id)
+  const supplier = await getSupplierById(requestedSupplierId)
+  if (supplier) {
+    if (isBlank(payload.supplier_name)) {
+      payload.supplier_name = asText(supplier.name)
+    }
+    return
   }
+
+  payload.supplier_id = null
+  if (!isBlank(payload.supplier_name)) return
+
+  const existingSupplierName = asText(options.existingSupplierName)
+  payload.supplier_name = existingSupplierName || `Former Supplier #${requestedSupplierId}`
 }
 
 function normalizeBalePurchaseInput(payload, options = {}) {
@@ -150,7 +166,7 @@ function normalizeBalePurchaseInput(payload, options = {}) {
 
   // Handle supplier_id (foreign key to suppliers table)
   if (!isUpdate || body.supplier_id !== undefined) {
-    if (body.supplier_id !== undefined && body.supplier_id !== null) {
+    if (!isBlank(body.supplier_id)) {
       const supplierId = Number(body.supplier_id)
       if (!Number.isFinite(supplierId) || supplierId <= 0) {
         const err = new Error('supplier_id must be a valid positive integer')
@@ -158,10 +174,6 @@ function normalizeBalePurchaseInput(payload, options = {}) {
         throw err
       }
       parsed.supplier_id = supplierId
-    } else if (!isUpdate) {
-      const err = new Error('supplier_id is required when supplier_name is not provided')
-      err.statusCode = 400
-      throw err
     } else {
       parsed.supplier_id = null
     }
@@ -203,10 +215,6 @@ function normalizeBalePurchaseInput(payload, options = {}) {
     parsed.po_status = asPoStatus(body.po_status, !isUpdate)
   }
 
-  if (!isUpdate || body.po_number !== undefined) {
-    parsed.po_number = asText(body.po_number)
-  }
-
   if (!isUpdate || body.quantity_ordered !== undefined) {
     parsed.quantity_ordered = asPositiveInt(body.quantity_ordered, 'quantity_ordered')
   }
@@ -230,16 +238,20 @@ function normalizeBalePurchaseInput(payload, options = {}) {
 function normalizeBreakdownInput(payload, existing = {}) {
   const body = payload || {}
   const totalPieces = body.total_pieces !== undefined ? Number(body.total_pieces) : Number(existing.total_pieces || 0)
-  const standardItems = body.standard_items !== undefined ? Number(body.standard_items) : Number(existing.standard_items || 0)
-  const lowGradeItems = body.low_grade_items !== undefined ? Number(body.low_grade_items) : Number(existing.low_grade_items || 0)
+  const premiumItems = body.premium_items !== undefined ? Number(body.premium_items) : Number(existing.premium_items || 0)
+  const standardBase = body.standard_items !== undefined ? Number(body.standard_items) : Number(existing.standard_items || 0)
+  const carriedLowGradeItems = body.low_grade_items !== undefined
+    ? Number(body.low_grade_items)
+    : (body.standard_items === undefined ? Number(existing.low_grade_items || 0) : 0)
+  const standardItems = standardBase + carriedLowGradeItems
+  const lowGradeItems = 0
   const damagedItems = body.damaged_items !== undefined ? Number(body.damaged_items) : Number(existing.damaged_items || 0)
-  const saleableItems = standardItems + lowGradeItems
-  const premiumItems = 0
+  const saleableItems = premiumItems + standardItems
 
   const integerFields = [
     ['total_pieces', totalPieces],
+    ['premium_items', premiumItems],
     ['standard_items', standardItems],
-    ['low_grade_items', lowGradeItems],
     ['damaged_items', damagedItems]
   ]
   for (const [fieldName, value] of integerFields) {
@@ -250,7 +262,14 @@ function normalizeBreakdownInput(payload, existing = {}) {
     }
   }
 
-  if ((saleableItems + damagedItems) > totalPieces && totalPieces > 0) {
+  const classifiedItems = saleableItems + damagedItems
+  if (classifiedItems > 0 && totalPieces <= 0) {
+    const err = new Error('total_pieces must be greater than 0 when breakdown counts are provided')
+    err.statusCode = 400
+    throw err
+  }
+
+  if (classifiedItems > totalPieces && totalPieces > 0) {
     const err = new Error('saleable_items + damaged_items cannot exceed total_pieces')
     err.statusCode = 400
     throw err
@@ -304,8 +323,8 @@ router.get('/', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) 
 
     if (!isBlank(search)) {
       const needle = `%${String(search).trim()}%`
-      params.push(needle, needle)
-      sql += ' AND (bp.bale_batch_no LIKE ? OR bp.supplier_name LIKE ?)'
+      params.push(needle, needle, needle)
+      sql += ' AND (bp.bale_batch_no LIKE ? OR bp.supplier_name LIKE ? OR bp.bale_category LIKE ?)'
     }
 
     sql += ' ORDER BY bp.purchase_date DESC, bp.id DESC'
@@ -369,10 +388,10 @@ router.post('/', express.json(), verifyToken, authorize('inventory.receive'), as
   try {
     await ensureAutomatedReportsSchema()
     const payload = normalizeBalePurchaseInput(req.body, { isUpdate: false })
+    await resolveSupplierReference(payload)
 
-    // Validate supplier_id if provided
-    if (payload.supplier_id) {
-      await ensureSupplierExists(payload.supplier_id)
+    if (!payload.supplier_id && isBlank(payload.supplier_name)) {
+      return res.status(400).json({ error: 'supplier_name or supplier_id is required' })
     }
 
     const [dup] = await db.pool.query('SELECT id FROM bale_purchases WHERE bale_batch_no = ? LIMIT 1', [payload.bale_batch_no])
@@ -380,14 +399,13 @@ router.post('/', express.json(), verifyToken, authorize('inventory.receive'), as
 
     const [result] = await db.pool.query(`
       INSERT INTO bale_purchases (
-        supplier_id, bale_batch_no, po_number, supplier_name, purchase_date, bale_category,
+        supplier_id, bale_batch_no, supplier_name, purchase_date, bale_category,
         bale_cost, total_purchase_cost, quantity_ordered,
         payment_status, po_status, expected_delivery_date, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       payload.supplier_id || null,
       payload.bale_batch_no,
-      payload.po_number || null,
       payload.supplier_name,
       payload.purchase_date,
       payload.bale_category,
@@ -410,8 +428,8 @@ router.post('/', express.json(), verifyToken, authorize('inventory.receive'), as
       details: {
         module: 'purchasing',
         severity: 'medium',
-        target_label: created?.po_number || created?.bale_batch_no || `Purchase order #${result.insertId}`,
-        summary: `Created purchase order "${created?.po_number || created?.bale_batch_no || result.insertId}"`,
+        target_label: created?.bale_batch_no || `Purchase order #${result.insertId}`,
+        summary: `Created purchase order "${created?.bale_batch_no || result.insertId}"`,
         after: created
       }
     })
@@ -432,11 +450,7 @@ router.put('/:id', express.json(), verifyToken, authorize('inventory.receive'), 
 
     const body = req.body || {}
     const payload = normalizeBalePurchaseInput(body, { isUpdate: true })
-
-    // Validate supplier_id if provided
-    if (payload.supplier_id) {
-      await ensureSupplierExists(payload.supplier_id)
-    }
+    await resolveSupplierReference(payload, { existingSupplierName: existing.supplier_name })
 
     const hasCostInputs = body.bale_cost !== undefined
     const hasExplicitTotal = body.total_purchase_cost !== undefined && !isBlank(body.total_purchase_cost)
@@ -450,7 +464,6 @@ router.put('/:id', express.json(), verifyToken, authorize('inventory.receive'), 
     const allowedFields = [
       'supplier_id',
       'bale_batch_no',
-      'po_number',
       'supplier_name',
       'purchase_date',
       'bale_category',
@@ -485,8 +498,8 @@ router.put('/:id', express.json(), verifyToken, authorize('inventory.receive'), 
       details: {
         module: 'purchasing',
         severity: String(existing.po_status || '').toUpperCase() !== String(updated.po_status || '').toUpperCase() ? 'high' : 'medium',
-        target_label: updated?.po_number || updated?.bale_batch_no || `Purchase order #${id}`,
-        summary: `Updated purchase order "${updated?.po_number || updated?.bale_batch_no || id}"`,
+        target_label: updated?.bale_batch_no || `Purchase order #${id}`,
+        summary: `Updated purchase order "${updated?.bale_batch_no || id}"`,
         before: existing,
         after: updated
       }
@@ -501,6 +514,15 @@ router.put('/:id', express.json(), verifyToken, authorize('inventory.receive'), 
 
 router.delete('/:id', verifyToken, authorize('inventory.receive'), async (req, res) => {
   const conn = await db.pool.getConnection()
+  let committed = false
+  let released = false
+  const safeRelease = () => {
+    if (!released) {
+      conn.release()
+      released = true
+    }
+  }
+
   try {
     await ensureAutomatedReportsSchema()
     const id = asOptionalInt(req.params.id, 'id')
@@ -509,14 +531,15 @@ router.delete('/:id', verifyToken, authorize('inventory.receive'), async (req, r
     const [exists] = await conn.query('SELECT id FROM bale_purchases WHERE id = ? LIMIT 1 FOR UPDATE', [id])
     if (!exists.length) {
       await conn.rollback()
-      conn.release()
+      safeRelease()
       return res.status(404).json({ error: 'bale purchase not found' })
     }
 
     const beforeDelete = await getBalePurchaseById(id)
     await conn.query('DELETE FROM bale_purchases WHERE id = ?', [id])
     await conn.commit()
-    conn.release()
+    committed = true
+    safeRelease()
 
     await logAuditEventSafe(db.pool, {
       userId: req.auth.id,
@@ -526,15 +549,17 @@ router.delete('/:id', verifyToken, authorize('inventory.receive'), async (req, r
       details: {
         module: 'purchasing',
         severity: 'high',
-        target_label: beforeDelete?.po_number || beforeDelete?.bale_batch_no || `Purchase order #${id}`,
-        summary: `Deleted purchase order "${beforeDelete?.po_number || beforeDelete?.bale_batch_no || id}"`,
+        target_label: beforeDelete?.bale_batch_no || `Purchase order #${id}`,
+        summary: `Deleted purchase order "${beforeDelete?.bale_batch_no || id}"`,
         before: beforeDelete
       }
     })
     res.json({ success: true })
   } catch (err) {
-    await conn.rollback()
-    conn.release()
+    if (!committed) {
+      await conn.rollback().catch(() => {})
+    }
+    safeRelease()
     console.error(err)
     res.status(err?.statusCode || 500).json({ error: err?.message || 'failed to delete bale purchase' })
   }
@@ -564,14 +589,28 @@ router.get('/:id/breakdown', verifyToken, authorize(BALE_VIEW_PERMISSIONS), asyn
 
 async function upsertBreakdown(req, res) {
   const conn = await db.pool.getConnection()
+  let committed = false
+  let released = false
+  const safeRelease = () => {
+    if (!released) {
+      conn.release()
+      released = true
+    }
+  }
+
   try {
     await ensureAutomatedReportsSchema()
+    await ensureScannerSchema()
     const balePurchaseId = asOptionalInt(req.params.id, 'id')
     await conn.beginTransaction()
 
     const [purchaseRows] = await conn.query(`
       SELECT
         id,
+        bale_batch_no,
+        supplier_name,
+        bale_category,
+        purchase_date,
         COALESCE(total_purchase_cost, bale_cost) AS total_purchase_cost
       FROM bale_purchases
       WHERE id = ?
@@ -580,7 +619,7 @@ async function upsertBreakdown(req, res) {
     `, [balePurchaseId])
     if (!purchaseRows.length) {
       await conn.rollback()
-      conn.release()
+      safeRelease()
       return res.status(404).json({ error: 'bale purchase not found' })
     }
 
@@ -600,9 +639,10 @@ async function upsertBreakdown(req, res) {
       ? (existing.breakdown_date || new Date().toISOString().slice(0, 10))
       : payload.breakdown_date
     const notes = payload.notes === undefined ? existing.notes || null : payload.notes
+    let breakdownRecordId = existing.id || null
 
     if (!existingRows.length) {
-      await conn.query(`
+      const [insertResult] = await conn.query(`
         INSERT INTO bale_breakdowns (
           bale_purchase_id, total_pieces, saleable_items, premium_items,
           standard_items, low_grade_items, damaged_items, cost_per_saleable_item,
@@ -621,6 +661,7 @@ async function upsertBreakdown(req, res) {
         breakdownDate,
         notes
       ])
+      breakdownRecordId = insertResult.insertId
     } else {
       await conn.query(`
         UPDATE bale_breakdowns
@@ -651,7 +692,8 @@ async function upsertBreakdown(req, res) {
     }
 
     await conn.commit()
-    conn.release()
+    committed = true
+    safeRelease()
 
     const [rows] = await db.pool.query(`
       SELECT
@@ -685,8 +727,10 @@ async function upsertBreakdown(req, res) {
 
     res.json(rows[0] || null)
   } catch (err) {
-    await conn.rollback()
-    conn.release()
+    if (!committed) {
+      await conn.rollback().catch(() => {})
+    }
+    safeRelease()
     console.error(err)
     res.status(err?.statusCode || 500).json({ error: err?.message || 'failed to save bale breakdown' })
   }
@@ -695,9 +739,18 @@ async function upsertBreakdown(req, res) {
 router.post('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
 router.put('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
 
-// Receive P.O. order: Mark as COMPLETED and increment product stock
+// Receive a bale purchase: update receipt totals and keep a generic audit trail entry.
 router.post('/:id/receive', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
   const conn = await db.pool.getConnection()
+  let committed = false
+  let released = false
+  const safeRelease = () => {
+    if (!released) {
+      conn.release()
+      released = true
+    }
+  }
+
   try {
     await ensureAutomatedReportsSchema()
     const id = asOptionalInt(req.params.id, 'id')
@@ -707,7 +760,7 @@ router.post('/:id/receive', express.json(), verifyToken, authorize('inventory.re
     await conn.beginTransaction()
 
     const [purchaseRows] = await conn.query(`
-      SELECT id, po_status, quantity_ordered, bale_purchase_id, product_id
+      SELECT id, po_status, quantity_ordered, quantity_received
       FROM bale_purchases
       WHERE id = ?
       LIMIT 1
@@ -716,68 +769,59 @@ router.post('/:id/receive', express.json(), verifyToken, authorize('inventory.re
 
     if (!purchaseRows.length) {
       await conn.rollback()
-      conn.release()
+      safeRelease()
       return res.status(404).json({ error: 'purchase order not found' })
     }
 
     const purchase = purchaseRows[0]
-    if (String(purchase.po_status).toUpperCase() === 'COMPLETED') {
+    const currentStatus = String(purchase.po_status || '').toUpperCase()
+    if (currentStatus === 'COMPLETED') {
       await conn.rollback()
-      conn.release()
+      safeRelease()
       return res.status(400).json({ error: 'purchase order is already completed' })
+    }
+    if (currentStatus === 'CANCELLED') {
+      await conn.rollback()
+      safeRelease()
+      return res.status(400).json({ error: 'cancelled purchase orders cannot be received' })
     }
 
     if (quantityToReceive <= 0) {
       await conn.rollback()
-      conn.release()
+      safeRelease()
       return res.status(400).json({ error: 'quantity_received must be greater than 0' })
     }
 
-    // Update P.O. status to COMPLETED
+    const orderedQuantity = Number(purchase.quantity_ordered) || 0
+    const existingReceivedQuantity = Number(purchase.quantity_received) || 0
+    const nextReceivedQuantity = existingReceivedQuantity + quantityToReceive
+
+    if (orderedQuantity > 0 && nextReceivedQuantity > orderedQuantity) {
+      await conn.rollback()
+      safeRelease()
+      return res.status(400).json({ error: `quantity_received cannot exceed quantity_ordered (${orderedQuantity})` })
+    }
+
+    const nextPoStatus = orderedQuantity > 0 && nextReceivedQuantity < orderedQuantity
+      ? 'RECEIVED'
+      : 'COMPLETED'
+
     const today = new Date().toISOString().slice(0, 10)
     await conn.query(`
       UPDATE bale_purchases
       SET po_status = ?, quantity_received = ?, actual_delivery_date = ?
       WHERE id = ?
-    `, ['COMPLETED', quantityToReceive, today, id])
+    `, [nextPoStatus, nextReceivedQuantity, today, id])
 
-    // Get products associated with this P.O. (if any) and increment stock
-    // If no specific product, store as a generic inventory update
-    const [poDetails] = await conn.query(`
-      SELECT product_id, quantity_ordered
-      FROM bale_purchases
-      WHERE id = ?
-      LIMIT 1
-    `, [id])
-
-    if (poDetails.length && poDetails[0].product_id) {
-      // Increment specific product's stock
-      await conn.query(`
-        UPDATE products
-        SET stock_quantity = stock_quantity + ?
-        WHERE id = ?
-      `, [quantityToReceive, poDetails[0].product_id])
-    } else {
-      // For bale/generic purchases, track in inventory adjustments
-      // This allows flexibility for multi-item P.O.s in future
-      const [adjustmentTable] = await conn.query(`
-        SELECT 1 FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = DATABASE()
-        AND TABLE_NAME = 'inventory_adjustments'
-        LIMIT 1
-      `)
-
-      if (adjustmentTable.length) {
-        await conn.query(`
-          INSERT INTO inventory_adjustments (
-            bale_purchase_id, adjustment_type, quantity, reason, adjustment_date
-          ) VALUES (?, ?, ?, ?, ?)
-        `, [id, 'received', quantityToReceive, 'P.O. received and recorded', today])
-      }
-    }
+    await conn.query(`
+      INSERT INTO inventory_adjustments (
+        bale_purchase_id, adjustment_type, quantity, reason, adjustment_date
+      ) VALUES (?, ?, ?, ?, ?)
+    `, [id, 'correction', quantityToReceive, 'Bale purchase received and recorded', today])
 
     await conn.commit()
-    conn.release()
+    committed = true
+    safeRelease()
 
     const updated = await getBalePurchaseById(id)
     await logAuditEventSafe(db.pool, {
@@ -788,20 +832,24 @@ router.post('/:id/receive', express.json(), verifyToken, authorize('inventory.re
       details: {
         module: 'purchasing',
         severity: 'high',
-        target_label: updated?.po_number || updated?.bale_batch_no || `Purchase order #${id}`,
-        summary: `Received purchase order "${updated?.po_number || updated?.bale_batch_no || id}"`,
+        target_label: updated?.bale_batch_no || `Purchase order #${id}`,
+        summary: `Received purchase order "${updated?.bale_batch_no || id}"`,
         after: updated,
         metrics: { quantity_received: quantityToReceive }
       }
     })
     res.json({
       success: true,
-      message: `Purchase order completed. ${quantityToReceive} units received.`,
+      message: nextPoStatus === 'COMPLETED'
+        ? `Purchase order completed. ${quantityToReceive} units received.`
+        : `Purchase order partially received. ${nextReceivedQuantity} of ${orderedQuantity} units recorded.`,
       purchase_order: updated
     })
   } catch (err) {
-    await conn.rollback()
-    conn.release()
+    if (!committed) {
+      await conn.rollback().catch(() => {})
+    }
+    safeRelease()
     console.error(err)
     res.status(err?.statusCode || 500).json({ error: err?.message || 'failed to receive purchase order' })
   }

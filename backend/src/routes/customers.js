@@ -95,6 +95,12 @@ function clampLocationLimit(value) {
   return Math.max(5, Math.min(PH_LOCATION_MAX_LIMIT, Math.floor(parsed)))
 }
 
+function clampCustomerSearchLimit(value) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return 10
+  return Math.max(1, Math.min(25, Math.floor(parsed)))
+}
+
 function buildLocationCacheKey(path, params = {}) {
   const entries = Object.entries(params)
     .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
@@ -638,7 +644,7 @@ function mapIncomingCustomerBody(body = {}, existing = null) {
   const preferred_contact_method = pick('preferred_contact_method')
   const address_line = pick('address_line', 'address')
   const region_code = pick('region_code')
-  const region_name = pick('region_name')
+  const region_name = pick('region_name', 'region')
   const province_code = pick('province_code')
   const province_name = pick('province_name', 'province')
   const city_code = pick('city_code')
@@ -667,44 +673,10 @@ function mapIncomingCustomerBody(body = {}, existing = null) {
     notes: normalizeNotes(notes)
   }
 
-  if (!normalized.region_name || !normalized.region_code) {
-    throw createValidationError('region is required')
-  }
-  if (!normalized.city_name || !normalized.city_code) {
-    throw createValidationError('city_name is required')
-  }
-  if (normalized.barangay_name && !normalized.city_name) {
-    throw createValidationError('city_name is required when barangay_name is provided')
-  }
-  if (normalized.province_name && !normalized.region_name) {
-    throw createValidationError('region_name is required when province_name is provided')
-  }
-  const normalizedRegionName = normalizeSingleLine(normalized.region_name).toLowerCase()
-  const provinceOptionalForRegion = normalized.region_code === 'NCR'
-    || normalizedRegionName.includes('national capital region')
-    || normalizedRegionName.includes('(ncr)')
-
-  if (!provinceOptionalForRegion && !normalized.province_name) {
-    throw createValidationError('province_name is required for this region')
-  }
-
-  if (normalized.region_code && !normalized.region_name) {
-    throw createValidationError('region_name is required when region_code is provided')
-  }
-  if (normalized.province_code && !normalized.province_name) {
-    throw createValidationError('province_name is required when province_code is provided')
-  }
-  if (normalized.city_code && !normalized.city_name) {
-    throw createValidationError('city_name is required when city_code is provided')
-  }
-  if (normalized.barangay_code && !normalized.barangay_name) {
-    throw createValidationError('barangay_name is required when barangay_code is provided')
-  }
-
-  normalized.region = normalized.region_name
-  normalized.province = normalized.province_name
-  normalized.city = normalized.city_name
-  normalized.barangay = normalized.barangay_name
+  normalized.region = normalized.region_name || normalized.region_code || null
+  normalized.province = normalized.province_name || normalized.province_code || null
+  normalized.city = normalized.city_name || normalized.city_code || null
+  normalized.barangay = normalized.barangay_name || normalized.barangay_code || null
 
   ensureContactExists(normalized.phone, normalized.email)
   normalized.name = normalized.full_name
@@ -742,13 +714,15 @@ function toSafeCustomerProfile(row) {
 
 function normalizeCustomerMetrics(row) {
   const safeRow = toSafeCustomerProfile(row)
+  const grossSpent = toMoney(safeRow?.gross_spent)
+  const returnsValue = toMoney(safeRow?.returns_value)
 
   return {
     ...safeRow,
     total_orders: Number(safeRow?.total_orders || 0),
-    gross_spent: toMoney(safeRow?.gross_spent),
-    returns_value: toMoney(safeRow?.returns_value),
-    net_spent: toMoney(safeRow?.net_spent),
+    gross_spent: grossSpent,
+    returns_value: returnsValue,
+    net_spent: toMoney(hasOwn(safeRow, 'net_spent') ? safeRow?.net_spent : grossSpent - returnsValue),
     recent_items_preview: String(safeRow?.recent_items_preview || '').trim()
   }
 }
@@ -1182,6 +1156,52 @@ router.get('/duplicate-check', verifyToken, authorize(['customers.view', 'custom
   } catch (err) {
     console.error(err)
     res.status(err?.statusCode || 500).json({ error: err?.message || 'failed to check duplicates' })
+  }
+})
+
+router.get('/search', verifyToken, authorize(['customers.view', 'sales.create']), async (req, res) => {
+  try {
+    await ensureCustomerSchema()
+
+    const q = normalizeSearchTerm(req.query?.q)
+    const limit = clampCustomerSearchLimit(req.query?.limit)
+    const searchToken = q ? `%${q}%` : '%'
+
+    const [rows] = await db.pool.query(
+      `SELECT
+         id,
+         customer_code,
+         COALESCE(NULLIF(full_name, ''), NULLIF(name, ''), CONCAT('Customer #', id)) AS full_name,
+         phone,
+         email
+       FROM customers
+       WHERE ? = ''
+          OR customer_code LIKE ?
+          OR COALESCE(NULLIF(full_name, ''), NULLIF(name, '')) LIKE ?
+          OR COALESCE(phone, '') LIKE ?
+          OR COALESCE(email, '') LIKE ?
+       ORDER BY COALESCE(NULLIF(full_name, ''), NULLIF(name, ''), customer_code, CONCAT('Customer #', id)) ASC
+       LIMIT ?`,
+      [
+        q,
+        searchToken,
+        searchToken,
+        searchToken,
+        searchToken,
+        limit
+      ]
+    )
+
+    res.json(rows.map((row) => ({
+      id: Number(row.id) || null,
+      customer_code: normalizeSingleLine(row.customer_code) || null,
+      full_name: normalizeSingleLine(row.full_name) || null,
+      phone: normalizeText(row.phone) || null,
+      email: normalizeText(row.email).toLowerCase() || null
+    })))
+  } catch (err) {
+    console.error(err)
+    res.status(err?.statusCode || 500).json({ error: err?.message || 'failed to search customers' })
   }
 })
 
