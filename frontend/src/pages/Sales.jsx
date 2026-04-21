@@ -52,7 +52,7 @@ const extractScannedCodeToken = (value) => {
         }
       }
     } catch {
-      // Fall through and treat the raw value as the code.
+      return compact
     }
   }
 
@@ -127,6 +127,22 @@ const DEFAULT_SALES_CONFIG = {
 const NON_VAT_INPUT_TAX_NOTICE = 'THIS DOCUMENT IS NOT VALID FOR CLAIM OF INPUT TAX.'
 const POS_DRAFT_ID_STORAGE_KEY = 'pos_draft_sale_id'
 const POS_DRAFT_SNAPSHOT_STORAGE_KEY = 'pos_draft_sale_snapshot'
+const POS_FORCE_NEW_DRAFT_STORAGE_KEY = 'pos_force_new_draft'
+
+function readStoredPosDraftId() {
+  const storedDraftId = Number(localStorage.getItem(POS_DRAFT_ID_STORAGE_KEY))
+  return Number.isFinite(storedDraftId) && storedDraftId > 0 ? storedDraftId : null
+}
+
+function markNextPosDraftAsNew() {
+  localStorage.setItem(POS_FORCE_NEW_DRAFT_STORAGE_KEY, '1')
+}
+
+function consumeNextPosDraftAsNew() {
+  const shouldForceNew = localStorage.getItem(POS_FORCE_NEW_DRAFT_STORAGE_KEY) === '1'
+  if (shouldForceNew) localStorage.removeItem(POS_FORCE_NEW_DRAFT_STORAGE_KEY)
+  return shouldForceNew
+}
 
 function sanitizeStoredCartItem(item) {
   const productId = Number(item?.product_id)
@@ -628,6 +644,8 @@ export default function Sales() {
   const draftSaleIdRef = useRef(null)
   const hasInitializedDraftPersistenceRef = useRef(false)
   const cartMutationQueueRef = useRef(Promise.resolve())
+  const cartItemsRef = useRef([])
+  const cartMutationVersionRef = useRef(0)
   const handleScanSubmitRef = useRef(null)
   const location = useLocation()
   const navigate = useNavigate()
@@ -687,7 +705,19 @@ export default function Sales() {
   const [receiptSearchTimeout, setReceiptSearchTimeout] = useState(null)
 
   const cart = cartItems
-  const setCart = setCartItems
+  function setCart(nextCart) {
+    if (typeof nextCart === 'function') {
+      setCartItems((currentCart) => {
+        const resolvedCart = nextCart(currentCart)
+        cartItemsRef.current = Array.isArray(resolvedCart) ? resolvedCart : []
+        return resolvedCart
+      })
+      return
+    }
+
+    cartItemsRef.current = Array.isArray(nextCart) ? nextCart : []
+    setCartItems(nextCart)
+  }
 
   const tabs = [
     ['pos', 'POS', 'sales.create'],
@@ -811,12 +841,13 @@ export default function Sales() {
     }
 
     let active = true
-    const savedDraft = localStorage.getItem(POS_DRAFT_ID_STORAGE_KEY)
-    if (!savedDraft) return () => { active = false }
+    const savedDraft = readStoredPosDraftId()
+    const restoreVersion = cartMutationVersionRef.current
+    const shouldForceNewDraft = !savedDraft && consumeNextPosDraftAsNew()
 
     ;(async () => {
       try {
-        const draftRes = await api.post('/sales/drafts', { sale_id: Number(savedDraft) || savedDraft })
+        const draftRes = await api.post('/sales/drafts', savedDraft ? { sale_id: savedDraft } : (shouldForceNewDraft ? { force_new: true } : {}))
         if (!active) return
         const restoredDraftId = Number(draftRes?.data?.id)
         const currentDraftId = Number(draftSaleIdRef.current)
@@ -829,7 +860,7 @@ export default function Sales() {
         ) {
           return
         }
-        syncCartFromSale(draftRes.data)
+        syncCartFromSale(draftRes.data, { source: 'restore', version: restoreVersion })
       } catch (draftErr) {
         if (!active) return
         if (draftErr?.response?.status === 404 || String(draftErr?.response?.data?.error || '').trim() === 'draft sale not found') {
@@ -853,6 +884,10 @@ export default function Sales() {
       ? normalizedDraftSaleId
       : null
   }, [draftSaleId])
+
+  useEffect(() => {
+    cartItemsRef.current = Array.isArray(cart) ? cart : []
+  }, [cart])
 
   useEffect(() => {
     if (!hasInitializedDraftPersistenceRef.current) {
@@ -898,7 +933,7 @@ export default function Sales() {
         if (!active) return
         setProducts(Array.isArray(latestProducts) ? latestProducts : [])
       } catch {
-        // Keep current list on silent refresh failures.
+        if (!active) return
       }
     }
 
@@ -1064,12 +1099,22 @@ export default function Sales() {
     if (location.pathname !== '/sales') return
 
     const params = new URLSearchParams(location.search)
+    const requestedDraftId = Number(params.get('draft_sale_id') || params.get('sale_id'))
     const requestedCode = normalizeScannedCode(params.get('scan'))
     if (!requestedCode) {
       routeScanRef.current = ''
       return
     }
-    if (routeScanRef.current === requestedCode) return
+    if (routeScanRef.current === requestedCode) {
+      clearRouteScanParam()
+      return
+    }
+
+    if (Number.isFinite(requestedDraftId) && requestedDraftId > 0) {
+      draftSaleIdRef.current = requestedDraftId
+      setDraftSaleId(requestedDraftId)
+      localStorage.setItem(POS_DRAFT_ID_STORAGE_KEY, String(requestedDraftId))
+    }
 
     routeScanRef.current = requestedCode
     setTab('pos')
@@ -1141,7 +1186,12 @@ export default function Sales() {
     return nextTask
   }
   function stock(productId) { return num(products.find((item) => String(item.id) === String(productId))?.stock_quantity) }
-  function cartQty(productId, skip = -1) { return cart.reduce((sum, item, index) => index === skip ? sum : (String(item.product_id) === String(productId) ? sum + num(item.quantity) : sum), 0) }
+  function cartQty(productId, skip = -1) {
+    const currentCart = Array.isArray(cartItemsRef.current) ? cartItemsRef.current : cart
+    return currentCart.reduce((sum, item, index) => (
+      index === skip ? sum : (String(item.product_id) === String(productId) ? sum + num(item.quantity) : sum)
+    ), 0)
+  }
   function transactionTypeLabel(type) {
     if (String(type) === 'SALE_PAYMENT') return 'Payment'
     if (String(type) === 'SALE_RETURN') return 'Return'
@@ -1174,9 +1224,15 @@ export default function Sales() {
     if (!sale || typeof sale !== 'object') return false
 
     const allowDraftSwitch = options.allowDraftSwitch !== false
+    const source = String(options.source || 'mutation')
+    const syncVersion = Number(options.version)
     const nextDraftSaleId = Number(sale.id)
     const normalizedNextDraftSaleId = Number.isFinite(nextDraftSaleId) && nextDraftSaleId > 0 ? nextDraftSaleId : null
     const currentDraftSaleId = Number(draftSaleIdRef.current)
+
+    if (source === 'restore' && Number.isFinite(syncVersion) && syncVersion < cartMutationVersionRef.current) {
+      return false
+    }
 
     if (
       !allowDraftSwitch
@@ -1371,7 +1427,7 @@ export default function Sales() {
 
   function clearRouteScanParam() {
     if (location.pathname !== '/sales') return
-    clearSalesQueryParams(['scan'])
+    clearSalesQueryParams(['scan', 'draft_sale_id', 'sale_id'])
   }
 
   function setActiveTab(nextTab) {
@@ -1388,19 +1444,23 @@ export default function Sales() {
     const apiMessage = String(err?.response?.data?.error || '').trim()
     if (apiMessage === 'unknown product') return 'Code not registered'
     if (apiMessage === 'invalid code') return 'Invalid scan code'
-    if (apiMessage === 'draft stock limit reached') return 'Item is already in the current POS draft at the stock limit.'
+    if (apiMessage === 'draft stock limit reached') {
+      const remaining = Number(err?.response?.data?.meta?.remaining_available)
+      if (Number.isFinite(remaining)) return `Item is already at the stock limit for this sale. Remaining available: ${Math.max(remaining, 0)}.`
+      return 'Item is already at the stock limit for this sale.'
+    }
     if (apiMessage === 'out of stock') return 'Cannot add more. Stock limit reached.'
-    return apiMessage || fallbackMessage
+    return apiMessage || String(err?.message || '').trim() || fallbackMessage
   }
 
-  async function ensureDraftSaleReady(forceNew = false) {
+  async function ensureDraftSaleReady(forceNew = false, syncVersion = cartMutationVersionRef.current) {
     const activeDraftSaleId = forceNew ? null : Number(draftSaleIdRef.current)
     if (Number.isFinite(activeDraftSaleId) && activeDraftSaleId > 0) {
-      if (cart.length > 0) return activeDraftSaleId
+      if (cartItemsRef.current.length > 0) return activeDraftSaleId
 
       try {
         const restored = await api.post('/sales/drafts', { sale_id: activeDraftSaleId })
-        syncCartFromSale(restored.data)
+        syncCartFromSale(restored.data, { source: 'restore', version: syncVersion })
         return Number(restored?.data?.id) || activeDraftSaleId
       } catch (restoreErr) {
         const apiMessage = String(restoreErr?.response?.data?.error || '').trim()
@@ -1413,12 +1473,11 @@ export default function Sales() {
     }
 
     if (!forceNew) {
-      const savedDraftRaw = localStorage.getItem(POS_DRAFT_ID_STORAGE_KEY)
-      const savedDraftId = Number(savedDraftRaw)
-      if (Number.isFinite(savedDraftId) && savedDraftId > 0) {
+      const savedDraftId = readStoredPosDraftId()
+      if (savedDraftId) {
         try {
           const restored = await api.post('/sales/drafts', { sale_id: savedDraftId })
-          syncCartFromSale(restored.data)
+          syncCartFromSale(restored.data, { source: 'restore', version: syncVersion })
           return Number(restored?.data?.id) || savedDraftId
         } catch (restoreErr) {
           const apiMessage = String(restoreErr?.response?.data?.error || '').trim()
@@ -1430,27 +1489,69 @@ export default function Sales() {
       }
     }
 
-    // If no active or saved draft was restored, always start a fresh draft.
-    // This prevents reusing stale server-side drafts that can reserve stock invisibly.
-    const res = await api.post('/sales/drafts', { force_new: true })
-    syncCartFromSale(res.data)
+    const shouldForceNewDraft = forceNew || consumeNextPosDraftAsNew()
+    const res = await api.post('/sales/drafts', shouldForceNewDraft ? { force_new: true } : {})
+    syncCartFromSale(res.data, { source: 'mutation', version: syncVersion })
     return res.data?.id
   }
 
   async function postDraftItem(payload) {
+    const syncVersion = cartMutationVersionRef.current + 1
+    cartMutationVersionRef.current = syncVersion
+
     try {
-      const saleId = await ensureDraftSaleReady()
+      const saleId = await ensureDraftSaleReady(false, syncVersion)
       const res = await api.post(`/sales/${saleId}/items`, payload)
-      syncCartFromSale(res.data?.sale)
+      syncCartFromSale(res.data?.sale, { source: 'mutation', version: syncVersion })
       return res.data
     } catch (err) {
       if (String(err?.response?.data?.error || '').trim() !== 'draft sale not found') throw err
       draftSaleIdRef.current = null
       setDraftSaleId(null)
-      const saleId = await ensureDraftSaleReady(true)
+      const retryVersion = cartMutationVersionRef.current + 1
+      cartMutationVersionRef.current = retryVersion
+      const saleId = await ensureDraftSaleReady(true, retryVersion)
       const res = await api.post(`/sales/${saleId}/items`, payload)
-      syncCartFromSale(res.data?.sale)
+      syncCartFromSale(res.data?.sale, { source: 'mutation', version: retryVersion })
       return res.data
+    }
+  }
+
+  async function resolveProductForScannedCode(normalizedCode) {
+    const localProduct = findProductByExactScanCode(products, normalizedCode)
+    if (localProduct) return localProduct
+
+    try {
+      const response = await api.get(`/products/by-code/${encodeURIComponent(normalizedCode)}`)
+      return response?.data || null
+    } catch {
+      return null
+    }
+  }
+
+  async function assertScannedProductCanBeAdded(normalizedCode, quantity) {
+    const product = await resolveProductForScannedCode(normalizedCode)
+    const productId = Number(product?.id)
+    if (!Number.isFinite(productId) || productId <= 0) return
+
+    const availableStock = Math.max(0, Math.floor(num(product?.stock_quantity)))
+    const alreadyInDraft = cartQty(productId)
+    const requestedQty = Math.max(1, Math.floor(num(quantity, 1)))
+    if (alreadyInDraft + requestedQty <= availableStock) return
+
+    const remaining = Math.max(availableStock - alreadyInDraft, 0)
+    throw new Error(`${product?.name || normalizedCode} is already at the stock limit for this sale. Remaining available: ${remaining}.`)
+  }
+
+  async function restoreActiveDraftBeforeStockCheck() {
+    const saleId = Number(draftSaleIdRef.current)
+    if (!Number.isFinite(saleId) || saleId <= 0 || cartItemsRef.current.length > 0) return
+
+    try {
+      const response = await api.post('/sales/drafts', { sale_id: saleId })
+      syncCartFromSale(response.data, { source: 'restore', version: cartMutationVersionRef.current })
+    } catch {
+      return
     }
   }
 
@@ -1561,6 +1662,7 @@ export default function Sales() {
   }
 
   function resetDraft() {
+    cartMutationVersionRef.current += 1
     draftSaleIdRef.current = null
     setDraftSaleId(null)
     setPendingOrder(null)
@@ -1581,6 +1683,7 @@ export default function Sales() {
     clearGlobalScanBuffer()
     lastScanRef.current = { code: '', at: 0 }
     clearStoredPosDraftSnapshot()
+    markNextPosDraftAsNew()
   }
 
   async function clearAllCart() {
@@ -1620,8 +1723,8 @@ export default function Sales() {
       return
     }
 
-    // Clear the field before awaiting the API so consecutive scanner reads do not concatenate.
     setScanValue('')
+    if (scanInputRef.current) scanInputRef.current.value = ''
 
     try {
       const response = await addToCart({ code: normalizedCode }, 1, { clearMessages: false, source: 'scan' })
@@ -1670,6 +1773,10 @@ export default function Sales() {
       if (clearMessages) clearMsg()
       setLoading(true)
       try {
+        if (normalizedCode) {
+          await restoreActiveDraftBeforeStockCheck()
+          await assertScannedProductCanBeAdded(normalizedCode, normalizedQuantity)
+        }
         return await postDraftItem(payload)
       } finally {
         setLoading(false)
@@ -1713,10 +1820,12 @@ export default function Sales() {
     try {
       clearMsg()
       setLoading(true)
+      const syncVersion = cartMutationVersionRef.current + 1
+      cartMutationVersionRef.current = syncVersion
       const res = await api.put(`/sales/${draftSaleId}/items/${item.id}`, {
         quantity: Math.max(1, num(nextQty, 1))
       })
-      syncCartFromSale(res.data?.sale)
+      syncCartFromSale(res.data?.sale, { source: 'mutation', version: syncVersion })
     } catch (err) {
       setError(salesErrorMessage(err, 'Failed to update cart quantity'))
     } finally {
@@ -1736,11 +1845,13 @@ export default function Sales() {
     try {
       clearMsg()
       setLoading(true)
+      const syncVersion = cartMutationVersionRef.current + 1
+      cartMutationVersionRef.current = syncVersion
       const res = await api.put(`/sales/${draftSaleId}/items/${item.id}`, {
         quantity: item.quantity,
         unit_price: round(value)
       })
-      syncCartFromSale(res.data?.sale)
+      syncCartFromSale(res.data?.sale, { source: 'mutation', version: syncVersion })
     } catch (err) {
       setError(salesErrorMessage(err, 'Failed to update item price'))
     } finally {
@@ -1756,8 +1867,10 @@ export default function Sales() {
     try {
       clearMsg()
       setLoading(true)
+      const syncVersion = cartMutationVersionRef.current + 1
+      cartMutationVersionRef.current = syncVersion
       const res = await api.delete(`/sales/${draftSaleId}/items/${item.id}`)
-      syncCartFromSale(res.data?.sale)
+      syncCartFromSale(res.data?.sale, { source: 'mutation', version: syncVersion })
     } catch (err) {
       setError(salesErrorMessage(err, 'Failed to remove cart item'))
     } finally {
@@ -1780,8 +1893,10 @@ export default function Sales() {
 
     try {
       setLoading(true)
+      const syncVersion = cartMutationVersionRef.current + 1
+      cartMutationVersionRef.current = syncVersion
       const sale = (await api.patch(`/sales/drafts/${saleId}/customer`, { customer_id: normalizedCustomerId })).data
-      syncCartFromSale(sale)
+      syncCartFromSale(sale, { source: 'mutation', version: syncVersion })
       flash(normalizedCustomerId ? 'Buying customer saved for this sale.' : 'Buying customer set to walk-in.')
     } catch (err) {
       setError(err?.response?.data?.error || 'Failed to update buying customer')

@@ -33,7 +33,7 @@ const NAV_ITEMS = [
     to: '/purchasing',
     label: 'Purchasing',
     icon: 'BL',
-    perm: ['inventory.view', 'inventory.receive', 'reports.view', 'finance.reports.view'],
+    perm: ['purchase.view', 'purchase.create', 'purchase.update', 'purchase.delete', 'purchase.receive', 'inventory.view', 'inventory.receive', 'reports.view', 'finance.reports.view'],
     children: [
       { to: '/purchasing', tab: 'bale-purchases', label: 'Bale Purchases' },
       { to: '/purchasing', tab: 'bale-breakdowns', label: 'Bale Breakdown' }
