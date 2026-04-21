@@ -7,6 +7,9 @@ export default function Dashboard() {
   const name = user ? (user.full_name || user.username) : 'Administrator'
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
+  const userRoles = Array.isArray(user?.roles) ? user.roles : []
+  const isSalesClerk = (stats?.dashboard_profile === 'sales_clerk')
+    || userRoles.some((roleName) => String(roleName || '').trim().toLowerCase() === 'sales clerk')
 
   const now = new Date()
   const timeStr = now.toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
@@ -61,21 +64,31 @@ export default function Dashboard() {
   const monthlyBalesCount = stats ? (stats.bales_month_count ?? stats.bales_30d_count) : 0
   const monthlyBaleSpend = stats ? (stats.bale_spend_month ?? stats.bale_spend_30d) : 0
 
-  const cards = stats ? [
-    { title: 'Total Sales', value: fmtMoney(stats.total_sales), sub: `${fmt(stats.total_orders)} orders all time`, icon: '\uD83E\uDDFE' },
-    { title: "Today's Sales", value: fmtMoney(stats.today_sales), sub: `${fmt(stats.today_orders)} orders today`, icon: '\uD83D\uDCCA' },
-    { title: 'Products', value: fmt(stats.products_count), sub: 'Active in catalog', icon: '\uD83D\uDC57' },
-    { title: 'Low Stock', value: fmt(stats.low_stock_count), sub: 'Need restocking', icon: '\uD83D\uDCE6' },
-    { title: 'Bales Purchased (This Month)', value: fmt(monthlyBalesCount), sub: 'Auto resets every month', icon: '\uD83E\uDDFA' },
-    { title: 'Bale Spend (This Month)', value: fmtMoney(monthlyBaleSpend), sub: 'Updates from Bale Purchases', icon: '\uD83D\uDCB8' },
-  ] : [
-    { title: 'Total Sales', value: '-', sub: 'Loading...', icon: '\uD83E\uDDFE' },
-    { title: "Today's Sales", value: '-', sub: 'Loading...', icon: '\uD83D\uDCCA' },
-    { title: 'Products', value: '-', sub: 'Loading...', icon: '\uD83D\uDC57' },
-    { title: 'Low Stock', value: '-', sub: 'Loading...', icon: '\uD83D\uDCE6' },
-    { title: 'Bales Purchased (This Month)', value: '-', sub: 'Loading...', icon: '\uD83E\uDDFA' },
-    { title: 'Bale Spend (This Month)', value: '-', sub: 'Loading...', icon: '\uD83D\uDCB8' },
-  ]
+  const cards = isSalesClerk
+    ? (stats ? [
+        { title: "Today's Sales", value: fmtMoney(stats.today_sales), sub: `${fmt(stats.today_orders)} orders today`, icon: '\uD83D\uDCCA' },
+        { title: 'Products', value: fmt(stats.products_count), sub: 'Active in catalog', icon: '\uD83D\uDC57' },
+        { title: 'Low Stock', value: fmt(stats.low_stock_count), sub: 'Need restocking', icon: '\uD83D\uDCE6' },
+      ] : [
+        { title: "Today's Sales", value: '-', sub: 'Loading...', icon: '\uD83D\uDCCA' },
+        { title: 'Products', value: '-', sub: 'Loading...', icon: '\uD83D\uDC57' },
+        { title: 'Low Stock', value: '-', sub: 'Loading...', icon: '\uD83D\uDCE6' },
+      ])
+    : (stats ? [
+        { title: 'Total Sales', value: fmtMoney(stats.total_sales), sub: `${fmt(stats.total_orders)} orders all time`, icon: '\uD83E\uDDFE' },
+        { title: "Today's Sales", value: fmtMoney(stats.today_sales), sub: `${fmt(stats.today_orders)} orders today`, icon: '\uD83D\uDCCA' },
+        { title: 'Products', value: fmt(stats.products_count), sub: 'Active in catalog', icon: '\uD83D\uDC57' },
+        { title: 'Low Stock', value: fmt(stats.low_stock_count), sub: 'Need restocking', icon: '\uD83D\uDCE6' },
+        { title: 'Bales Purchased (This Month)', value: fmt(monthlyBalesCount), sub: 'Auto resets every month', icon: '\uD83E\uDDFA' },
+        { title: 'Bale Spend (This Month)', value: fmtMoney(monthlyBaleSpend), sub: 'Updates from Bale Purchases', icon: '\uD83D\uDCB8' },
+      ] : [
+        { title: 'Total Sales', value: '-', sub: 'Loading...', icon: '\uD83E\uDDFE' },
+        { title: "Today's Sales", value: '-', sub: 'Loading...', icon: '\uD83D\uDCCA' },
+        { title: 'Products', value: '-', sub: 'Loading...', icon: '\uD83D\uDC57' },
+        { title: 'Low Stock', value: '-', sub: 'Loading...', icon: '\uD83D\uDCE6' },
+        { title: 'Bales Purchased (This Month)', value: '-', sub: 'Loading...', icon: '\uD83E\uDDFA' },
+        { title: 'Bale Spend (This Month)', value: '-', sub: 'Loading...', icon: '\uD83D\uDCB8' },
+      ])
 
   return React.createElement('div', null,
     // Page Header
@@ -139,7 +152,7 @@ export default function Dashboard() {
     stats && stats.top_products && stats.top_products.length > 0 &&
     React.createElement('div', { className: 'card mb-4' },
       React.createElement('div', { className: 'card-header' },
-        React.createElement('h3', null, 'Top Products (Last 30 Days)'),
+        React.createElement('h3', null, isSalesClerk ? 'Top Products' : 'Top Products (Last 30 Days)'),
         React.createElement('span', { className: 'badge badge-primary' }, 'Bestsellers')
       ),
       React.createElement('div', { className: 'table-wrap' },
@@ -165,7 +178,7 @@ export default function Dashboard() {
     ),
 
     // Info Banner
-    React.createElement('div', { className: 'card', style: { marginTop: '24px', background: 'linear-gradient(135deg, var(--sidebar-bg) 0%, #3A2F25 100%)', border: 'none', color: 'var(--sidebar-text)' } },
+    !isSalesClerk && React.createElement('div', { className: 'card', style: { marginTop: '24px', background: 'linear-gradient(135deg, var(--sidebar-bg) 0%, #3A2F25 100%)', border: 'none', color: 'var(--sidebar-text)' } },
       React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '24px' } },
         React.createElement('div', null,
           React.createElement('h3', { style: { color: 'var(--tan)', fontFamily: 'Cormorant Garamond, serif', fontSize: '24px', margin: '0 0 8px 0' } }, "Cecille's N'Style POS"),

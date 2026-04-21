@@ -3,7 +3,7 @@ import api from '../api/api.js'
 
 const ROLE_TEMPLATES = {
   Cashier: ['products.view', 'inventory.view', 'sales.view', 'sales.create', 'sales.print_receipt', 'customers.view', 'customers.create'],
-  'Warehouse Manager': ['products.view', 'products.create', 'products.update', 'inventory.view', 'inventory.receive', 'inventory.dispatch', 'inventory.adjust', 'inventory.reconcile', 'suppliers.view', 'suppliers.create'],
+  'Warehouse Manager': ['products.view', 'products.create', 'products.update', 'inventory.view', 'inventory.dispatch', 'inventory.adjust', 'inventory.reconcile', 'purchase.view', 'purchase.create', 'purchase.update', 'purchase.delete', 'purchase.receive', 'suppliers.view', 'suppliers.create'],
   Admin: ['admin.*']
 }
 
@@ -13,7 +13,7 @@ const GROUPS = {
   inventory: { title: 'Inventory', description: 'Stock movement, reconciliation, and low-stock management', accent: '#0f766e', order: 3 },
   catalog: { title: 'Catalog', description: 'Product records, imports, and exports', accent: '#2563eb', order: 4 },
   customers: { title: 'Customers', description: 'Customer profiles and relationship data', accent: '#ea580c', order: 5 },
-  purchasing: { title: 'Suppliers & Purchasing', description: 'Suppliers and purchase-order workflow', accent: '#4f46e5', order: 6 },
+  purchasing: { title: 'Suppliers & Purchasing', description: 'Suppliers and purchase workflow', accent: '#4f46e5', order: 6 },
   staff: { title: 'Staff & Attendance', description: 'Employee records and attendance tracking', accent: '#059669', order: 7 },
   finance: { title: 'Finance', description: 'Payroll and finance reporting', accent: '#b45309', order: 8 },
   reports: { title: 'Reports', description: 'Operational and analytics reports', accent: '#1d4ed8', order: 9 },
@@ -31,6 +31,7 @@ const PREFIX_TO_GROUP = {
   products: 'catalog',
   customers: 'customers',
   suppliers: 'purchasing',
+  purchase: 'purchasing',
   purchase_orders: 'purchasing',
   employees: 'staff',
   attendance: 'staff',
@@ -48,7 +49,8 @@ const SUBJECTS = {
   sales: 'sales history',
   customers: 'customers',
   suppliers: 'suppliers',
-  purchase_orders: 'purchase orders',
+  purchase: 'purchase',
+  purchase_orders: 'purchase',
   employees: 'employee records',
   attendance: 'attendance history',
   payroll: 'payroll',
@@ -62,6 +64,7 @@ const ACTIONS = {
   create: { label: (subject) => `Add ${subject}`, hint: (subject) => `Create new ${subject}.` },
   update: { label: (subject) => `Edit ${subject}`, hint: (subject) => `Update existing ${subject}.` },
   delete: { label: (subject) => `Delete ${subject}`, hint: (subject) => `Remove ${subject} from the system.` },
+  receive: { label: (subject) => `Receive ${subject}`, hint: (subject) => `Mark ${subject} as received in the system.` },
   import: { label: (subject) => `Import ${subject}`, hint: (subject) => `Bring ${subject} in from external files.` },
   export: { label: (subject) => `Export ${subject}`, hint: (subject) => `Download ${subject} for reporting or backup.` }
 }
@@ -84,7 +87,12 @@ const OVERRIDES = {
   'payroll.process': { label: 'Process payroll', hint: 'Run payroll calculations and finalize payouts.' },
   'payroll.adjust': { label: 'Adjust payroll entries', hint: 'Correct payroll values before or after processing.' },
   'finance.reports.view': { label: 'View finance reports', hint: 'Open finance-focused reports for management review.' },
-  'purchase_orders.create': { label: 'Create purchase orders', hint: 'Prepare and issue purchase orders to suppliers.' },
+  'purchase.view': { label: 'View purchase', hint: 'See purchase records and current delivery status.' },
+  'purchase.create': { label: 'Add purchase', hint: 'Create a new purchase record.' },
+  'purchase.update': { label: 'Edit purchase', hint: 'Update an existing purchase record.' },
+  'purchase.delete': { label: 'Delete purchase', hint: 'Remove a purchase record from the system.' },
+  'purchase.receive': { label: 'Receive purchase', hint: 'Mark a purchase as delivered and ready for stock processing.' },
+  'purchase_orders.create': { label: 'Add purchase', hint: 'Create a new purchase record.' },
   'system.health': { label: 'View system health', hint: 'Check the status of system operations and services.' },
   'system.config.update': { label: 'Update system settings', hint: 'Change important configuration values for the system.' },
   'system.audit.view': { label: 'View audit trail', hint: 'Review activity logs and sensitive system events.' }

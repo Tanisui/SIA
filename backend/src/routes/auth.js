@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken')
 const bcrypt = require('bcrypt')
 const { getJwtSecret } = require('../config/security')
 const { logAuditEventSafe } = require('../utils/auditLog')
+const { ensurePurchasingPermissions } = require('../services/purchasingPermissionService')
 
 let hasUsersRoleIdColumnCache = null
 
@@ -40,6 +41,7 @@ async function verifyPassword(storedHash, password) {
 }
 
 async function getUserPermissions(userId) {
+  await ensurePurchasingPermissions()
   const includeDirectRole = await hasUsersRoleIdColumn()
   const roleSql = includeDirectRole
     ? `SELECT id, name FROM roles

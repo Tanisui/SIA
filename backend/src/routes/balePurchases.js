@@ -9,7 +9,11 @@ const { ensureScannerSchema } = require('../services/scannerSchemaService')
 
 const PAYMENT_STATUSES = ['PAID', 'PARTIAL', 'UNPAID']
 const PO_STATUSES = ['PENDING', 'ORDERED', 'RECEIVED', 'COMPLETED', 'CANCELLED']
-const BALE_VIEW_PERMISSIONS = ['inventory.view', 'inventory.receive', 'products.view', 'reports.view', 'finance.reports.view']
+const PURCHASE_VIEW_PERMISSIONS = ['purchase.view', 'purchase.create', 'purchase.update', 'purchase.delete', 'purchase.receive', 'inventory.view', 'inventory.receive', 'products.view', 'reports.view', 'finance.reports.view']
+const PURCHASE_CREATE_PERMISSIONS = ['purchase.create', 'inventory.receive']
+const PURCHASE_UPDATE_PERMISSIONS = ['purchase.update', 'inventory.receive']
+const PURCHASE_DELETE_PERMISSIONS = ['purchase.delete', 'inventory.receive']
+const PURCHASE_RECEIVE_PERMISSIONS = ['purchase.receive', 'inventory.receive']
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
 function isBlank(value) {
@@ -301,7 +305,7 @@ async function getBalePurchaseById(id) {
   return rows[0] || null
 }
 
-router.get('/', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) => {
+router.get('/', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const { from, to, payment_status, search } = req.query
@@ -336,7 +340,7 @@ router.get('/', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) 
   }
 })
 
-router.get('/breakdowns', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) => {
+router.get('/breakdowns', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const { from, to, bale_purchase_id } = req.query
@@ -371,7 +375,7 @@ router.get('/breakdowns', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (
   }
 })
 
-router.get('/:id', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) => {
+router.get('/:id', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const id = asOptionalInt(req.params.id, 'id')
@@ -384,7 +388,7 @@ router.get('/:id', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, re
   }
 })
 
-router.post('/', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
+router.post('/', express.json(), verifyToken, authorize(PURCHASE_CREATE_PERMISSIONS), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const payload = normalizeBalePurchaseInput(req.body, { isUpdate: false })
@@ -441,7 +445,7 @@ router.post('/', express.json(), verifyToken, authorize('inventory.receive'), as
   }
 })
 
-router.put('/:id', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
+router.put('/:id', express.json(), verifyToken, authorize(PURCHASE_UPDATE_PERMISSIONS), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const id = asOptionalInt(req.params.id, 'id')
@@ -512,7 +516,7 @@ router.put('/:id', express.json(), verifyToken, authorize('inventory.receive'), 
   }
 })
 
-router.delete('/:id', verifyToken, authorize('inventory.receive'), async (req, res) => {
+router.delete('/:id', verifyToken, authorize(PURCHASE_DELETE_PERMISSIONS), async (req, res) => {
   const conn = await db.pool.getConnection()
   let committed = false
   let released = false
@@ -565,7 +569,7 @@ router.delete('/:id', verifyToken, authorize('inventory.receive'), async (req, r
   }
 })
 
-router.get('/:id/breakdown', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) => {
+router.get('/:id/breakdown', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const id = asOptionalInt(req.params.id, 'id')
@@ -736,11 +740,11 @@ async function upsertBreakdown(req, res) {
   }
 }
 
-router.post('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
-router.put('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
+router.post('/:id/breakdown', express.json(), verifyToken, authorize(PURCHASE_RECEIVE_PERMISSIONS), upsertBreakdown)
+router.put('/:id/breakdown', express.json(), verifyToken, authorize(PURCHASE_RECEIVE_PERMISSIONS), upsertBreakdown)
 
 // Receive a bale purchase: update receipt totals and keep a generic audit trail entry.
-router.post('/:id/receive', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
+router.post('/:id/receive', express.json(), verifyToken, authorize(PURCHASE_RECEIVE_PERMISSIONS), async (req, res) => {
   const conn = await db.pool.getConnection()
   let committed = false
   let released = false

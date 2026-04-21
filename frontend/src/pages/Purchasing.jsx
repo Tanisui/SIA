@@ -117,18 +117,32 @@ export default function Purchasing() {
     return DEFAULT_PURCHASING_TAB
   }, [location.hash, location.search])
 
-  const canManageBales = Array.isArray(permissions)
-    ? permissions.includes('admin.*') || permissions.includes('inventory.receive')
-    : false
+  const hasAnyPermission = useCallback((requiredPermissions) => {
+    if (!Array.isArray(permissions)) return false
+    if (permissions.includes('admin.*')) return true
+    return requiredPermissions.some((permission) => permissions.includes(permission))
+  }, [permissions])
 
-  const canViewBales = Array.isArray(permissions)
-    ? permissions.includes('admin.*')
-      || permissions.includes('inventory.view')
-      || permissions.includes('inventory.receive')
-      || permissions.includes('products.view')
-      || permissions.includes('reports.view')
-      || permissions.includes('finance.reports.view')
-    : false
+  const canManageBales = hasAnyPermission([
+    'purchase.create',
+    'purchase.update',
+    'purchase.delete',
+    'purchase.receive',
+    'inventory.receive'
+  ])
+
+  const canViewBales = hasAnyPermission([
+    'purchase.view',
+    'purchase.create',
+    'purchase.update',
+    'purchase.delete',
+    'purchase.receive',
+    'inventory.view',
+    'inventory.receive',
+    'products.view',
+    'reports.view',
+    'finance.reports.view'
+  ])
 
   const clearMessages = useCallback(() => {
     setError(null)

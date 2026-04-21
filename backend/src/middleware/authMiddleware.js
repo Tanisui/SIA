@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken')
 const db = require('../database')
 const { getJwtSecret } = require('../config/security')
+const { ensurePurchasingPermissions } = require('../services/purchasingPermissionService')
 
 let hasUsersRoleIdColumnCache = null
 
@@ -19,6 +20,7 @@ async function hasUsersRoleIdColumn() {
 }
 
 async function getUserPermissions(userId){
+  await ensurePurchasingPermissions()
   // Support both schemas: with or without users.role_id
   const includeDirectRole = await hasUsersRoleIdColumn()
   const roleSql = includeDirectRole

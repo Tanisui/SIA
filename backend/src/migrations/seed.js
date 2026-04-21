@@ -45,6 +45,7 @@ async function seed() {
 		'customers.view','customers.create','customers.update','customers.delete',
 
 		'suppliers.view','suppliers.create','suppliers.update','suppliers.delete',
+		'purchase.view','purchase.create','purchase.update','purchase.delete','purchase.receive',
 
 		'employees.view','employees.create','employees.update','employees.delete','attendance.record','attendance.view',
 
@@ -65,6 +66,7 @@ async function seed() {
 		'Manager': [
 			'reports.view','reports.generate','products.view','products.create','products.update',
 			'inventory.view','inventory.receive','inventory.dispatch','inventory.adjust','inventory.reconcile',
+			'purchase.view','purchase.create','purchase.update','purchase.delete','purchase.receive',
 			'suppliers.view','suppliers.create','suppliers.update',
 			'sales.view','sales.create','sales.refund','sales.discount','sales.price_override',
 			'customers.view','customers.create','customers.update',
@@ -77,6 +79,7 @@ async function seed() {
 		],
 		'Inventory Clerk': [
 			'inventory.view','inventory.receive','inventory.dispatch','inventory.adjust',
+			'purchase.view','purchase.create','purchase.update','purchase.delete','purchase.receive',
 			'products.view','products.create','products.update',
 			'suppliers.view'
 		],

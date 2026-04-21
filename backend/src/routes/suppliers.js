@@ -4,8 +4,10 @@ const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 const { logAuditEventSafe } = require('../utils/auditLog')
 
+const SUPPLIER_VIEW_PERMISSIONS = ['suppliers.view', 'purchase.view', 'purchase.create', 'purchase.update', 'purchase.receive', 'inventory.receive']
+
 // List suppliers
-router.get('/', verifyToken, authorize(['suppliers.view', 'inventory.receive']), async (req, res) => {
+router.get('/', verifyToken, authorize(SUPPLIER_VIEW_PERMISSIONS), async (req, res) => {
   try {
     const [rows] = await db.pool.query('SELECT * FROM suppliers ORDER BY name ASC')
     res.json(rows)
@@ -16,7 +18,7 @@ router.get('/', verifyToken, authorize(['suppliers.view', 'inventory.receive']),
 })
 
 // Get single supplier
-router.get('/:id', verifyToken, authorize('suppliers.view'), async (req, res) => {
+router.get('/:id', verifyToken, authorize(SUPPLIER_VIEW_PERMISSIONS), async (req, res) => {
   try {
     const [rows] = await db.pool.query('SELECT * FROM suppliers WHERE id = ? LIMIT 1', [req.params.id])
     if (!rows.length) return res.status(404).json({ error: 'supplier not found' })

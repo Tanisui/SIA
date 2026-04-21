@@ -11,6 +11,24 @@ const fmt = (n) => Number(n || 0).toLocaleString('en-PH', { style: 'currency', c
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
 const normalizeScanCode = (v) => String(v || '').trim().toUpperCase()
 
+function readStoredPosDraftCart() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem('pos_draft_sale_snapshot') || '{}')
+    return Array.isArray(parsed?.cart) ? parsed.cart : []
+  } catch {
+    return []
+  }
+}
+
+function posDraftQuantityForProduct(productId) {
+  const normalizedProductId = Number(productId)
+  if (!Number.isFinite(normalizedProductId) || normalizedProductId <= 0) return 0
+
+  return readStoredPosDraftCart().reduce((sum, item) => (
+    Number(item?.product_id) === normalizedProductId ? sum + Math.max(0, Number(item?.quantity) || 0) : sum
+  ), 0)
+}
+
 function formatDateStackParts(value) {
   const parsedValue = value ? new Date(value) : null
   if (!parsedValue || Number.isNaN(parsedValue.getTime())) return { date: '—', time: '' }
@@ -1065,11 +1083,16 @@ export default function Inventory() {
 
   const productAvailableForPos = useCallback((product) => {
     const availableStock = Number(product?.stock_quantity || 0)
-    if (availableStock > 0) return true
+    const alreadyInDraft = posDraftQuantityForProduct(product?.id)
+    if (availableStock > 0 && alreadyInDraft < availableStock) return true
 
     const productName = String(product?.name || product?.barcode || 'Selected product').trim()
     clearMessages()
-    setError(`0 stock: ${productName} will not be sent to Sales`)
+    if (availableStock <= 0) {
+      setError(`0 stock: ${productName} will not be sent to Sales`)
+    } else {
+      setError(`${productName} is already at the stock limit in the current Sales draft`)
+    }
     return false
   }, [])
 
@@ -1082,7 +1105,12 @@ export default function Inventory() {
     if (!productAvailableForPos(product)) return false
 
     closeQrPreview()
-    navigate(`/sales?scan=${encodeURIComponent(normalizedCode)}`, { preventScrollReset: true })
+    const params = new URLSearchParams({ scan: normalizedCode })
+    const draftSaleId = Number(localStorage.getItem('pos_draft_sale_id'))
+    if (Number.isFinite(draftSaleId) && draftSaleId > 0) {
+      params.set('draft_sale_id', String(draftSaleId))
+    }
+    navigate(`/sales?${params.toString()}`, { preventScrollReset: true })
     return true
   }, [closeQrPreview, navigate, productAvailableForPos])
 

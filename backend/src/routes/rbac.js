@@ -1,9 +1,11 @@
 const express = require('express')
 const router = express.Router()
 const db = require('../database')
+const { ensurePurchasingPermissions } = require('../services/purchasingPermissionService')
 
 router.get('/permissions', async (req, res) => {
   try {
+    await ensurePurchasingPermissions()
     const [rows] = await db.pool.query('SELECT id, name, description FROM permissions ORDER BY name')
     res.json({ permissions: rows })
   } catch (err) {
@@ -14,6 +16,7 @@ router.get('/permissions', async (req, res) => {
 
 router.get('/roles', async (req, res) => {
   try {
+    await ensurePurchasingPermissions()
     const [roles] = await db.pool.query('SELECT id, name, description FROM roles ORDER BY name')
     const result = []
     for (const role of roles) {

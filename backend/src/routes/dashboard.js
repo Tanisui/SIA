@@ -1,21 +1,19 @@
 const express = require('express')
 const router = express.Router()
 const db = require('../database')
-const { verifyToken } = require('../middleware/authMiddleware')
+const { verifyToken, getUserPermissions } = require('../middleware/authMiddleware')
 
 // Dashboard summary stats
 router.get('/stats', verifyToken, async (req, res) => {
   try {
     const results = {}
+    const permissionInfo = await getUserPermissions(req.auth.id)
+    const roleNames = Array.isArray(permissionInfo?.roles) ? permissionInfo.roles : []
+    const isSalesClerk = roleNames.some((roleName) => String(roleName || '').trim().toLowerCase() === 'sales clerk')
 
-    // Total sales (all time revenue)
-    const [salesTotal] = await db.pool.query(
-      `SELECT COALESCE(SUM(total), 0) AS total_sales, COUNT(*) AS total_orders FROM sales WHERE status = 'COMPLETED'`
-    )
-    results.total_sales = parseFloat(salesTotal[0].total_sales) || 0
-    results.total_orders = salesTotal[0].total_orders || 0
+    results.dashboard_profile = isSalesClerk ? 'sales_clerk' : 'default'
 
-    // Today's sales
+    // Cards visible to every dashboard profile
     const [todaySales] = await db.pool.query(
       `SELECT COALESCE(SUM(total), 0) AS today_sales, COUNT(*) AS today_orders
        FROM sales WHERE status = 'COMPLETED' AND DATE(date) = CURDATE()`
@@ -35,56 +33,64 @@ router.get('/stats', verifyToken, async (req, res) => {
     )
     results.low_stock_count = lowStock[0].count || 0
 
-    // Customer count
-    const [custCount] = await db.pool.query(
-      `SELECT COUNT(*) AS count FROM customers`
-    )
-    results.customers_count = custCount[0].count || 0
-
-    // Active employees count
-    const [empCount] = await db.pool.query(
-      `SELECT COUNT(*) AS count FROM employees WHERE employment_status = 'ACTIVE'`
-    )
-    results.employees_count = empCount[0].count || 0
-
-    // Pending payroll count
-    const [pendingPayroll] = await db.pool.query(
-      `SELECT COUNT(*) AS count, COALESCE(SUM(net_pay), 0) AS total FROM payrolls WHERE status = 'PENDING'`
-    )
-    results.pending_payroll_count = pendingPayroll[0].count || 0
-    results.pending_payroll_total = parseFloat(pendingPayroll[0].total) || 0
-
-    // Lean bale snapshot (current calendar month)
-    results.bales_month_count = 0
-    results.bale_spend_month = 0
-    // Backward-compatible aliases for existing frontend fields.
-    results.bales_30d_count = 0
-    results.bale_spend_30d = 0
-
-    try {
-      const [baleSnapshot] = await db.pool.query(
-        `SELECT
-           COALESCE(SUM(
-             CASE WHEN bp.purchase_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
-                    AND bp.purchase_date < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)
-               THEN 1 ELSE 0 END
-           ), 0) AS bales_month_count,
-           COALESCE(SUM(
-             CASE WHEN bp.purchase_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
-                    AND bp.purchase_date < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)
-               THEN COALESCE(bp.total_purchase_cost, bp.bale_cost, 0)
-               ELSE 0
-             END
-           ), 0) AS bale_spend_month
-         FROM bale_purchases bp`
+    if (!isSalesClerk) {
+      // Total sales (all time revenue)
+      const [salesTotal] = await db.pool.query(
+        `SELECT COALESCE(SUM(total), 0) AS total_sales, COUNT(*) AS total_orders FROM sales WHERE status = 'COMPLETED'`
       )
-      results.bales_month_count = Number(baleSnapshot[0]?.bales_month_count) || 0
-      results.bale_spend_month = parseFloat(baleSnapshot[0]?.bale_spend_month) || 0
-      results.bales_30d_count = results.bales_month_count
-      results.bale_spend_30d = results.bale_spend_month
-    } catch (err) {
-      if (err?.code !== 'ER_NO_SUCH_TABLE') {
-        console.error('dashboard bale month snapshot query error:', err)
+      results.total_sales = parseFloat(salesTotal[0].total_sales) || 0
+      results.total_orders = salesTotal[0].total_orders || 0
+
+      // Customer count
+      const [custCount] = await db.pool.query(
+        `SELECT COUNT(*) AS count FROM customers`
+      )
+      results.customers_count = custCount[0].count || 0
+
+      // Active employees count
+      const [empCount] = await db.pool.query(
+        `SELECT COUNT(*) AS count FROM employees WHERE employment_status = 'ACTIVE'`
+      )
+      results.employees_count = empCount[0].count || 0
+
+      // Pending payroll count
+      const [pendingPayroll] = await db.pool.query(
+        `SELECT COUNT(*) AS count, COALESCE(SUM(net_pay), 0) AS total FROM payrolls WHERE status = 'PENDING'`
+      )
+      results.pending_payroll_count = pendingPayroll[0].count || 0
+      results.pending_payroll_total = parseFloat(pendingPayroll[0].total) || 0
+
+      // Lean bale snapshot (current calendar month)
+      results.bales_month_count = 0
+      results.bale_spend_month = 0
+      results.bales_30d_count = 0
+      results.bale_spend_30d = 0
+
+      try {
+        const [baleSnapshot] = await db.pool.query(
+          `SELECT
+             COALESCE(SUM(
+               CASE WHEN bp.purchase_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+                      AND bp.purchase_date < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)
+                 THEN 1 ELSE 0 END
+             ), 0) AS bales_month_count,
+             COALESCE(SUM(
+               CASE WHEN bp.purchase_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+                      AND bp.purchase_date < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)
+                 THEN COALESCE(bp.total_purchase_cost, bp.bale_cost, 0)
+                 ELSE 0
+               END
+             ), 0) AS bale_spend_month
+           FROM bale_purchases bp`
+        )
+        results.bales_month_count = Number(baleSnapshot[0]?.bales_month_count) || 0
+        results.bale_spend_month = parseFloat(baleSnapshot[0]?.bale_spend_month) || 0
+        results.bales_30d_count = results.bales_month_count
+        results.bale_spend_30d = results.bale_spend_month
+      } catch (err) {
+        if (err?.code !== 'ER_NO_SUCH_TABLE') {
+          console.error('dashboard bale month snapshot query error:', err)
+        }
       }
     }
 
