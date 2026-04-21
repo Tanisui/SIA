@@ -24,6 +24,7 @@ const categoriesRoutes = require('./src/routes/categories')
 const expensesRoutes = require('./src/routes/expenses')
 const dashboardRoutes = require('./src/routes/dashboard')
 const ledgerRoutes = require('./src/routes/ledger')
+const payrollRoutes = require('./src/routes/payroll.routes')
 
 const PORT = process.env.PORT || 3000
 
@@ -62,6 +63,7 @@ app.use('/categories', categoriesRoutes)
 app.use('/expenses', expensesRoutes)
 app.use('/dashboard', dashboardRoutes)
 app.use('/ledger', ledgerRoutes)
+app.use('/api/payroll', payrollRoutes)
 
 app.get('/', async (req, res) => {
   try {

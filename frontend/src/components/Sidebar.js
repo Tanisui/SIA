@@ -41,6 +41,17 @@ const NAV_ITEMS = [
   },
   { section: 'Finance' },
   {
+    to: '/payroll/periods',
+    label: 'Payroll',
+    icon: 'PY',
+    perm: ['payroll.view', 'payroll.profile.view', 'payroll.period.view', 'payroll.report.view', 'payroll.payslip.view', 'payroll.payslip.view_own'],
+    children: [
+      { to: '/payroll/periods', label: 'Periods' },
+      { to: '/payroll/profiles', label: 'Profiles' },
+      { to: '/payroll/reports', label: 'Reports' }
+    ]
+  },
+  {
     to: '/reports',
     label: 'Reports',
     icon: 'RP',
@@ -94,7 +105,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }) {
     const activeParent = visibleItems.find((item) =>
       !item.section &&
       item.children &&
-      item.to === location.pathname
+      (item.to === location.pathname || item.children.some((child) => child.to === location.pathname))
     )
     if (!activeParent) return
     setOpenMenus((prev) => {
@@ -148,7 +159,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }) {
 
           if (item.children) {
             const menuOpen = Boolean(openMenus[item.to])
-            const parentActive = location.pathname === item.to
+            const parentActive = location.pathname === item.to || item.children.some((child) => child.to === location.pathname)
             const submenuId = `sidebar-submenu-${item.to.replace(/[^a-z0-9]/gi, '-').replace(/^-+|-+$/g, '')}`
             const parentClasses = `sidebar-link sidebar-link-parent ${parentActive ? 'active' : ''} ${menuOpen ? 'is-open' : ''}`.trim()
 
