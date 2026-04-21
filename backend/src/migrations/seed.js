@@ -49,7 +49,13 @@ async function seed() {
 
 		'employees.view','employees.create','employees.update','employees.delete','attendance.record','attendance.view',
 
-		'payroll.view','payroll.process','payroll.adjust','payroll.export','finance.reports.view',
+		'payroll.view','payroll.process','payroll.adjust','payroll.export',
+		'payroll.profile.view','payroll.profile.create','payroll.profile.update',
+		'payroll.period.view','payroll.period.create','payroll.period.compute','payroll.period.finalize','payroll.period.release','payroll.period.void',
+		'payroll.settings.view','payroll.settings.update',
+		'payroll.report.view','payroll.report.export',
+		'payroll.payslip.view','payroll.payslip.view_own',
+		'finance.reports.view',
 
 		'reports.view','reports.generate','reports.export',
 
@@ -70,7 +76,9 @@ async function seed() {
 			'suppliers.view','suppliers.create','suppliers.update',
 			'sales.view','sales.create','sales.refund','sales.discount','sales.price_override',
 			'customers.view','customers.create','customers.update',
-			'payroll.view'
+			'payroll.view','payroll.profile.view','payroll.profile.create','payroll.profile.update',
+			'payroll.period.view','payroll.period.create','payroll.period.compute','payroll.period.finalize','payroll.period.release','payroll.period.void',
+			'payroll.settings.view','payroll.settings.update','payroll.report.view','payroll.report.export','payroll.payslip.view'
 		],
 		'Sales Clerk': [
 			'sales.create','sales.view','sales.print_receipt','sales.refund',
@@ -84,10 +92,14 @@ async function seed() {
 			'suppliers.view'
 		],
 		'Accountant': [
-			'payroll.view','payroll.process','payroll.export','finance.reports.view','reports.view'
+			'payroll.view','payroll.process','payroll.export','finance.reports.view','reports.view',
+			'payroll.profile.view','payroll.profile.create','payroll.profile.update',
+			'payroll.period.view','payroll.period.create','payroll.period.compute','payroll.period.finalize','payroll.period.release','payroll.period.void',
+			'payroll.settings.view','payroll.settings.update','payroll.report.view','payroll.report.export','payroll.payslip.view'
 		],
 		'HR': [
-			'employees.view','employees.create','employees.update','attendance.record','attendance.view'
+			'employees.view','employees.create','employees.update','attendance.record','attendance.view',
+			'payroll.view','payroll.profile.view','payroll.profile.create','payroll.profile.update','payroll.payslip.view_own'
 		],
 		'Auditor': ['reports.view','reports.export','system.audit.view'],
 		'Supplier': ['suppliers.view']

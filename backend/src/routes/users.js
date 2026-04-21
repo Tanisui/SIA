@@ -18,6 +18,7 @@ const EMPLOYMENT_TYPES = ['PROBATIONARY', 'REGULAR', 'CONTRACTUAL', 'PART_TIME',
 const EMPLOYMENT_STATUSES = ['ACTIVE', 'INACTIVE', 'TERMINATED']
 const PAY_BASES = ['DAILY', 'MONTHLY']
 const PAYROLL_METHODS = ['CASH', 'BANK_TRANSFER', 'E_WALLET']
+const PAYROLL_FREQUENCIES = ['WEEKLY', 'SEMI_MONTHLY', 'MONTHLY']
 const ALLOWED_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png'])
 const ALLOWED_EXTENSIONS = new Set(['.pdf', '.jpg', '.jpeg', '.png'])
 const EMPLOYEE_DOCUMENT_TYPES = [
@@ -94,12 +95,30 @@ const EMPLOYEE_PROFILE_KEYS = [
   'contact_type',
   'contact'
 ]
+const PAYROLL_PROFILE_SELECT_COLUMNS = [
+  'id',
+  'user_id',
+  'employment_type',
+  'pay_basis',
+  'pay_rate',
+  'payroll_frequency',
+  'overtime_eligible',
+  'late_deduction_enabled',
+  'undertime_deduction_enabled',
+  'tax_enabled',
+  'sss_enabled',
+  'philhealth_enabled',
+  'pagibig_enabled',
+  'payroll_method',
+  'status'
+]
 
 let ensureEmployeeSchemaPromise = null
 let hasUsersRoleIdColumnCache = null
 let hasUsersEmployeeIdColumnCache = null
 let hasEmployeesEmailColumnCache = null
 let hasEmployeesUserIdColumnCache = null
+let hasPayrollProfilesTableCache = null
 
 async function ensureDirectory(targetPath) {
   await fs.mkdir(targetPath, { recursive: true })
@@ -214,6 +233,21 @@ function normalizeBankDetails(value) {
   return Object.values(details).some(Boolean) ? details : null
 }
 
+function normalizeBooleanFlag(value) {
+  if (value === null || value === undefined || value === '') return null
+  return Number(value) === 1
+}
+
+function hasConfiguredValue(value) {
+  return value !== null && value !== undefined && value !== ''
+}
+
+function hasPositiveRate(value) {
+  if (!hasConfiguredValue(value)) return false
+  const numeric = Number(value)
+  return Number.isFinite(numeric) && numeric > 0
+}
+
 function getProvidedEmployeeKeys(payload = {}) {
   return EMPLOYEE_PROFILE_KEYS.filter((key) => Object.prototype.hasOwnProperty.call(payload, key))
 }
@@ -314,6 +348,18 @@ async function columnExists(tableName, columnName, conn = db.pool) {
   return rows.length > 0
 }
 
+async function tableExists(tableName, conn = db.pool) {
+  const [rows] = await conn.query(
+    `SELECT 1 AS found
+     FROM information_schema.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+     LIMIT 1`,
+    [tableName]
+  )
+  return rows.length > 0
+}
+
 async function hasUsersRoleIdColumn(conn = db.pool) {
   if (hasUsersRoleIdColumnCache !== null) return hasUsersRoleIdColumnCache
   hasUsersRoleIdColumnCache = await columnExists('users', 'role_id', conn)
@@ -336,6 +382,12 @@ async function hasEmployeesUserIdColumn(conn = db.pool) {
   if (hasEmployeesUserIdColumnCache !== null) return hasEmployeesUserIdColumnCache
   hasEmployeesUserIdColumnCache = await columnExists('employees', 'user_id', conn)
   return hasEmployeesUserIdColumnCache
+}
+
+async function hasPayrollProfilesTable(conn = db.pool) {
+  if (hasPayrollProfilesTableCache !== null) return hasPayrollProfilesTableCache
+  hasPayrollProfilesTableCache = await tableExists('payroll_profiles', conn)
+  return hasPayrollProfilesTableCache
 }
 
 async function ensureEmployeeSchema() {
@@ -449,6 +501,22 @@ async function findEmployeeForUser(conn, userRow) {
   return null
 }
 
+async function findPayrollProfileForUser(conn, userId) {
+  const includePayrollProfiles = await hasPayrollProfilesTable(conn)
+  if (!includePayrollProfiles) return null
+
+  const [rows] = await conn.query(
+    `SELECT ${PAYROLL_PROFILE_SELECT_COLUMNS.join(', ')}
+     FROM payroll_profiles
+     WHERE user_id = ?
+     ORDER BY id DESC
+     LIMIT 1`,
+    [userId]
+  )
+
+  return rows[0] || null
+}
+
 function mapEmployeeRow(row) {
   if (!row) return null
   const employee = { ...row }
@@ -457,6 +525,77 @@ function mapEmployeeRow(row) {
   employee.contact = employee.contact || employee.mobile_number || null
   employee.contact_type = employee.contact_type || (employee.contact ? 'Mobile' : null)
   return employee
+}
+
+function mapPayrollProfileRow(row) {
+  if (!row) return null
+  return {
+    ...row,
+    employment_type: normalizeUpperText(row.employment_type),
+    pay_basis: normalizeUpperText(row.pay_basis),
+    payroll_frequency: normalizeEnumValue(row.payroll_frequency, PAYROLL_FREQUENCIES),
+    payroll_method: normalizeEnumValue(row.payroll_method, PAYROLL_METHODS),
+    status: String(row.status || '').trim().toLowerCase() || 'inactive',
+    pay_rate: hasConfiguredValue(row.pay_rate) ? Number(row.pay_rate) : null,
+    overtime_eligible: normalizeBooleanFlag(row.overtime_eligible),
+    late_deduction_enabled: normalizeBooleanFlag(row.late_deduction_enabled),
+    undertime_deduction_enabled: normalizeBooleanFlag(row.undertime_deduction_enabled),
+    tax_enabled: normalizeBooleanFlag(row.tax_enabled),
+    sss_enabled: normalizeBooleanFlag(row.sss_enabled),
+    philhealth_enabled: normalizeBooleanFlag(row.philhealth_enabled),
+    pagibig_enabled: normalizeBooleanFlag(row.pagibig_enabled)
+  }
+}
+
+function buildPayrollOverview(employee = null, payrollProfileRow = null) {
+  const payrollProfile = mapPayrollProfileRow(payrollProfileRow)
+  const payrollEligible = payrollProfile ? payrollProfile.status === 'active' : Boolean(employee)
+  const payBasis = payrollProfile?.pay_basis || normalizeUpperText(employee?.pay_basis)
+  const payRate = hasConfiguredValue(payrollProfile?.pay_rate)
+    ? Number(payrollProfile.pay_rate)
+    : (hasConfiguredValue(employee?.pay_rate) ? Number(employee.pay_rate) : null)
+  const payrollFrequency = payrollProfile?.payroll_frequency || null
+  const employmentType = payrollProfile?.employment_type || normalizeUpperText(employee?.employment_type)
+  const payrollMethod = payrollProfile?.payroll_method || normalizeEnumValue(employee?.payroll_method, PAYROLL_METHODS)
+
+  const deductionFlags = {
+    tax_enabled: payrollProfile ? payrollProfile.tax_enabled : null,
+    sss_enabled: payrollProfile ? payrollProfile.sss_enabled : null,
+    philhealth_enabled: payrollProfile ? payrollProfile.philhealth_enabled : null,
+    pagibig_enabled: payrollProfile ? payrollProfile.pagibig_enabled : null
+  }
+
+  const governmentIdsComplete = Boolean(
+    normalizeText(employee?.tin)
+    && normalizeText(employee?.sss_number)
+    && normalizeText(employee?.philhealth_pin)
+    && normalizeText(employee?.pagibig_mid)
+  )
+
+  const missingFields = []
+  if (payrollEligible) {
+    if (!payBasis) missingFields.push('pay_basis')
+    if (!hasPositiveRate(payRate)) missingFields.push('pay_rate')
+    if (!payrollFrequency) missingFields.push('payroll_frequency')
+    if (!payrollMethod) missingFields.push('payroll_method')
+    for (const [key, value] of Object.entries(deductionFlags)) {
+      if (value === null || value === undefined) missingFields.push(key)
+    }
+  }
+
+  return {
+    profile_id: payrollProfile?.id || null,
+    payroll_eligible: Boolean(payrollEligible),
+    pay_basis: payBasis || null,
+    pay_rate: hasConfiguredValue(payRate) && Number.isFinite(Number(payRate)) ? Number(payRate) : null,
+    payroll_frequency: payrollFrequency || null,
+    employment_type: employmentType || null,
+    payroll_method: payrollMethod || null,
+    deduction_flags: deductionFlags,
+    government_ids_status: governmentIdsComplete ? 'COMPLETE' : 'INCOMPLETE',
+    payroll_profile_status: missingFields.length ? 'INCOMPLETE' : 'COMPLETE',
+    payroll_profile_missing_fields: missingFields
+  }
 }
 
 function serializeDocumentRow(row, userId) {
@@ -540,7 +679,9 @@ async function fetchUserRow(conn, id) {
 async function buildUserResponse(conn, userRow, { includeDocuments = false } = {}) {
   const roles = await getUserRoles(conn, userRow.id, userRow.role_id)
   const employeeRow = await findEmployeeForUser(conn, userRow)
+  const payrollProfileRow = await findPayrollProfileForUser(conn, userRow.id)
   const employee = mapEmployeeRow(employeeRow)
+  const payrollProfile = buildPayrollOverview(employee, payrollProfileRow)
 
   if (employee && includeDocuments) {
     employee.documents = await getEmployeeDocuments(conn, employee.id, userRow.id)
@@ -549,7 +690,11 @@ async function buildUserResponse(conn, userRow, { includeDocuments = false } = {
   return {
     ...userRow,
     roles,
-    employee: employee || null
+    employee: employee || null,
+    payroll_profile: payrollProfile,
+    payroll_eligible: payrollProfile.payroll_eligible,
+    government_ids_status: payrollProfile.government_ids_status,
+    payroll_profile_status: payrollProfile.payroll_profile_status
   }
 }
 
