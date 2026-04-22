@@ -1,24 +1,24 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import api from '../../api/api.js'
-import { formatDate, getErrorMessage, statusBadgeClass, toInputNumber } from './payrollUtils.js'
+import { formatCurrency, formatDate, getErrorMessage, statusBadgeClass, toInputNumber } from './payrollUtils.js'
 
 const inputFields = [
-  ['days_worked', 'Days'],
-  ['hours_worked', 'Hours'],
-  ['overtime_hours', 'OT'],
-  ['late_minutes', 'Late Min'],
-  ['undertime_minutes', 'UT Min'],
-  ['absent_days', 'Absent'],
-  ['regular_holiday_days', 'Reg Hol'],
-  ['special_holiday_days', 'Spec Hol'],
-  ['rest_day_days', 'Rest Day'],
-  ['paid_leave_days', 'Paid Leave'],
-  ['unpaid_leave_days', 'Unpaid Leave'],
-  ['manual_bonus', 'Bonus'],
-  ['manual_commission', 'Commission'],
-  ['manual_allowance', 'Allowance'],
-  ['manual_deduction', 'Deduction']
+  ['days_worked',           'Days Worked'],
+  ['hours_worked',          'Hours Worked'],
+  ['overtime_hours',        'OT Hours'],
+  ['late_minutes',          'Late (min)'],
+  ['undertime_minutes',     'UT (min)'],
+  ['absent_days',           'Absent'],
+  ['regular_holiday_days',  'Reg Holiday'],
+  ['special_holiday_days',  'Spec Holiday'],
+  ['rest_day_days',         'Rest Day'],
+  ['paid_leave_days',       'Paid Leave'],
+  ['unpaid_leave_days',     'Unpaid Leave'],
+  ['manual_bonus',          'Bonus'],
+  ['manual_commission',     'Commission'],
+  ['manual_allowance',      'Allowance'],
+  ['manual_deduction',      'Deduction']
 ]
 
 function rowToDraft(row) {
@@ -26,7 +26,6 @@ function rowToDraft(row) {
   for (const [key] of inputFields) draft[key] = toInputNumber(row[key])
   return draft
 }
-
 function draftToPayload(draft) {
   const payload = { remarks: draft.remarks || null }
   for (const [key] of inputFields) payload[key] = Number(draft[key] || 0)
@@ -35,174 +34,228 @@ function draftToPayload(draft) {
 
 export default function PayrollInputSheet() {
   const { periodId } = useParams()
-  const navigate = useNavigate()
-  const [period, setPeriod] = useState(null)
-  const [drafts, setDrafts] = useState({})
-  const [loading, setLoading] = useState(false)
+  const navigate     = useNavigate()
+  const [period,       setPeriod]       = useState(null)
+  const [drafts,       setDrafts]       = useState({})
+  const [loading,      setLoading]      = useState(false)
   const [savingUserId, setSavingUserId] = useState(null)
-  const [actionLoading, setActionLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const [success, setSuccess] = useState(null)
+  const [actionLoading,setActionLoading]= useState(false)
+  const [syncing,      setSyncing]      = useState(false)
+  const [error,        setError]        = useState(null)
+  const [success,      setSuccess]      = useState(null)
+  const [expandedUser, setExpandedUser] = useState(null)
+
+  const showMsg = (m) => { setSuccess(m); setTimeout(() => setSuccess(null), 4200) }
 
   async function loadPeriod() {
     try {
-      setLoading(true)
-      setError(null)
+      setLoading(true); setError(null)
       const res = await api.get(`/api/payroll/periods/${periodId}`)
       const nextPeriod = res.data
       setPeriod(nextPeriod)
       const nextDrafts = {}
       for (const row of nextPeriod.inputs || []) nextDrafts[row.user_id] = rowToDraft(row)
       setDrafts(nextDrafts)
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to load payroll input sheet'))
-    } finally {
-      setLoading(false)
-    }
+    } catch (err) { setError(getErrorMessage(err, 'Failed to load payroll input sheet')) }
+    finally { setLoading(false) }
   }
 
-  useEffect(() => {
-    loadPeriod()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [periodId])
+  useEffect(() => { loadPeriod() }, [periodId]) // eslint-disable-line
 
   const locked = useMemo(() => ['finalized', 'released', 'void'].includes(String(period?.status || '')), [period?.status])
 
   function updateDraft(userId, key, value) {
-    setDrafts((prev) => ({
-      ...prev,
-      [userId]: {
-        ...(prev[userId] || {}),
-        [key]: value
-      }
-    }))
+    setDrafts((prev) => ({ ...prev, [userId]: { ...(prev[userId] || {}), [key]: value } }))
   }
 
   async function loadInputs() {
-    setActionLoading(true)
-    setError(null)
-    setSuccess(null)
+    setActionLoading(true); setError(null)
+    try { await api.post(`/api/payroll/periods/${periodId}/load-inputs`); showMsg('Payroll inputs loaded.'); await loadPeriod() }
+    catch (err) { setError(getErrorMessage(err, 'Failed to load payroll inputs')) }
+    finally { setActionLoading(false) }
+  }
+
+  async function syncAttendance() {
+    setSyncing(true); setError(null)
     try {
-      await api.post(`/api/payroll/periods/${periodId}/load-inputs`)
-      setSuccess('Payroll inputs loaded.')
+      const r = await api.post(`/api/payroll/periods/${periodId}/inputs/sync-attendance`)
+      showMsg(r.data?.message || 'Attendance synced to inputs.')
       await loadPeriod()
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to load payroll inputs'))
-    } finally {
-      setActionLoading(false)
-    }
+    } catch (err) { setError(getErrorMessage(err, 'Attendance sync failed')) }
+    finally { setSyncing(false) }
   }
 
   async function saveRow(row) {
-    setSavingUserId(row.user_id)
-    setError(null)
-    setSuccess(null)
+    setSavingUserId(row.user_id); setError(null)
     try {
       await api.put(`/api/payroll/periods/${periodId}/inputs/${row.user_id}`, draftToPayload(drafts[row.user_id] || {}))
-      setSuccess(`Saved input for ${row.full_name || row.username}.`)
+      showMsg(`Saved — ${row.full_name || row.username}.`)
       await loadPeriod()
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to save payroll input'))
-    } finally {
-      setSavingUserId(null)
-    }
+    } catch (err) { setError(getErrorMessage(err, 'Failed to save payroll input')) }
+    finally { setSavingUserId(null) }
   }
 
   async function compute() {
-    setActionLoading(true)
-    setError(null)
-    setSuccess(null)
-    try {
-      await api.post(`/api/payroll/periods/${periodId}/compute`)
-      navigate(`/payroll/periods/${periodId}/preview`)
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to compute payroll'))
-    } finally {
-      setActionLoading(false)
-    }
+    setActionLoading(true); setError(null)
+    try { await api.post(`/api/payroll/periods/${periodId}/compute`); navigate(`/payroll/periods/${periodId}/preview`) }
+    catch (err) { setError(getErrorMessage(err, 'Failed to compute payroll')) }
+    finally { setActionLoading(false) }
   }
 
+  const inputs = period?.inputs || []
+  const DEDUCTION_FIELDS  = ['late_minutes', 'undertime_minutes', 'absent_days', 'unpaid_leave_days', 'manual_deduction']
+  const EARNING_FIELDS    = ['overtime_hours', 'regular_holiday_days', 'special_holiday_days', 'rest_day_days', 'paid_leave_days', 'manual_bonus', 'manual_commission', 'manual_allowance']
+
   return (
-    <div className="page payroll-page payroll-input-page">
+    <div className="page">
       <div className="page-header">
         <div>
           <h1 className="page-title">Payroll Input Sheet</h1>
           <p className="page-subtitle">
-            {period ? `${period.code} | ${formatDate(period.start_date)} - ${formatDate(period.end_date)}` : 'Loading period...'}
+            {period
+              ? `${period.code} · ${formatDate(period.start_date)} – ${formatDate(period.end_date)}`
+              : 'Loading…'}
           </p>
         </div>
-        <div className="payroll-header-actions">
-          <button className="btn btn-secondary" type="button" onClick={() => navigate('/payroll/periods')}>Back</button>
-          <button className="btn btn-secondary" type="button" onClick={loadInputs} disabled={locked || actionLoading}>Load Inputs</button>
-          <button className="btn btn-primary" type="button" onClick={compute} disabled={locked || actionLoading || !(period?.inputs || []).length}>Compute</button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn btn-secondary" onClick={() => navigate('/payroll/periods')}>← Back</button>
+          {!locked && (
+            <button className="btn btn-outline" onClick={syncAttendance} disabled={syncing || actionLoading}>
+              {syncing ? '⟳ Syncing…' : '⟳ Sync Attendance'}
+            </button>
+          )}
+          {!locked && (
+            <button className="btn btn-secondary" onClick={loadInputs} disabled={actionLoading}>
+              {actionLoading ? 'Loading…' : 'Load Profiles'}
+            </button>
+          )}
+          {!locked && inputs.length > 0 && (
+            <button className="btn btn-primary" onClick={compute} disabled={actionLoading}>
+              {actionLoading ? 'Computing…' : 'Compute Payroll →'}
+            </button>
+          )}
         </div>
       </div>
 
-      {period ? (
-        <div className="payroll-status-line">
-          <span className={statusBadgeClass(period.status)}>{period.status}</span>
-          <span>Payout {formatDate(period.payout_date)}</span>
+      {period && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+          <span className={statusBadgeClass(period.status)} style={{ textTransform: 'uppercase', fontSize: 12 }}>{period.status}</span>
+          <span style={{ fontSize: 13, color: 'var(--text-mid)' }}>
+            {period.frequency?.replace('_', '-')} · Payout {formatDate(period.payout_date)}
+          </span>
+          {period.employee_count > 0 && (
+            <span style={{ fontSize: 13, color: 'var(--text-mid)' }}>{period.employee_count} employee(s)</span>
+          )}
+          {period.total_net_pay > 0 && (
+            <span style={{ fontWeight: 700, color: 'var(--gold-dark)', fontSize: 14 }}>
+              Net Pay: {formatCurrency(period.total_net_pay)}
+            </span>
+          )}
         </div>
-      ) : null}
+      )}
 
-      {error ? <div className="error-msg" style={{ marginBottom: 16 }}>{error}</div> : null}
-      {success ? <div className="form-success" style={{ marginBottom: 16 }}>{success}</div> : null}
+      {error   && <div className="error-msg"   style={{ marginBottom: 14 }}>{error}</div>}
+      {success && <div className="success-msg" style={{ marginBottom: 14 }}>{success}</div>}
 
-      <div className="card payroll-table-card">
+      <div className="card">
         <div className="card-header">
-          <h3>Inputs</h3>
-          <button className="btn btn-secondary btn-sm" type="button" onClick={loadPeriod}>Refresh</button>
+          <h3>Employee Inputs ({inputs.length})</h3>
+          <button className="btn btn-secondary btn-sm" onClick={loadPeriod}>↺ Refresh</button>
         </div>
-        <div className="table-wrap responsive payroll-wide-table">
-          <table>
-            <thead>
-              <tr>
-                <th>Employee</th>
-                {inputFields.map(([, label]) => <th key={label}>{label}</th>)}
-                <th>Remarks</th>
-                <th className="text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={inputFields.length + 3}>Loading...</td></tr>
-              ) : period?.inputs?.length ? period.inputs.map((row) => {
-                const draft = drafts[row.user_id] || rowToDraft(row)
-                return (
-                  <tr key={row.user_id}>
-                    <td className="payroll-employee-cell">
-                      <strong>{row.full_name || row.username}</strong>
-                      <div className="text-muted">{row.pay_basis || 'no profile'} / {row.pay_rate || '0.00'}</div>
-                    </td>
-                    {inputFields.map(([key]) => (
-                      <td key={key}>
-                        <input
-                          className="form-input payroll-sheet-input"
-                          type="number"
-                          min="0"
-                          step={key.includes('minutes') ? '1' : '0.01'}
-                          value={draft[key]}
-                          disabled={locked}
-                          onChange={(event) => updateDraft(row.user_id, key, event.target.value)}
-                        />
-                      </td>
-                    ))}
-                    <td>
-                      <input className="form-input payroll-remarks-input" value={draft.remarks || ''} disabled={locked} onChange={(event) => updateDraft(row.user_id, 'remarks', event.target.value)} />
-                    </td>
-                    <td className="text-right">
-                      <button className="btn btn-primary btn-sm" type="button" onClick={() => saveRow(row)} disabled={locked || savingUserId === row.user_id}>
-                        {savingUserId === row.user_id ? 'Saving...' : 'Save'}
-                      </button>
-                    </td>
-                  </tr>
-                )
-              }) : (
-                <tr><td colSpan={inputFields.length + 3} className="text-center text-muted">No input rows loaded for this period.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>Loading inputs…</div>
+        ) : inputs.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 40 }}>
+            <div style={{ color: 'var(--text-light)', marginBottom: 14 }}>No input rows loaded for this period.</div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+              <button className="btn btn-outline" onClick={syncAttendance} disabled={syncing}>⟳ Sync from Attendance</button>
+              <button className="btn btn-primary"  onClick={loadInputs} disabled={actionLoading}>Load Employee Profiles</button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            {inputs.map((row) => {
+              const draft = drafts[row.user_id] || rowToDraft(row)
+              const isExpanded = expandedUser === row.user_id
+              return (
+                <div key={row.user_id} style={{ borderBottom: '1px solid var(--border-light)' }}>
+                  {/* Employee header row */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: isExpanded ? 'var(--cream-white)' : 'var(--white)', cursor: 'pointer' }}
+                    onClick={() => setExpandedUser(isExpanded ? null : row.user_id)}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                      <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'var(--gold-light)', color: 'var(--gold-dark)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14 }}>
+                        {(row.full_name || row.username || '?')[0]?.toUpperCase()}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{row.full_name || row.username}</div>
+                        <div style={{ fontSize: 12, color: 'var(--text-light)' }}>
+                          {row.pay_basis} · ₱{Number(row.pay_rate || 0).toLocaleString()}/
+                          {row.pay_basis === 'monthly' ? 'mo' : row.pay_basis === 'daily' ? 'day' : 'hr'}
+                          {draft.days_worked ? ` · ${draft.days_worked} days` : ''}
+                          {draft.late_minutes > 0 ? ` · ${draft.late_minutes}min late` : ''}
+                          {draft.overtime_hours > 0 ? ` · ${draft.overtime_hours}h OT` : ''}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {!locked && (
+                        <button className="btn btn-primary btn-sm" type="button"
+                          onClick={(e) => { e.stopPropagation(); saveRow(row) }}
+                          disabled={savingUserId === row.user_id}>
+                          {savingUserId === row.user_id ? 'Saving…' : 'Save'}
+                        </button>
+                      )}
+                      <span style={{ color: 'var(--text-light)', fontSize: 20 }}>{isExpanded ? '▲' : '▼'}</span>
+                    </div>
+                  </div>
+
+                  {/* Expanded input fields */}
+                  {isExpanded && (
+                    <div style={{ padding: '14px 16px', background: 'var(--cream-white)', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
+                      {inputFields.map(([key, label]) => {
+                        const isDeduction = DEDUCTION_FIELDS.includes(key)
+                        const isEarning   = EARNING_FIELDS.includes(key)
+                        return (
+                          <div key={key} className="form-group" style={{ marginBottom: 0 }}>
+                            <label className="form-label" style={{
+                              fontSize: 11,
+                              color: isDeduction ? 'var(--error)' : isEarning ? 'var(--success)' : 'var(--text-mid)'
+                            }}>
+                              {isDeduction ? '−' : isEarning ? '+' : ''}  {label}
+                            </label>
+                            <input
+                              className="form-input"
+                              type="number" min="0"
+                              step={key.includes('minutes') ? '1' : '0.01'}
+                              value={draft[key]}
+                              disabled={locked}
+                              style={{ fontSize: 13, padding: '6px 10px' }}
+                              onChange={(e) => updateDraft(row.user_id, key, e.target.value)}
+                            />
+                          </div>
+                        )
+                      })}
+                      <div className="form-group" style={{ marginBottom: 0, gridColumn: '1 / -1' }}>
+                        <label className="form-label" style={{ fontSize: 11 }}>Remarks</label>
+                        <input className="form-input" value={draft.remarks || ''} disabled={locked}
+                          style={{ fontSize: 13 }}
+                          onChange={(e) => updateDraft(row.user_id, 'remarks', e.target.value)} />
+                      </div>
+                      {!locked && (
+                        <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                          <button className="btn btn-primary btn-sm" onClick={() => saveRow(row)} disabled={savingUserId === row.user_id}>
+                            {savingUserId === row.user_id ? 'Saving…' : 'Save Row'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )

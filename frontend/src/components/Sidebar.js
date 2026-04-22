@@ -35,20 +35,28 @@ const NAV_ITEMS = [
     icon: 'BL',
     perm: ['purchase.view', 'purchase.create', 'purchase.update', 'purchase.delete', 'purchase.receive', 'inventory.view', 'inventory.receive', 'reports.view', 'finance.reports.view'],
     children: [
-      { to: '/purchasing', tab: 'bale-purchases', label: 'Bale Purchases' },
-      { to: '/purchasing', tab: 'bale-breakdowns', label: 'Bale Breakdown' }
+      { to: '/purchasing', tab: 'bale-purchases',  label: 'Bale Purchases' },
+      { to: '/purchasing', tab: 'purchase-orders', label: 'Purchase Orders' },
+      { to: '/purchasing', tab: 'bale-breakdowns', label: 'Bale Breakdown' },
+      { to: '/purchasing', tab: 'bale-returns',    label: 'Bale Returns' }
     ]
   },
   { section: 'Finance' },
+  {
+    to: '/attendance',
+    label: 'Attendance',
+    icon: 'AT',
+    perm: ['attendance.view', 'attendance.manage', 'payroll.view', 'payroll.period.view', 'payroll.input.update']
+  },
   {
     to: '/payroll/periods',
     label: 'Payroll',
     icon: 'PY',
     perm: ['payroll.view', 'payroll.profile.view', 'payroll.period.view', 'payroll.report.view', 'payroll.payslip.view', 'payroll.payslip.view_own'],
     children: [
-      { to: '/payroll/periods', label: 'Periods' },
+      { to: '/payroll/periods',  label: 'Periods' },
       { to: '/payroll/profiles', label: 'Profiles' },
-      { to: '/payroll/reports', label: 'Reports' }
+      { to: '/payroll/reports',  label: 'Reports' }
     ]
   },
   {

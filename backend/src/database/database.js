@@ -22,7 +22,7 @@ const pool = mysql.createPool({
   host: DB_HOST || 'localhost',
   port: DB_PORT ? Number(DB_PORT) : 3306,
   user: DB_USERNAME || 'root',
-  password: resolvedDbPassword,
+  password: 'root',
   database: DB_DATABASE || "cecilles_nstyle_db",
   waitForConnections: true,
   connectionLimit: 10,

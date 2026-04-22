@@ -236,6 +236,36 @@ function normalizeBalePurchaseInput(payload, options = {}) {
   }
 
   if (!isUpdate || body.notes !== undefined) parsed.notes = asText(body.notes)
+
+  // Payment method & credit terms
+  const PAYMENT_METHODS = ['CASH', 'GCASH', 'BANK_TRANSFER', 'PURCHASE_ORDER', 'CHECK']
+  if (!isUpdate || body.payment_method !== undefined) {
+    const pm = String(body.payment_method || 'CASH').trim().toUpperCase()
+    parsed.payment_method = PAYMENT_METHODS.includes(pm) ? pm : 'CASH'
+  }
+  if (!isUpdate || body.payment_terms_days !== undefined) {
+    parsed.payment_terms_days = Math.max(0, parseInt(body.payment_terms_days || 0, 10) || 0)
+  }
+  if (!isUpdate || body.po_due_date !== undefined) {
+    parsed.po_due_date = body.po_due_date ? asDateOnly(body.po_due_date, 'po_due_date', false) : null
+  }
+  if (!isUpdate || body.amount_paid !== undefined) {
+    parsed.amount_paid = asNumber(body.amount_paid || 0, 'amount_paid')
+  }
+  if (!isUpdate || body.tax_amount !== undefined) {
+    parsed.tax_amount = asNumber(body.tax_amount || 0, 'tax_amount')
+  }
+  if (!isUpdate || body.shipping_handling !== undefined) {
+    parsed.shipping_handling = asNumber(body.shipping_handling || 0, 'shipping_handling')
+  }
+  if (!isUpdate || body.special_instructions !== undefined) parsed.special_instructions = asText(body.special_instructions)
+  if (!isUpdate || body.authorized_by !== undefined)      parsed.authorized_by = asText(body.authorized_by)
+  if (!isUpdate || body.ship_via !== undefined)           parsed.ship_via = asText(body.ship_via)
+  if (!isUpdate || body.fob_point !== undefined)          parsed.fob_point = asText(body.fob_point)
+  if (!isUpdate || body.shipping_terms !== undefined)     parsed.shipping_terms = asText(body.shipping_terms)
+  if (!isUpdate || body.ship_to_name !== undefined)       parsed.ship_to_name = asText(body.ship_to_name)
+  if (!isUpdate || body.ship_to_address !== undefined)    parsed.ship_to_address = asText(body.ship_to_address)
+
   return parsed
 }
 
@@ -401,12 +431,22 @@ router.post('/', express.json(), verifyToken, authorize(PURCHASE_CREATE_PERMISSI
     const [dup] = await db.pool.query('SELECT id FROM bale_purchases WHERE bale_batch_no = ? LIMIT 1', [payload.bale_batch_no])
     if (dup.length) return res.status(400).json({ error: 'bale_batch_no already exists' })
 
+    // auto-compute po_due_date if payment_method=PURCHASE_ORDER and terms > 0
+    if (!payload.po_due_date && payload.payment_method === 'PURCHASE_ORDER' && payload.payment_terms_days > 0 && payload.purchase_date) {
+      const base = new Date(`${payload.purchase_date}T00:00:00Z`)
+      base.setUTCDate(base.getUTCDate() + payload.payment_terms_days)
+      payload.po_due_date = base.toISOString().slice(0, 10)
+    }
+
     const [result] = await db.pool.query(`
       INSERT INTO bale_purchases (
         supplier_id, bale_batch_no, supplier_name, purchase_date, bale_category,
         bale_cost, total_purchase_cost, quantity_ordered,
-        payment_status, po_status, expected_delivery_date, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        payment_status, po_status, expected_delivery_date, notes,
+        payment_method, payment_terms_days, po_due_date, amount_paid,
+        tax_amount, shipping_handling, special_instructions, authorized_by,
+        ship_via, fob_point, shipping_terms, ship_to_name, ship_to_address
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       payload.supplier_id || null,
       payload.bale_batch_no,
@@ -419,7 +459,20 @@ router.post('/', express.json(), verifyToken, authorize(PURCHASE_CREATE_PERMISSI
       payload.payment_status,
       payload.po_status || 'PENDING',
       payload.expected_delivery_date || null,
-      payload.notes
+      payload.notes,
+      payload.payment_method || 'CASH',
+      payload.payment_terms_days || 0,
+      payload.po_due_date || null,
+      payload.amount_paid || 0,
+      payload.tax_amount || 0,
+      payload.shipping_handling || 0,
+      payload.special_instructions || null,
+      payload.authorized_by || null,
+      payload.ship_via || null,
+      payload.fob_point || null,
+      payload.shipping_terms || null,
+      payload.ship_to_name || null,
+      payload.ship_to_address || null
     ])
 
     const created = await getBalePurchaseById(result.insertId)
@@ -465,21 +518,20 @@ router.put('/:id', express.json(), verifyToken, authorize(PURCHASE_UPDATE_PERMIS
 
     const updates = []
     const params = []
+    // auto-compute po_due_date if payment_method=PURCHASE_ORDER
+    if (!payload.po_due_date && payload.payment_method === 'PURCHASE_ORDER' && payload.payment_terms_days > 0) {
+      const base = new Date(`${payload.purchase_date || existing.purchase_date}T00:00:00Z`)
+      base.setUTCDate(base.getUTCDate() + payload.payment_terms_days)
+      payload.po_due_date = base.toISOString().slice(0, 10)
+    }
+
     const allowedFields = [
-      'supplier_id',
-      'bale_batch_no',
-      'supplier_name',
-      'purchase_date',
-      'bale_category',
-      'bale_cost',
-      'total_purchase_cost',
-      'quantity_ordered',
-      'quantity_received',
-      'payment_status',
-      'po_status',
-      'expected_delivery_date',
-      'actual_delivery_date',
-      'notes'
+      'supplier_id', 'bale_batch_no', 'supplier_name', 'purchase_date', 'bale_category',
+      'bale_cost', 'total_purchase_cost', 'quantity_ordered', 'quantity_received',
+      'payment_status', 'po_status', 'expected_delivery_date', 'actual_delivery_date', 'notes',
+      'payment_method', 'payment_terms_days', 'po_due_date', 'amount_paid',
+      'tax_amount', 'shipping_handling', 'special_instructions', 'authorized_by',
+      'ship_via', 'fob_point', 'shipping_terms', 'ship_to_name', 'ship_to_address'
     ]
 
     for (const field of allowedFields) {
@@ -856,6 +908,89 @@ router.post('/:id/receive', express.json(), verifyToken, authorize(PURCHASE_RECE
     safeRelease()
     console.error(err)
     res.status(err?.statusCode || 500).json({ error: err?.message || 'failed to receive purchase order' })
+  }
+})
+
+// ── PO Line Items ─────────────────────────────────────────────────────────
+router.get('/:id/items', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), async (req, res) => {
+  try {
+    const id = asOptionalInt(req.params.id, 'id')
+    const [rows] = await db.pool.query(
+      'SELECT * FROM bale_purchase_items WHERE bale_purchase_id = ? ORDER BY sort_order, id',
+      [id]
+    )
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.post('/:id/items', express.json(), verifyToken, authorize(PURCHASE_CREATE_PERMISSIONS), async (req, res) => {
+  try {
+    const bale_purchase_id = asOptionalInt(req.params.id, 'id')
+    const bp = await getBalePurchaseById(bale_purchase_id)
+    if (!bp) return res.status(404).json({ error: 'bale purchase not found' })
+
+    const items = Array.isArray(req.body) ? req.body : [req.body]
+    await db.pool.query('DELETE FROM bale_purchase_items WHERE bale_purchase_id = ?', [bale_purchase_id])
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      const qty   = Number(item.quantity  || 1)
+      const price = roundMoney(Number(item.unit_price || 0))
+      const total = roundMoney(qty * price)
+      await db.pool.query(
+        `INSERT INTO bale_purchase_items (bale_purchase_id, item_code, description, quantity, unit, unit_price, line_total, sort_order)
+         VALUES (?,?,?,?,?,?,?,?)`,
+        [bale_purchase_id, asText(item.item_code), asText(item.description) || '', qty, asText(item.unit), price, total, i]
+      )
+    }
+
+    const [saved] = await db.pool.query(
+      'SELECT * FROM bale_purchase_items WHERE bale_purchase_id = ? ORDER BY sort_order, id',
+      [bale_purchase_id]
+    )
+
+    const subtotal = saved.reduce((s, r) => s + roundMoney(Number(r.line_total || 0)), 0)
+    await db.pool.query('UPDATE bale_purchases SET bale_cost = ?, total_purchase_cost = ? WHERE id = ?', [subtotal, subtotal, bale_purchase_id])
+
+    res.json(saved)
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message })
+  }
+})
+
+// ── PO Report data ────────────────────────────────────────────────────────
+router.get('/:id/po-report', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), async (req, res) => {
+  try {
+    const id = asOptionalInt(req.params.id, 'id')
+    const bp = await getBalePurchaseById(id)
+    if (!bp) return res.status(404).json({ error: 'bale purchase not found' })
+
+    const [items] = await db.pool.query(
+      'SELECT * FROM bale_purchase_items WHERE bale_purchase_id = ? ORDER BY sort_order, id',
+      [id]
+    )
+
+    let supplier = null
+    if (bp.supplier_id) {
+      const [[s]] = await db.pool.query('SELECT * FROM suppliers WHERE id = ?', [bp.supplier_id])
+      supplier = s || null
+    }
+
+    const subtotal         = items.reduce((s, r) => s + roundMoney(Number(r.line_total || 0)), 0)
+    const tax_amount       = roundMoney(Number(bp.tax_amount || 0))
+    const shipping_handling = roundMoney(Number(bp.shipping_handling || 0))
+    const total_due        = roundMoney(subtotal + tax_amount + shipping_handling)
+
+    res.json({
+      purchase_order: bp,
+      supplier,
+      items,
+      summary: { subtotal, tax_amount, shipping_handling, total_due }
+    })
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message })
   }
 })
 

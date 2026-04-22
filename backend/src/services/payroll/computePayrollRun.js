@@ -1,6 +1,8 @@
 const db = require('../../database')
 const { computeEmployeePayroll, roundMoney } = require('./computeEmployeePayroll')
 
+const schemaCapabilityCache = new Map()
+
 function serviceError(statusCode, message) {
   const err = new Error(message)
   err.statusCode = statusCode
@@ -69,6 +71,150 @@ function normalizeRunItem(row) {
     input_snapshot_json: safeJson(row.input_snapshot_json, {}),
     settings_snapshot_json: safeJson(row.settings_snapshot_json, {})
   }
+}
+
+async function tableExists(tableName, conn = db.pool) {
+  const cacheKey = `table:${tableName}`
+  if (conn === db.pool && schemaCapabilityCache.has(cacheKey)) {
+    return schemaCapabilityCache.get(cacheKey)
+  }
+
+  const [rows] = await conn.query(
+    `SELECT 1 AS found
+     FROM information_schema.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+     LIMIT 1`,
+    [tableName]
+  )
+  const exists = rows.length > 0
+  if (conn === db.pool) schemaCapabilityCache.set(cacheKey, exists)
+  return exists
+}
+
+async function columnExists(tableName, columnName, conn = db.pool) {
+  const cacheKey = `column:${tableName}.${columnName}`
+  if (conn === db.pool && schemaCapabilityCache.has(cacheKey)) {
+    return schemaCapabilityCache.get(cacheKey)
+  }
+
+  const [rows] = await conn.query(
+    `SELECT 1 AS found
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND COLUMN_NAME = ?
+     LIMIT 1`,
+    [tableName, columnName]
+  )
+  const exists = rows.length > 0
+  if (conn === db.pool) schemaCapabilityCache.set(cacheKey, exists)
+  return exists
+}
+
+async function getPayrollReportCapabilities(conn = db.pool) {
+  const requiredTables = ['payroll_run_items', 'payroll_runs', 'payroll_periods', 'users']
+  const requiredTableStates = await Promise.all(
+    requiredTables.map(async (tableName) => [tableName, await tableExists(tableName, conn)])
+  )
+  const missingTables = requiredTableStates.filter(([, exists]) => !exists).map(([tableName]) => tableName)
+  if (missingTables.length) {
+    return { ready: false, missingTables }
+  }
+
+  const itemColumns = [
+    'status',
+    'gross_basic_pay',
+    'gross_overtime_pay',
+    'gross_holiday_pay',
+    'gross_rest_day_pay',
+    'gross_bonus',
+    'gross_commission',
+    'gross_allowances',
+    'gross_pay',
+    'taxable_income',
+    'withholding_tax',
+    'employee_sss',
+    'employer_sss',
+    'ec_contribution',
+    'employee_philhealth',
+    'employer_philhealth',
+    'employee_pagibig',
+    'employer_pagibig',
+    'other_deductions',
+    'total_deductions',
+    'net_pay',
+    'created_at'
+  ]
+  const userColumns = ['full_name', 'email']
+  const periodColumns = ['payout_date']
+
+  const itemColumnStates = await Promise.all(
+    itemColumns.map(async (columnName) => [columnName, await columnExists('payroll_run_items', columnName, conn)])
+  )
+  const userColumnStates = await Promise.all(
+    userColumns.map(async (columnName) => [columnName, await columnExists('users', columnName, conn)])
+  )
+  const periodColumnStates = await Promise.all(
+    periodColumns.map(async (columnName) => [columnName, await columnExists('payroll_periods', columnName, conn)])
+  )
+
+  return {
+    ready: true,
+    columns: {
+      payroll_run_items: Object.fromEntries(itemColumnStates),
+      users: Object.fromEntries(userColumnStates),
+      payroll_periods: Object.fromEntries(periodColumnStates)
+    }
+  }
+}
+
+function reportEmptyResult(query = {}, extra = {}) {
+  return {
+    generated_at: new Date().toISOString(),
+    filters: query,
+    ...extra
+  }
+}
+
+function reportNoDataNotice() {
+  return 'No finalized or released payroll runs found yet. Create a payroll period, load inputs, compute payroll, then finalize or release a run to populate reports.'
+}
+
+function reportSetupNotice(missingTables = []) {
+  return `Payroll reporting tables are not fully available yet (${missingTables.join(', ')}). Create/load the payroll schema before using payroll reports.`
+}
+
+function selectNumericColumn(columns, columnName, alias = columnName) {
+  return columns[columnName] ? `items.${columnName}` : `0 AS ${alias}`
+}
+
+function selectItemStatusFilter(columns, where) {
+  if (columns.status) where.push("items.status IN ('finalized', 'released')")
+}
+
+function selectUserFullName(columns) {
+  return columns.full_name ? 'users.full_name' : 'NULL AS full_name'
+}
+
+function selectUserEmail(columns) {
+  return columns.email ? 'users.email' : 'NULL AS email'
+}
+
+function userOrderBy(columns) {
+  return columns.full_name ? 'users.full_name, users.username' : 'users.username'
+}
+
+function payoutDateSelect(columns) {
+  return columns.payout_date ? 'periods.payout_date' : 'NULL AS payout_date'
+}
+
+function payoutDateGroupBy(columns) {
+  return columns.payout_date ? ', periods.payout_date' : ''
+}
+
+function payoutDateOrderBy(columns, fallback = 'runs.id DESC') {
+  return columns.payout_date ? `periods.payout_date DESC, ${fallback}` : fallback
 }
 
 async function getActivePayrollSettings(conn, effectiveDate = null) {
@@ -559,10 +705,19 @@ function summarizeRegisterRows(rows) {
 }
 
 async function getPayrollRegister(query = {}) {
+  const capabilities = await getPayrollReportCapabilities()
+  if (!capabilities.ready) {
+    return reportEmptyResult(query, {
+      totals: summarizeRegisterRows([]),
+      rows: [],
+      notice: reportSetupNotice(capabilities.missingTables)
+    })
+  }
+
   const where = [
-    "runs.status IN ('finalized', 'released')",
-    "items.status IN ('finalized', 'released')"
+    "runs.status IN ('finalized', 'released')"
   ]
+  selectItemStatusFilter(capabilities.columns.payroll_run_items, where)
   const params = []
   addReportFilters(where, params, query)
 
@@ -575,49 +730,68 @@ async function getPayrollRegister(query = {}) {
        periods.code AS period_code,
        periods.start_date,
        periods.end_date,
-       periods.payout_date,
+       ${payoutDateSelect(capabilities.columns.payroll_periods)},
        users.id AS user_id,
        users.username,
-       users.full_name,
+       ${selectUserFullName(capabilities.columns.users)},
        items.id AS payroll_run_item_id,
-       items.gross_basic_pay,
-       items.gross_overtime_pay,
-       items.gross_holiday_pay,
-       items.gross_rest_day_pay,
-       items.gross_bonus,
-       items.gross_commission,
-       items.gross_allowances,
-       items.gross_pay,
-       items.taxable_income,
-       items.withholding_tax,
-       items.employee_sss,
-       items.employee_philhealth,
-       items.employee_pagibig,
-       items.other_deductions,
-       items.total_deductions,
-       items.net_pay
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'gross_basic_pay')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'gross_overtime_pay')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'gross_holiday_pay')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'gross_rest_day_pay')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'gross_bonus')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'gross_commission')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'gross_allowances')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'gross_pay')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'taxable_income')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'withholding_tax')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'employee_sss')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'employee_philhealth')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'employee_pagibig')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'other_deductions')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'total_deductions')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'net_pay')}
      FROM payroll_run_items items
      JOIN payroll_runs runs ON runs.id = items.payroll_run_id
      JOIN payroll_periods periods ON periods.id = runs.payroll_period_id
      JOIN users ON users.id = items.user_id
      WHERE ${where.join(' AND ')}
-     ORDER BY periods.payout_date DESC, users.full_name, users.username`,
+     ORDER BY ${payoutDateOrderBy(capabilities.columns.payroll_periods, userOrderBy(capabilities.columns.users))}`,
     params
   )
 
   return {
-    generated_at: new Date().toISOString(),
-    filters: query,
+    ...reportEmptyResult(query),
     totals: summarizeRegisterRows(rows),
-    rows
+    rows,
+    notice: rows.length ? null : reportNoDataNotice()
   }
 }
 
 async function getStatutorySummary(query = {}) {
+  const capabilities = await getPayrollReportCapabilities()
+  if (!capabilities.ready) {
+    return reportEmptyResult(query, {
+      totals: {
+        employee_count: 0,
+        employee_sss: 0,
+        employer_sss: 0,
+        ec_contribution: 0,
+        employee_philhealth: 0,
+        employer_philhealth: 0,
+        employee_pagibig: 0,
+        employer_pagibig: 0,
+        withholding_tax: 0
+      },
+      rows: [],
+      notice: reportSetupNotice(capabilities.missingTables)
+    })
+  }
+
   const where = [
-    "runs.status IN ('finalized', 'released')",
-    "items.status IN ('finalized', 'released')"
+    "runs.status IN ('finalized', 'released')"
   ]
+  selectItemStatusFilter(capabilities.columns.payroll_run_items, where)
   const params = []
   addReportFilters(where, params, query)
 
@@ -630,22 +804,22 @@ async function getStatutorySummary(query = {}) {
        periods.code AS period_code,
        periods.start_date,
        periods.end_date,
-       periods.payout_date,
+       ${payoutDateSelect(capabilities.columns.payroll_periods)},
        COUNT(items.id) AS employee_count,
-       COALESCE(SUM(items.employee_sss), 0) AS employee_sss,
-       COALESCE(SUM(items.employer_sss), 0) AS employer_sss,
-       COALESCE(SUM(items.ec_contribution), 0) AS ec_contribution,
-       COALESCE(SUM(items.employee_philhealth), 0) AS employee_philhealth,
-       COALESCE(SUM(items.employer_philhealth), 0) AS employer_philhealth,
-       COALESCE(SUM(items.employee_pagibig), 0) AS employee_pagibig,
-       COALESCE(SUM(items.employer_pagibig), 0) AS employer_pagibig,
-       COALESCE(SUM(items.withholding_tax), 0) AS withholding_tax
+       COALESCE(SUM(${capabilities.columns.payroll_run_items.employee_sss ? 'items.employee_sss' : '0'}), 0) AS employee_sss,
+       COALESCE(SUM(${capabilities.columns.payroll_run_items.employer_sss ? 'items.employer_sss' : '0'}), 0) AS employer_sss,
+       COALESCE(SUM(${capabilities.columns.payroll_run_items.ec_contribution ? 'items.ec_contribution' : '0'}), 0) AS ec_contribution,
+       COALESCE(SUM(${capabilities.columns.payroll_run_items.employee_philhealth ? 'items.employee_philhealth' : '0'}), 0) AS employee_philhealth,
+       COALESCE(SUM(${capabilities.columns.payroll_run_items.employer_philhealth ? 'items.employer_philhealth' : '0'}), 0) AS employer_philhealth,
+       COALESCE(SUM(${capabilities.columns.payroll_run_items.employee_pagibig ? 'items.employee_pagibig' : '0'}), 0) AS employee_pagibig,
+       COALESCE(SUM(${capabilities.columns.payroll_run_items.employer_pagibig ? 'items.employer_pagibig' : '0'}), 0) AS employer_pagibig,
+       COALESCE(SUM(${capabilities.columns.payroll_run_items.withholding_tax ? 'items.withholding_tax' : '0'}), 0) AS withholding_tax
      FROM payroll_run_items items
      JOIN payroll_runs runs ON runs.id = items.payroll_run_id
      JOIN payroll_periods periods ON periods.id = runs.payroll_period_id
      WHERE ${where.join(' AND ')}
-     GROUP BY runs.id, runs.run_number, runs.status, periods.id, periods.code, periods.start_date, periods.end_date, periods.payout_date
-     ORDER BY periods.payout_date DESC, runs.id DESC`,
+     GROUP BY runs.id, runs.run_number, runs.status, periods.id, periods.code, periods.start_date, periods.end_date${payoutDateGroupBy(capabilities.columns.payroll_periods)}
+     ORDER BY ${payoutDateOrderBy(capabilities.columns.payroll_periods)}`,
     params
   )
 
@@ -677,18 +851,26 @@ async function getStatutorySummary(query = {}) {
   })
 
   return {
-    generated_at: new Date().toISOString(),
-    filters: query,
+    ...reportEmptyResult(query),
     totals,
-    rows
+    rows,
+    notice: rows.length ? null : reportNoDataNotice()
   }
 }
 
 async function getEmployeeHistory(query = {}) {
+  const capabilities = await getPayrollReportCapabilities()
+  if (!capabilities.ready) {
+    return reportEmptyResult(query, {
+      rows: [],
+      notice: reportSetupNotice(capabilities.missingTables)
+    })
+  }
+
   const where = [
-    "runs.status IN ('finalized', 'released')",
-    "items.status IN ('finalized', 'released')"
+    "runs.status IN ('finalized', 'released')"
   ]
+  selectItemStatusFilter(capabilities.columns.payroll_run_items, where)
   const params = []
   addReportFilters(where, params, query)
 
@@ -696,33 +878,33 @@ async function getEmployeeHistory(query = {}) {
     `SELECT
        users.id AS user_id,
        users.username,
-       users.full_name,
+       ${selectUserFullName(capabilities.columns.users)},
        periods.id AS payroll_period_id,
        periods.code AS period_code,
        periods.start_date,
        periods.end_date,
-       periods.payout_date,
+       ${payoutDateSelect(capabilities.columns.payroll_periods)},
        runs.id AS payroll_run_id,
        runs.run_number,
        runs.status AS run_status,
        items.id AS payroll_run_item_id,
-       items.gross_pay,
-       items.total_deductions,
-       items.net_pay,
-       items.created_at
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'gross_pay')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'total_deductions')},
+       ${selectNumericColumn(capabilities.columns.payroll_run_items, 'net_pay')},
+       ${capabilities.columns.payroll_run_items.created_at ? 'items.created_at' : 'NULL AS created_at'}
      FROM payroll_run_items items
      JOIN payroll_runs runs ON runs.id = items.payroll_run_id
      JOIN payroll_periods periods ON periods.id = runs.payroll_period_id
      JOIN users ON users.id = items.user_id
      WHERE ${where.join(' AND ')}
-     ORDER BY users.full_name, users.username, periods.payout_date DESC`,
+     ORDER BY ${userOrderBy(capabilities.columns.users)}, ${capabilities.columns.payroll_periods.payout_date ? 'periods.payout_date DESC' : 'runs.id DESC'}`,
     params
   )
 
   return {
-    generated_at: new Date().toISOString(),
-    filters: query,
-    rows
+    ...reportEmptyResult(query),
+    rows,
+    notice: rows.length ? null : reportNoDataNotice()
   }
 }
 

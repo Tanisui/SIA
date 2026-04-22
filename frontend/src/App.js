@@ -29,6 +29,7 @@ import PayrollReports from './pages/payroll/PayrollReports.jsx'
 import Layout from './components/Layout.js'
 import ProtectedRoute from './components/ProtectedRoute.js'
 import ChangePassword from './pages/ChangePassword';
+import Attendance from './pages/Attendance.jsx';
 
 export default function App() {
   return (
@@ -60,6 +61,7 @@ export default function App() {
           React.createElement(Route, { path: 'settings', element: React.createElement(Settings, null) }),
           React.createElement(Route, { path: 'notifications', element: React.createElement(Notifications, null) }),
           React.createElement(Route, { path: 'reports', element: React.createElement(Reports, null) }),
+          React.createElement(Route, { path: 'attendance', element: React.createElement(Attendance, null) }),
           React.createElement(Route, { path: 'payroll/profiles', element: React.createElement(PayrollProfiles, null) }),
           React.createElement(Route, { path: 'payroll/periods', element: React.createElement(PayrollPeriods, null) }),
           React.createElement(Route, { path: 'payroll/periods/:periodId/inputs', element: React.createElement(PayrollInputSheet, null) }),

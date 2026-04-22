@@ -210,6 +210,7 @@ export default function PayrollReports() {
       </div>
 
       {error ? <div className="error-msg" style={{ marginBottom: 16 }}>{error}</div> : null}
+      {!error && report?.notice ? <div className="card" style={{ marginBottom: 16, color: 'var(--text-light)' }}>{report.notice}</div> : null}
 
       <div className="card reports-filter-card">
         <div className="reports-filter-grid payroll-report-filter-grid">

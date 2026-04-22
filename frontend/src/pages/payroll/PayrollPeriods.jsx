@@ -3,196 +3,230 @@ import { useNavigate } from 'react-router-dom'
 import api from '../../api/api.js'
 import { formatCurrency, formatDate, getErrorMessage, statusBadgeClass } from './payrollUtils.js'
 
+const FREQ_LABEL = { weekly: 'Weekly', semi_monthly: 'Semi-Monthly', monthly: 'Monthly' }
+const STATUS_STYLES = {
+  draft:     { bg: '#F1F5F9', color: '#64748B' },
+  computed:  { bg: '#DBEAFE', color: '#1D4ED8' },
+  finalized: { bg: '#FEF3C7', color: '#B45309' },
+  released:  { bg: '#DCFCE7', color: '#15803D' },
+  void:      { bg: '#FEE2E2', color: '#DC2626' }
+}
+
+function PeriodBadge({ status }) {
+  const s = STATUS_STYLES[status?.toLowerCase()] || STATUS_STYLES.draft
+  return (
+    <span style={{ background: s.bg, color: s.color, padding: '3px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+      {status || 'draft'}
+    </span>
+  )
+}
+
 function defaultPeriodForm() {
   const today = new Date()
   const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() <= 15 ? 1 : 16)
-  const end = new Date(today.getFullYear(), today.getMonth() + (today.getDate() <= 15 ? 0 : 1), today.getDate() <= 15 ? 15 : 0)
+  const end   = new Date(today.getFullYear(), today.getMonth() + (today.getDate() <= 15 ? 0 : 1), today.getDate() <= 15 ? 15 : 0)
   return {
-    code: '',
-    start_date: start.toISOString().slice(0, 10),
-    end_date: end.toISOString().slice(0, 10),
-    payout_date: end.toISOString().slice(0, 10),
-    frequency: 'semi_monthly',
-    notes: ''
+    code: '', start_date: start.toISOString().slice(0, 10),
+    end_date: end.toISOString().slice(0, 10), payout_date: end.toISOString().slice(0, 10),
+    frequency: 'semi_monthly', notes: ''
   }
 }
 
 export default function PayrollPeriods() {
   const navigate = useNavigate()
-  const [periods, setPeriods] = useState([])
-  const [form, setForm] = useState(defaultPeriodForm)
-  const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [actionId, setActionId] = useState(null)
-  const [error, setError] = useState(null)
-  const [success, setSuccess] = useState(null)
+  const [periods,   setPeriods]   = useState([])
+  const [form,      setForm]      = useState(defaultPeriodForm)
+  const [loading,   setLoading]   = useState(false)
+  const [saving,    setSaving]    = useState(false)
+  const [actionId,  setActionId]  = useState(null)
+  const [syncingId, setSyncingId] = useState(null)
+  const [error,     setError]     = useState(null)
+  const [success,   setSuccess]   = useState(null)
+
+  const showMsg = (m) => { setSuccess(m); setTimeout(() => setSuccess(null), 4200) }
 
   async function loadPeriods() {
-    try {
-      setLoading(true)
-      setError(null)
-      const res = await api.get('/api/payroll/periods')
-      setPeriods(res.data || [])
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to load payroll periods'))
-    } finally {
-      setLoading(false)
-    }
+    try { setLoading(true); setError(null); const r = await api.get('/api/payroll/periods'); setPeriods(r.data || []) }
+    catch (err) { setError(getErrorMessage(err, 'Failed to load payroll periods')) }
+    finally { setLoading(false) }
   }
 
-  useEffect(() => {
-    loadPeriods()
-  }, [])
+  useEffect(() => { loadPeriods() }, [])
 
-  function updateField(key, value) {
-    setForm((prev) => ({ ...prev, [key]: value }))
-  }
-
-  async function createPeriod(event) {
-    event.preventDefault()
-    setSaving(true)
-    setError(null)
-    setSuccess(null)
+  async function createPeriod(e) {
+    e.preventDefault(); setSaving(true); setError(null); setSuccess(null)
     try {
-      await api.post('/api/payroll/periods', {
-        code: form.code || undefined,
-        start_date: form.start_date,
-        end_date: form.end_date,
-        payout_date: form.payout_date,
-        frequency: form.frequency,
-        notes: form.notes || null
-      })
-      setForm(defaultPeriodForm())
-      setSuccess('Payroll period created.')
+      await api.post('/api/payroll/periods', { code: form.code || undefined, start_date: form.start_date, end_date: form.end_date, payout_date: form.payout_date, frequency: form.frequency, notes: form.notes || null })
+      setForm(defaultPeriodForm()); showMsg('Payroll period created.')
       await loadPeriods()
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to create payroll period'))
-    } finally {
-      setSaving(false)
-    }
+    } catch (err) { setError(getErrorMessage(err, 'Failed to create payroll period')) }
+    finally { setSaving(false) }
   }
 
   async function loadInputs(period) {
-    setActionId(period.id)
-    setError(null)
-    setSuccess(null)
+    setActionId(period.id); setError(null)
+    try { await api.post(`/api/payroll/periods/${period.id}/load-inputs`); navigate(`/payroll/periods/${period.id}/inputs`) }
+    catch (err) { setError(getErrorMessage(err, 'Failed to load payroll inputs')) }
+    finally { setActionId(null) }
+  }
+
+  async function syncAttendance(period) {
+    setSyncingId(period.id); setError(null)
     try {
-      await api.post(`/api/payroll/periods/${period.id}/load-inputs`)
-      navigate(`/payroll/periods/${period.id}/inputs`)
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to load payroll inputs'))
-    } finally {
-      setActionId(null)
-    }
+      const r = await api.post(`/api/payroll/periods/${period.id}/inputs/sync-attendance`)
+      showMsg(r.data?.message || 'Attendance synced.')
+      await loadPeriods()
+    } catch (err) { setError(getErrorMessage(err, 'Attendance sync failed')) }
+    finally { setSyncingId(null) }
   }
 
   async function compute(period) {
-    setActionId(period.id)
-    setError(null)
-    setSuccess(null)
-    try {
-      await api.post(`/api/payroll/periods/${period.id}/compute`)
-      navigate(`/payroll/periods/${period.id}/preview`)
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to compute payroll'))
-    } finally {
-      setActionId(null)
-    }
+    setActionId(period.id); setError(null)
+    try { await api.post(`/api/payroll/periods/${period.id}/compute`); navigate(`/payroll/periods/${period.id}/preview`) }
+    catch (err) { setError(getErrorMessage(err, 'Failed to compute payroll')) }
+    finally { setActionId(null) }
   }
 
+  const locked = (p) => ['finalized', 'released', 'void'].includes(String(p.status || '').toLowerCase())
+
   return (
-    <div className="page payroll-page">
+    <div className="page">
       <div className="page-header">
         <div>
           <h1 className="page-title">Payroll Periods</h1>
-          <p className="page-subtitle">Semi-manual cutoffs for boutique payroll processing.</p>
+          <p className="page-subtitle">Create payroll cutoffs, sync attendance, compute deductions, and release payslips.</p>
         </div>
+        <button className="btn btn-secondary btn-sm" onClick={loadPeriods} disabled={loading}>↺ Refresh</button>
       </div>
 
-      {error ? <div className="error-msg" style={{ marginBottom: 16 }}>{error}</div> : null}
-      {success ? <div className="form-success" style={{ marginBottom: 16 }}>{success}</div> : null}
+      {error   && <div className="error-msg"   style={{ marginBottom: 14 }}>{error}</div>}
+      {success && <div className="success-msg" style={{ marginBottom: 14 }}>{success}</div>}
 
-      <div className="card payroll-form-card" style={{ marginBottom: 20 }}>
+      {/* Create Period Card */}
+      <div className="card" style={{ marginBottom: 20 }}>
         <div className="card-header">
           <h3>Create Payroll Period</h3>
         </div>
         <form onSubmit={createPeriod}>
-          <div className="form-row">
-            <div className="form-group">
-              <label className="form-label">Code</label>
-              <input className="form-input" value={form.code} onChange={(event) => updateField('code', event.target.value)} placeholder="Auto-generated if blank" />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Period Code</label>
+              <input className="form-input" value={form.code} onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))} placeholder="Auto-generated if blank" />
             </div>
-            <div className="form-group">
-              <label className="form-label required">Start Date</label>
-              <input className="form-input" type="date" value={form.start_date} onChange={(event) => updateField('start_date', event.target.value)} required />
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Start Date *</label>
+              <input className="form-input" type="date" required value={form.start_date} onChange={(e) => setForm((p) => ({ ...p, start_date: e.target.value }))} />
             </div>
-            <div className="form-group">
-              <label className="form-label required">End Date</label>
-              <input className="form-input" type="date" value={form.end_date} onChange={(event) => updateField('end_date', event.target.value)} required />
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">End Date *</label>
+              <input className="form-input" type="date" required value={form.end_date} onChange={(e) => setForm((p) => ({ ...p, end_date: e.target.value }))} />
             </div>
-            <div className="form-group">
-              <label className="form-label required">Payout Date</label>
-              <input className="form-input" type="date" value={form.payout_date} onChange={(event) => updateField('payout_date', event.target.value)} required />
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Payout Date *</label>
+              <input className="form-input" type="date" required value={form.payout_date} onChange={(e) => setForm((p) => ({ ...p, payout_date: e.target.value }))} />
             </div>
-            <div className="form-group">
+            <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Frequency</label>
-              <select className="form-select" value={form.frequency} onChange={(event) => updateField('frequency', event.target.value)}>
+              <select className="form-input" value={form.frequency} onChange={(e) => setForm((p) => ({ ...p, frequency: e.target.value }))}>
                 <option value="weekly">Weekly</option>
-                <option value="semi_monthly">Semi-monthly</option>
+                <option value="semi_monthly">Semi-Monthly</option>
                 <option value="monthly">Monthly</option>
               </select>
             </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Notes</label>
+              <input className="form-input" value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} />
+            </div>
           </div>
-          <div className="form-group">
-            <label className="form-label">Notes</label>
-            <textarea className="form-textarea" value={form.notes} onChange={(event) => updateField('notes', event.target.value)} />
+          <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end' }}>
+            <button className="btn btn-primary" type="submit" disabled={saving}>{saving ? 'Creating…' : 'Create Period'}</button>
           </div>
-          <button className="btn btn-primary" type="submit" disabled={saving}>{saving ? 'Creating...' : 'Create Period'}</button>
         </form>
       </div>
 
-      <div className="card payroll-table-card">
-        <div className="card-header">
-          <h3>Cutoffs</h3>
-          <button className="btn btn-secondary btn-sm" type="button" onClick={loadPeriods}>Refresh</button>
-        </div>
+      {/* Periods table */}
+      <div className="card">
+        <div className="card-header"><h3>Payroll Cutoffs ({periods.length})</h3></div>
         <div className="table-wrap responsive">
           <table>
-            <thead>
-              <tr>
-                <th>Period</th>
-                <th>Dates</th>
-                <th>Status</th>
-                <th className="text-right">Net Pay</th>
-                <th className="text-right">Actions</th>
-              </tr>
-            </thead>
+            <thead><tr>
+              <th>Period Code</th><th>Dates</th><th>Frequency</th><th>Status</th>
+              <th style={{ textAlign: 'right' }}>Employees</th>
+              <th style={{ textAlign: 'right' }}>Net Pay</th>
+              <th>Actions</th>
+            </tr></thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={5}>Loading...</td></tr>
-              ) : periods.length ? periods.map((period) => (
+                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32, color: 'var(--text-light)' }}>Loading…</td></tr>
+              ) : periods.length === 0 ? (
+                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32, color: 'var(--text-light)' }}>No payroll periods yet. Create one above.</td></tr>
+              ) : periods.map((period) => (
                 <tr key={period.id}>
                   <td>
-                    <strong>{period.code}</strong>
-                    <div className="text-muted">Payout {formatDate(period.payout_date)}</div>
+                    <span style={{ fontWeight: 700 }}>{period.code}</span>
+                    <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 2 }}>Payout: {formatDate(period.payout_date)}</div>
                   </td>
-                  <td>{formatDate(period.start_date)} - {formatDate(period.end_date)}</td>
-                  <td><span className={statusBadgeClass(period.status)}>{period.status}</span></td>
-                  <td className="text-right">{formatCurrency(period.total_net_pay)}</td>
-                  <td className="text-right">
-                    <div className="payroll-row-actions">
-                      <button className="btn btn-secondary btn-sm" type="button" onClick={() => navigate(`/payroll/periods/${period.id}/inputs`)}>Inputs</button>
-                      <button className="btn btn-secondary btn-sm" type="button" onClick={() => loadInputs(period)} disabled={actionId === period.id || ['finalized', 'released', 'void'].includes(period.status)}>Load</button>
-                      <button className="btn btn-primary btn-sm" type="button" onClick={() => compute(period)} disabled={actionId === period.id || ['finalized', 'released', 'void'].includes(period.status)}>Compute</button>
-                      {period.latest_run_id ? <button className="btn btn-outline btn-sm" type="button" onClick={() => navigate(`/payroll/periods/${period.id}/preview`)}>Preview</button> : null}
+                  <td style={{ fontSize: 13 }}>{formatDate(period.start_date)} — {formatDate(period.end_date)}</td>
+                  <td style={{ fontSize: 13 }}>{FREQ_LABEL[period.frequency] || period.frequency}</td>
+                  <td><PeriodBadge status={period.status} /></td>
+                  <td style={{ textAlign: 'right', fontWeight: 600 }}>{period.employee_count > 0 ? period.employee_count : '-'}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--gold-dark)' }}>{period.total_net_pay > 0 ? formatCurrency(period.total_net_pay) : '-'}</td>
+                  <td>
+                    <div className="table-actions" style={{ flexWrap: 'wrap' }}>
+                      <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/payroll/periods/${period.id}/inputs`)} title="View/Edit Inputs">
+                        Inputs
+                      </button>
+                      {!locked(period) && (
+                        <button className="btn btn-outline btn-sm" onClick={() => syncAttendance(period)} disabled={syncingId === period.id} title="Sync attendance records for this period">
+                          {syncingId === period.id ? '⟳ Syncing…' : '⟳ Sync Attendance'}
+                        </button>
+                      )}
+                      {!locked(period) && (
+                        <button className="btn btn-outline btn-sm" onClick={() => loadInputs(period)} disabled={actionId === period.id}>
+                          {actionId === period.id ? '…' : 'Load Profiles'}
+                        </button>
+                      )}
+                      {!locked(period) && (
+                        <button className="btn btn-primary btn-sm" onClick={() => compute(period)} disabled={actionId === period.id}>
+                          {actionId === period.id ? 'Computing…' : 'Compute'}
+                        </button>
+                      )}
+                      {period.latest_run_id && (
+                        <button className="btn btn-outline btn-sm" onClick={() => navigate(`/payroll/periods/${period.id}/preview`)}>
+                          Preview
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
-              )) : (
-                <tr><td colSpan={5} className="text-center text-muted">No payroll periods yet.</td></tr>
-              )}
+              ))}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Workflow guide */}
+      <div className="card" style={{ marginTop: 20, background: 'var(--cream-white)', border: '1px solid var(--border-light)' }}>
+        <div className="card-header"><h3>Payroll Workflow</h3></div>
+        <div style={{ display: 'flex', gap: 0, overflowX: 'auto', paddingBottom: 4 }}>
+          {[
+            { step: '1', label: 'Create Period', desc: 'Set start/end dates and frequency' },
+            { step: '2', label: 'Record Attendance', desc: 'Go to Attendance → add time-in/out records' },
+            { step: '3', label: 'Sync Attendance', desc: 'Click "Sync Attendance" to pull attendance into inputs' },
+            { step: '4', label: 'Load Profiles', desc: 'Loads employees with active payroll profiles' },
+            { step: '5', label: 'Edit Inputs', desc: 'Adjust days, OT, bonuses, deductions manually' },
+            { step: '6', label: 'Compute', desc: 'Run payroll with all statutory deductions' },
+            { step: '7', label: 'Preview & Release', desc: 'Finalize and release payslips' }
+          ].map((item, i, arr) => (
+            <div key={item.step} style={{ display: 'flex', alignItems: 'center', minWidth: 'fit-content' }}>
+              <div style={{ textAlign: 'center', padding: '10px 16px' }}>
+                <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--gold)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14, margin: '0 auto 6px' }}>{item.step}</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dark)' }}>{item.label}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-light)', maxWidth: 110 }}>{item.desc}</div>
+              </div>
+              {i < arr.length - 1 && <div style={{ color: 'var(--gold)', fontSize: 20, paddingBottom: 20 }}>→</div>}
+            </div>
+          ))}
         </div>
       </div>
     </div>

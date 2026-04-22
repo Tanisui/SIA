@@ -24,7 +24,9 @@ const categoriesRoutes = require('./src/routes/categories')
 const expensesRoutes = require('./src/routes/expenses')
 const dashboardRoutes = require('./src/routes/dashboard')
 const ledgerRoutes = require('./src/routes/ledger')
-const payrollRoutes = require('./src/routes/payroll.routes')
+const payrollRoutes   = require('./src/routes/payroll.routes')
+const attendanceRoutes = require('./src/routes/attendance')
+const baleReturnsRoutes = require('./src/routes/baleReturns')
 
 const PORT = process.env.PORT || 3000
 
@@ -64,6 +66,8 @@ app.use('/expenses', expensesRoutes)
 app.use('/dashboard', dashboardRoutes)
 app.use('/ledger', ledgerRoutes)
 app.use('/api/payroll', payrollRoutes)
+app.use('/attendance', attendanceRoutes)
+app.use('/bale-returns', baleReturnsRoutes)
 
 app.get('/', async (req, res) => {
   try {

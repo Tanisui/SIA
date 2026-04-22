@@ -2,6 +2,7 @@ const express = require('express')
 const router = express.Router()
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 const payroll = require('../controllers/payroll.controller')
+const { syncAttendanceToInputs } = require('../services/payroll/syncAttendanceToInputs')
 
 router.get(
   '/profiles',
@@ -56,6 +57,20 @@ router.put(
   authorize(['payroll.period.compute']),
   payroll.updateInput
 )
+router.post(
+  '/periods/:id/inputs/sync-attendance',
+  verifyToken,
+  authorize(['payroll.period.compute']),
+  async (req, res) => {
+    try {
+      const result = await syncAttendanceToInputs(req.params.id, req.auth?.id)
+      res.json(result)
+    } catch (err) {
+      res.status(err.statusCode || 500).json({ error: err.message })
+    }
+  }
+)
+
 router.post(
   '/periods/:id/compute',
   verifyToken,
