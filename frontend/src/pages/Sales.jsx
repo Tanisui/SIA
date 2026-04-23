@@ -108,6 +108,7 @@ const DEFAULT_SALES_CONFIG = {
   payment_methods: ['cash'],
   allow_discount: false,
   allow_price_override: false,
+  allow_customer_profile_save: false,
   invoice: {
     displayName: "Cecille's N'Style",
     registeredName: '',
@@ -128,6 +129,14 @@ const NON_VAT_INPUT_TAX_NOTICE = 'THIS DOCUMENT IS NOT VALID FOR CLAIM OF INPUT 
 const POS_DRAFT_ID_STORAGE_KEY = 'pos_draft_sale_id'
 const POS_DRAFT_SNAPSHOT_STORAGE_KEY = 'pos_draft_sale_snapshot'
 const POS_FORCE_NEW_DRAFT_STORAGE_KEY = 'pos_force_new_draft'
+const CUSTOMER_CAPTURE_DEFAULT_FORM = {
+  first_name: '',
+  last_name: '',
+  phone: '',
+  email: ''
+}
+const CUSTOMER_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i
+const PH_MOBILE_PATTERN = /^\+639\d{9}$/
 
 function readStoredPosDraftId() {
   const storedDraftId = Number(localStorage.getItem(POS_DRAFT_ID_STORAGE_KEY))
@@ -451,6 +460,56 @@ function customerDisplayMeta(customer) {
   return [customer?.customer_code, customer?.phone, customer?.email].filter(Boolean).join(' | ') || 'No contact details saved'
 }
 
+function normalizePhilippineMobile(value) {
+  const raw = text(value)
+  if (!raw) return ''
+
+  let normalized = raw.replace(/[^\d+]/g, '')
+  if (normalized.startsWith('00')) normalized = `+${normalized.slice(2)}`
+  if (normalized.startsWith('+')) normalized = `+${normalized.slice(1).replace(/\D/g, '')}`
+  else normalized = normalized.replace(/\D/g, '')
+
+  if (normalized.startsWith('09') && normalized.length === 11) normalized = `+63${normalized.slice(1)}`
+  else if (normalized.startsWith('9') && normalized.length === 10) normalized = `+63${normalized}`
+  else if (normalized.startsWith('63') && normalized.length === 12) normalized = `+${normalized}`
+
+  return PH_MOBILE_PATTERN.test(normalized) ? normalized : null
+}
+
+function composeCustomerCaptureName(form) {
+  return [text(form.first_name).replace(/\s+/g, ' '), text(form.last_name).replace(/\s+/g, ' ')]
+    .filter(Boolean)
+    .join(' ')
+}
+
+function buildCustomerCapturePayload(form) {
+  const rawPhone = text(form.phone)
+  const normalizedPhone = rawPhone ? normalizePhilippineMobile(rawPhone) : ''
+
+  return {
+    full_name: composeCustomerCaptureName(form),
+    phone: normalizedPhone || null,
+    email: text(form.email).toLowerCase() || null
+  }
+}
+
+function validateCustomerCaptureForm(form) {
+  const errors = {}
+  const firstName = text(form.first_name).replace(/\s+/g, ' ')
+  const lastName = text(form.last_name).replace(/\s+/g, ' ')
+  const rawPhone = text(form.phone)
+  const normalizedPhone = rawPhone ? normalizePhilippineMobile(rawPhone) : ''
+  const email = text(form.email).toLowerCase()
+
+  if (!firstName) errors.first_name = 'First name is required.'
+  if (!lastName) errors.last_name = 'Last name is required.'
+  if (rawPhone && !normalizedPhone) errors.phone = 'Use a valid PH mobile number.'
+  if (email && !CUSTOMER_EMAIL_PATTERN.test(email)) errors.email = 'Enter a valid email address.'
+  if (!normalizedPhone && !email) errors.contact = 'Enter a mobile number or email.'
+
+  return errors
+}
+
 function paymentMethodLabel(method) {
   const normalized = String(method || '').trim().toLowerCase()
   if (!normalized) return '-'
@@ -678,6 +737,11 @@ export default function Sales() {
   const [customerSearch, setCustomerSearch] = useState('')
   const [customerOptions, setCustomerOptions] = useState([])
   const [customerLookupLoading, setCustomerLookupLoading] = useState(false)
+  const [customerCaptureOpen, setCustomerCaptureOpen] = useState(false)
+  const [customerCaptureForm, setCustomerCaptureForm] = useState(CUSTOMER_CAPTURE_DEFAULT_FORM)
+  const [customerCaptureErrors, setCustomerCaptureErrors] = useState({})
+  const [customerCaptureLoading, setCustomerCaptureLoading] = useState(false)
+  const [customerCaptureMessage, setCustomerCaptureMessage] = useState('')
   const [paymentMethod, setPaymentMethod] = useState('cash')
   const [discountPercentage, setDiscountPercentage] = useState('')
   const [pendingOrder, setPendingOrder] = useState(null)
@@ -730,6 +794,7 @@ export default function Sales() {
 
   const allowDiscount = Boolean(config.allow_discount)
   const allowPriceOverride = Boolean(config.allow_price_override)
+  const allowCustomerProfileSave = Boolean(config.allow_customer_profile_save)
   const currency = String(config.currency || 'PHP').trim() || 'PHP'
   const invoiceConfig = config.invoice || DEFAULT_SALES_CONFIG.invoice
   const taxRate = normalizeTaxRateValue(config.tax_rate, DEFAULT_SALES_CONFIG.tax_rate)
@@ -763,6 +828,8 @@ export default function Sales() {
   const cartHasLockedPriceOverride = !allowPriceOverride && cart.some((item) => round(item.unit_price) !== round(item.catalog_unit_price ?? item.unit_price))
   const pendingOrderTaxSummary = pendingOrder ? buildSaleTaxSummary(pendingOrder, taxRate) : null
   const lastReceiptTaxSummary = lastReceipt ? buildSaleTaxSummary(lastReceipt, taxRate) : null
+  const lastReceiptCustomer = lastReceipt ? buildCustomerSummary(lastReceipt) : null
+  const canCaptureLastReceiptCustomer = Boolean(lastReceipt?.id) && allowCustomerProfileSave && !lastReceiptCustomer
   const viewSaleTaxSummary = viewSale ? buildSaleTaxSummary(viewSale, taxRate) : null
   const viewSaleCustomer = viewSale ? buildCustomerSummary(viewSale) : null
   const viewSaleReturnMeta = getSalesHistoryReturnStatusMeta(viewSale?.return_status)
@@ -1661,6 +1728,14 @@ export default function Sales() {
     } finally { setLoading(false) }
   }
 
+  function resetCustomerCaptureState() {
+    setCustomerCaptureOpen(false)
+    setCustomerCaptureForm(CUSTOMER_CAPTURE_DEFAULT_FORM)
+    setCustomerCaptureErrors({})
+    setCustomerCaptureLoading(false)
+    setCustomerCaptureMessage('')
+  }
+
   function resetDraft() {
     cartMutationVersionRef.current += 1
     draftSaleIdRef.current = null
@@ -1679,6 +1754,7 @@ export default function Sales() {
     setPaymentMethod('cash')
     setDiscountPercentage('')
     setPaymentAmount('0.00')
+    resetCustomerCaptureState()
     clearBufferedScanSubmit()
     clearGlobalScanBuffer()
     lastScanRef.current = { code: '', at: 0 }
@@ -1937,6 +2013,119 @@ export default function Sales() {
         : currentValue
     ))
     setActiveTab('payment')
+  }
+
+  function handlePaymentAmountFocus() {
+    setPaymentAmount((currentValue) => (
+      round(currentValue) === 0 ? '' : currentValue
+    ))
+  }
+
+  function handlePaymentAmountBlur() {
+    setPaymentAmount((currentValue) => (
+      String(currentValue || '').trim() ? currentValue : '0.00'
+    ))
+  }
+
+  function updateCustomerCaptureField(field, value) {
+    setCustomerCaptureForm((form) => ({ ...form, [field]: value }))
+    setCustomerCaptureErrors((errors) => ({ ...errors, [field]: '', contact: '', form: '' }))
+    setCustomerCaptureMessage('')
+  }
+
+  function addCustomerOption(customer) {
+    const normalizedCustomer = buildCustomerSummary(customer)
+    if (!normalizedCustomer?.id) return
+
+    setCustomerOptions((options) => {
+      const next = [normalizedCustomer]
+      for (const option of Array.isArray(options) ? options : []) {
+        if (!option?.id || String(option.id) === String(normalizedCustomer.id)) continue
+        next.push(option)
+      }
+      return next
+    })
+  }
+
+  async function linkLastReceiptToCustomer(customerId, { linkedExisting = false } = {}) {
+    if (!lastReceipt?.id) throw new Error('No completed receipt is available to link.')
+    const response = await api.patch(`/sales/${lastReceipt.id}/customer`, { customer_id: customerId })
+    const updatedSale = response?.data
+    const linkedCustomer = buildCustomerSummary(updatedSale)
+
+    setLastReceipt(updatedSale)
+    addCustomerOption(updatedSale)
+    setCustomerCaptureOpen(false)
+    setCustomerCaptureForm(CUSTOMER_CAPTURE_DEFAULT_FORM)
+    setCustomerCaptureErrors({})
+    setCustomerCaptureMessage(
+      linkedExisting
+        ? `Receipt linked to existing customer ${customerDisplayName(linkedCustomer)}.`
+        : `Customer saved and receipt linked to ${customerDisplayName(linkedCustomer)}.`
+    )
+    flash('Customer details saved for this receipt.')
+    return updatedSale
+  }
+
+  async function saveWalkInCustomerDetails(event) {
+    event?.preventDefault?.()
+    clearMsg()
+    setCustomerCaptureMessage('')
+
+    if (!lastReceipt?.id) {
+      setCustomerCaptureErrors({ form: 'No completed receipt is available to link.' })
+      return
+    }
+
+    const validationErrors = validateCustomerCaptureForm(customerCaptureForm)
+    if (Object.keys(validationErrors).length) {
+      setCustomerCaptureErrors(validationErrors)
+      return
+    }
+
+    const payload = buildCustomerCapturePayload(customerCaptureForm)
+    setCustomerCaptureLoading(true)
+
+    try {
+      const duplicateParams = new URLSearchParams()
+      if (payload.phone) duplicateParams.set('phone', payload.phone)
+      if (payload.email) duplicateParams.set('email', payload.email)
+
+      if (duplicateParams.toString()) {
+        const duplicateResponse = await api.get(`/customers/duplicate-check?${duplicateParams.toString()}`)
+        const duplicateMatches = Array.isArray(duplicateResponse?.data?.matches) ? duplicateResponse.data.matches : []
+        const duplicateCustomerId = Number(duplicateMatches[0]?.id)
+        if (Number.isFinite(duplicateCustomerId) && duplicateCustomerId > 0) {
+          await linkLastReceiptToCustomer(duplicateCustomerId, { linkedExisting: true })
+          return
+        }
+      }
+
+      let createdCustomerId = null
+      try {
+        const createResponse = await api.post('/customers', payload)
+        createdCustomerId = Number(createResponse?.data?.id)
+      } catch (createErr) {
+        const duplicateCustomerId = Number(createErr?.response?.data?.duplicates?.[0]?.id)
+        if (createErr?.response?.status === 409 && Number.isFinite(duplicateCustomerId) && duplicateCustomerId > 0) {
+          await linkLastReceiptToCustomer(duplicateCustomerId, { linkedExisting: true })
+          return
+        }
+        throw createErr
+      }
+
+      if (!Number.isFinite(createdCustomerId) || createdCustomerId <= 0) {
+        throw new Error('Customer was saved but no customer id was returned.')
+      }
+
+      await linkLastReceiptToCustomer(createdCustomerId)
+    } catch (err) {
+      setCustomerCaptureErrors({
+        form: err?.response?.data?.error || err?.message || 'Failed to save customer details for this receipt.'
+      })
+    } finally {
+      setCustomerCaptureLoading(false)
+    }
   }
 
   async function completeSale() {
@@ -2340,13 +2529,79 @@ export default function Sales() {
                 <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 8, background: '#f8fafc', color: 'var(--text-mid)' }}>
                   <TaxBreakdownSummary summary={pendingOrderTaxSummary} fmt={fmt} subtotal={pendingOrder.subtotal} discountAmount={pendingOrder.discount_amount} totalLabel="Total Due" compact />
                 </div>
-                <div className="form-group"><label className="form-label">Amount Received</label><input className="form-input" type="number" min="0" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} /></div>
+                <div className="form-group"><label className="form-label">Amount Received</label><input className="form-input" type="number" min="0" step="0.01" value={paymentAmount} onFocus={handlePaymentAmountFocus} onBlur={handlePaymentAmountBlur} onChange={(e) => setPaymentAmount(e.target.value)} /></div>
                 <div style={{ display: 'flex', gap: 8 }}><button className="btn btn-secondary" onClick={() => setActiveTab('pos')}>Back To POS</button><button className="btn btn-primary" onClick={completeSale} disabled={!canConfirmPayment} style={{ flex: 1 }}>{loading ? 'Processing...' : 'Confirm Payment & Complete Sale'}</button></div>
               </>}
             </div>
 
             {lastReceipt && <div className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}><h3>Latest Receipt</h3><button className="btn btn-secondary" onClick={printReceipt}>Print Receipt</button></div>
+              {customerCaptureMessage ? (
+                <div style={{ marginBottom: 12, padding: '10px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#15803d', fontSize: 13 }}>
+                  {customerCaptureMessage}
+                </div>
+              ) : null}
+              {lastReceiptCustomer ? (
+                <div style={{ marginBottom: 12, padding: '10px 12px', background: '#f8fafc', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-mid)', fontSize: 13 }}>
+                  Saved to customer profile: <strong style={{ color: 'var(--text-dark)' }}>{customerDisplayName(lastReceiptCustomer)}</strong>
+                  <div style={{ marginTop: 4, color: 'var(--text-light)' }}>{customerDisplayMeta(lastReceiptCustomer)}</div>
+                </div>
+              ) : null}
+              {canCaptureLastReceiptCustomer ? (
+                <div style={{ marginBottom: 12, padding: '12px', background: '#fffaf0', border: '1px solid var(--border)', borderRadius: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontWeight: 700, color: 'var(--text-dark)' }}>Walk-in receipt is not saved to a customer profile</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 4 }}>Optional: save customer details after payment without slowing checkout.</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        setCustomerCaptureOpen((open) => !open)
+                        setCustomerCaptureErrors({})
+                        setCustomerCaptureMessage('')
+                      }}
+                      disabled={customerCaptureLoading}
+                    >
+                      {customerCaptureOpen ? 'Cancel' : 'Save Customer Details'}
+                    </button>
+                  </div>
+                  {customerCaptureOpen ? (
+                    <form onSubmit={saveWalkInCustomerDetails} style={{ marginTop: 12 }}>
+                      <div className="form-row" style={{ marginBottom: 10 }}>
+                        <div className="form-col">
+                          <label className="form-label">First Name *</label>
+                          <input className={`form-input ${customerCaptureErrors.first_name ? 'error' : ''}`} value={customerCaptureForm.first_name} onChange={(event) => updateCustomerCaptureField('first_name', event.target.value)} disabled={customerCaptureLoading} />
+                          {customerCaptureErrors.first_name ? <span className="form-error">{customerCaptureErrors.first_name}</span> : null}
+                        </div>
+                        <div className="form-col">
+                          <label className="form-label">Last Name *</label>
+                          <input className={`form-input ${customerCaptureErrors.last_name ? 'error' : ''}`} value={customerCaptureForm.last_name} onChange={(event) => updateCustomerCaptureField('last_name', event.target.value)} disabled={customerCaptureLoading} />
+                          {customerCaptureErrors.last_name ? <span className="form-error">{customerCaptureErrors.last_name}</span> : null}
+                        </div>
+                      </div>
+                      <div className="form-row" style={{ marginBottom: 10 }}>
+                        <div className="form-col">
+                          <label className="form-label">Mobile Number</label>
+                          <input className={`form-input ${customerCaptureErrors.phone || customerCaptureErrors.contact ? 'error' : ''}`} value={customerCaptureForm.phone} onChange={(event) => updateCustomerCaptureField('phone', event.target.value)} placeholder="09171234567" disabled={customerCaptureLoading} />
+                          {customerCaptureErrors.phone ? <span className="form-error">{customerCaptureErrors.phone}</span> : null}
+                        </div>
+                        <div className="form-col">
+                          <label className="form-label">Email Address</label>
+                          <input className={`form-input ${customerCaptureErrors.email || customerCaptureErrors.contact ? 'error' : ''}`} value={customerCaptureForm.email} onChange={(event) => updateCustomerCaptureField('email', event.target.value)} placeholder="name@example.com" disabled={customerCaptureLoading} />
+                          {customerCaptureErrors.email ? <span className="form-error">{customerCaptureErrors.email}</span> : null}
+                        </div>
+                      </div>
+                      {customerCaptureErrors.contact ? <div className="form-error" style={{ marginBottom: 10 }}>{customerCaptureErrors.contact}</div> : null}
+                      {customerCaptureErrors.form ? <div style={{ marginBottom: 10, padding: '8px 10px', background: '#fee', border: '1px solid #f99', color: '#c33', borderRadius: 6, fontSize: 13 }}>{customerCaptureErrors.form}</div> : null}
+                      <button type="submit" className="btn btn-primary" disabled={customerCaptureLoading}>
+                        {customerCaptureLoading ? 'Saving...' : 'Save and Link Receipt'}
+                      </button>
+                    </form>
+                  ) : null}
+                </div>
+              ) : null}
               {!invoiceRequirementsComplete && (
                 <div style={{ marginBottom: 12, padding: '10px 12px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, color: '#9a3412', fontSize: 12 }}>
                   Printed receipt details are incomplete for BIR use. Missing: {invoiceMissingFieldsText || 'seller configuration'}.

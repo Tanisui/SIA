@@ -8,8 +8,10 @@ const {
   PH_SEED_CITIES,
   PH_SEED_BARANGAY_ROWS
 } = require('../utils/phLocationSeed')
+const { WALK_IN_CUSTOMER_LABEL, ensureWalkInCustomerProfiles } = require('../utils/salesSupport')
 
 const SALE_STATUSES_FOR_CUSTOMER_METRICS = ['COMPLETED', 'REFUNDED']
+const AUTO_WALK_IN_PROFILE_NOTE = 'Auto-created walk-in customer profile.'
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i
 const PH_MOBILE_PATTERN = /^\+639\d{9}$/
 const POSTAL_PATTERN = /^\d{4}$/
@@ -716,15 +718,57 @@ function normalizeCustomerMetrics(row) {
   const safeRow = toSafeCustomerProfile(row)
   const grossSpent = toMoney(safeRow?.gross_spent)
   const returnsValue = toMoney(safeRow?.returns_value)
+  const isWalkInCustomer = isWalkInCustomerProfile(safeRow)
+  const walkInReference = extractWalkInReference(safeRow)
+  const fullName = normalizeSingleLine(safeRow?.full_name || safeRow?.name)
+  const phone = normalizeText(safeRow?.phone)
+  const email = normalizeText(safeRow?.email)
 
   return {
     ...safeRow,
+    is_walk_in_customer: isWalkInCustomer,
+    customer_type: isWalkInCustomer ? 'Walk-in' : 'Registered',
+    display_name: isWalkInCustomer ? WALK_IN_CUSTOMER_LABEL : fullName,
+    display_reference: walkInReference,
+    display_contact: isWalkInCustomer
+      ? 'No contact details captured'
+      : [phone, email].filter(Boolean).join(' | '),
     total_orders: Number(safeRow?.total_orders || 0),
     gross_spent: grossSpent,
     returns_value: returnsValue,
     net_spent: toMoney(hasOwn(safeRow, 'net_spent') ? safeRow?.net_spent : grossSpent - returnsValue),
     recent_items_preview: String(safeRow?.recent_items_preview || '').trim()
   }
+}
+
+function isWalkInCustomerProfile(row) {
+  const name = normalizeSingleLine(row?.full_name || row?.name) || ''
+  const notes = normalizeSingleLine(row?.notes) || ''
+  const normalizedName = name.toLowerCase()
+  const normalizedNotes = notes.toLowerCase()
+
+  return normalizedName === WALK_IN_CUSTOMER_LABEL.toLowerCase()
+    || normalizedName.startsWith(`${WALK_IN_CUSTOMER_LABEL.toLowerCase()} -`)
+    || normalizedNotes.startsWith(AUTO_WALK_IN_PROFILE_NOTE.toLowerCase())
+}
+
+function extractWalkInReference(row) {
+  if (!isWalkInCustomerProfile(row)) return null
+
+  const name = normalizeSingleLine(row?.full_name || row?.name) || ''
+  const namePrefix = `${WALK_IN_CUSTOMER_LABEL} - `
+  if (name.toLowerCase().startsWith(namePrefix.toLowerCase())) {
+    return normalizeSingleLine(name.slice(namePrefix.length)) || null
+  }
+
+  const notes = normalizeSingleLine(row?.notes) || ''
+  const receiptMatch = notes.match(/\bReceipt:\s*([A-Z0-9-]+)/i)
+  if (receiptMatch?.[1]) return receiptMatch[1]
+
+  const saleMatch = notes.match(/\bSale:\s*([A-Z0-9-]+)/i)
+  if (saleMatch?.[1]) return saleMatch[1]
+
+  return null
 }
 
 async function ensureCustomerSchema() {
@@ -1209,6 +1253,7 @@ router.get('/search', verifyToken, authorize(['customers.view', 'sales.create'])
 router.get('/', verifyToken, authorize('customers.view'), async (req, res) => {
   try {
     await ensureCustomerSchema()
+    await ensureWalkInCustomerProfiles()
 
     const [rows] = await db.pool.query(
       `SELECT
@@ -1277,6 +1322,7 @@ router.get('/', verifyToken, authorize('customers.view'), async (req, res) => {
 router.get('/:id', verifyToken, authorize('customers.view'), async (req, res) => {
   try {
     await ensureCustomerSchema()
+    await ensureWalkInCustomerProfiles()
 
     const customerId = Number(req.params.id)
     if (!Number.isInteger(customerId) || customerId <= 0) {

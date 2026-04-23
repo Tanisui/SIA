@@ -24,6 +24,132 @@ function normalizeTaxRate(value) {
   return parsed
 }
 
+function formatCustomerCode(customerId) {
+  const idNumber = Number(customerId)
+  if (!Number.isInteger(idNumber) || idNumber <= 0) return null
+  return `CUST-${String(idNumber).padStart(6, '0')}`
+}
+
+function normalizeCustomerProfileToken(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function composeWalkInCustomerProfileName({ receiptNo, saleNumber, saleId } = {}) {
+  const reference = normalizeCustomerProfileToken(receiptNo)
+    || normalizeCustomerProfileToken(saleNumber)
+    || (saleId ? `Sale #${saleId}` : '')
+
+  return reference ? `${WALK_IN_CUSTOMER_LABEL} - ${reference}` : WALK_IN_CUSTOMER_LABEL
+}
+
+async function ensureSalesCustomerProfileSchema(queryable = db.pool) {
+  await queryable.query('ALTER TABLE customers ADD COLUMN customer_code VARCHAR(40) NULL AFTER id').catch(() => {})
+  await queryable.query('ALTER TABLE customers ADD COLUMN full_name VARCHAR(255) NULL AFTER customer_code').catch(() => {})
+  await queryable.query('ALTER TABLE customers ADD COLUMN updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at').catch(() => {})
+  await queryable.query('CREATE INDEX idx_customers_customer_code ON customers(customer_code)').catch(() => {})
+  await queryable.query(`
+    UPDATE customers
+    SET full_name = COALESCE(NULLIF(TRIM(full_name), ''), NULLIF(TRIM(name), ''))
+    WHERE full_name IS NULL OR TRIM(full_name) = ''
+  `).catch(() => {})
+  await queryable.query(`
+    UPDATE customers
+    SET customer_code = CONCAT('CUST-', LPAD(id, 6, '0'))
+    WHERE customer_code IS NULL OR TRIM(customer_code) = ''
+  `).catch(() => {})
+}
+
+async function createWalkInCustomerProfile(conn, { receiptNo, saleNumber, saleId } = {}) {
+  const profileName = composeWalkInCustomerProfileName({ receiptNo, saleNumber, saleId })
+  const notes = [
+    'Auto-created walk-in customer profile.',
+    receiptNo ? `Receipt: ${normalizeCustomerProfileToken(receiptNo)}` : null,
+    saleNumber ? `Sale: ${normalizeCustomerProfileToken(saleNumber)}` : null,
+    saleId ? `Sale ID: ${saleId}` : null
+  ].filter(Boolean).join(' ')
+
+  const [result] = await conn.query(
+    `INSERT INTO customers (customer_code, full_name, name, phone, email, notes)
+     VALUES (NULL, ?, ?, NULL, NULL, ?)`,
+    [profileName, profileName, notes]
+  )
+
+  const customerId = Number(result.insertId)
+  const customerCode = formatCustomerCode(customerId)
+  if (customerCode) {
+    await conn.query(
+      'UPDATE customers SET customer_code = ? WHERE id = ?',
+      [customerCode, customerId]
+    )
+  }
+
+  return {
+    id: customerId,
+    customer_code: customerCode,
+    full_name: profileName,
+    phone: null,
+    email: null
+  }
+}
+
+async function ensureWalkInCustomerProfiles() {
+  const conn = await db.pool.getConnection()
+  let transactionStarted = false
+
+  try {
+    await ensureSalesCustomerProfileSchema(conn)
+
+    await conn.beginTransaction()
+    transactionStarted = true
+
+    const [sales] = await conn.query(
+      `SELECT id, sale_number, receipt_no
+       FROM sales
+       WHERE customer_id IS NULL
+         AND status IN ('COMPLETED', 'REFUNDED')
+       ORDER BY id ASC
+       FOR UPDATE`
+    )
+
+    if (!sales.length) {
+      await conn.commit()
+      transactionStarted = false
+      return { created: 0 }
+    }
+
+    let created = 0
+    for (const sale of sales) {
+      const customer = await createWalkInCustomerProfile(conn, {
+        receiptNo: sale.receipt_no,
+        saleNumber: sale.sale_number,
+        saleId: sale.id
+      })
+
+      const [updateResult] = await conn.query(
+        `UPDATE sales
+         SET customer_id = ?,
+             customer_name_snapshot = COALESCE(NULLIF(TRIM(customer_name_snapshot), ''), ?)
+         WHERE id = ?
+           AND customer_id IS NULL`,
+        [customer.id, WALK_IN_CUSTOMER_LABEL, sale.id]
+      )
+
+      if (Number(updateResult.affectedRows) > 0) created += 1
+    }
+
+    await conn.commit()
+    transactionStarted = false
+    return { created }
+  } catch (err) {
+    if (transactionStarted) await conn.rollback().catch(() => {})
+    throw err
+  } finally {
+    conn.release()
+  }
+}
+
 function calculateSaleTaxBreakdown(totalAmount, taxRateValue) {
   const total = roundMoney(totalAmount)
   const taxRate = normalizeTaxRate(taxRateValue)
@@ -166,6 +292,8 @@ async function ensureSalesSchema() {
       .catch(() => {})
     await db.pool.query("ALTER TABLE sale_return_items ADD COLUMN return_disposition VARCHAR(32) NULL DEFAULT 'RESTOCK'")
       .catch(() => {})
+
+    await ensureSalesCustomerProfileSchema(db.pool)
   })().catch((err) => {
     ensureSalesSchemaPromise = null
     throw err
@@ -729,6 +857,8 @@ module.exports = {
   buildSalesReturnStatus,
   enrichSaleRecord,
   generateDocumentNumber,
+  createWalkInCustomerProfile,
+  ensureWalkInCustomerProfiles,
   prepareSaleItems,
   applySaleInventoryChanges,
   getSaleItems,

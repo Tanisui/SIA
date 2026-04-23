@@ -12,6 +12,7 @@ const {
   buildDateFilter,
   enrichSaleRecord,
   generateDocumentNumber,
+  createWalkInCustomerProfile,
   prepareSaleItems,
   applySaleInventoryChanges,
   getSaleItems,
@@ -92,6 +93,26 @@ async function getLockedSale(conn, { saleId, receiptNo }) {
 
   if (!rows.length) return null
   return getSaleById(conn, rows[0].id)
+}
+
+async function getCustomerForSaleLink(conn, customerId) {
+  const normalizedCustomerId = Number(customerId)
+  if (!Number.isFinite(normalizedCustomerId) || normalizedCustomerId <= 0) return null
+
+  const [rows] = await conn.query(
+    `SELECT
+       id,
+       customer_code,
+       COALESCE(NULLIF(full_name, ''), NULLIF(name, ''), CONCAT('Customer #', id)) AS full_name,
+       phone,
+       email
+     FROM customers
+     WHERE id = ?
+     LIMIT 1`,
+    [normalizedCustomerId]
+  )
+
+  return rows[0] || null
 }
 
 router.get('/config', verifyToken, authorize(['sales.view', 'sales.create']), async (req, res) => {
@@ -651,6 +672,107 @@ router.get('/:id', verifyToken, authorize('sales.view'), async (req, res) => {
   }
 })
 
+router.patch('/:id/customer', express.json(), verifyToken, authorize(['sales.create', 'customers.update']), async (req, res) => {
+  await ensureSalesSchema()
+  const conn = await db.pool.getConnection()
+
+  try {
+    await conn.beginTransaction()
+
+    if (!hasOwn(req.body || {}, 'customer_id')) {
+      throw createHttpError(400, 'customer_id is required')
+    }
+
+    const customerId = Number(req.body.customer_id)
+    if (!Number.isFinite(customerId) || customerId <= 0) {
+      throw createHttpError(400, 'customer_id must be a valid positive integer')
+    }
+
+    const saleId = Number(req.params.id)
+    if (!Number.isFinite(saleId) || saleId <= 0) {
+      throw createHttpError(400, 'sale id must be a valid positive integer')
+    }
+
+    const [saleRows] = await conn.query(
+      `SELECT id, status, customer_id, receipt_no, sale_number
+       FROM sales
+       WHERE id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [saleId]
+    )
+
+    if (!saleRows.length) throw createHttpError(404, 'sale not found')
+
+    const saleRow = saleRows[0]
+    const status = String(saleRow.status || '').toUpperCase()
+    if (status === 'DRAFT') {
+      throw createHttpError(400, 'customer can only be attached after payment is completed')
+    }
+
+    const existingCustomerId = Number(saleRow.customer_id)
+    if (Number.isFinite(existingCustomerId) && existingCustomerId > 0 && existingCustomerId !== customerId) {
+      throw createHttpError(409, 'sale is already linked to another customer')
+    }
+
+    const customer = await getCustomerForSaleLink(conn, customerId)
+    if (!customer) throw createHttpError(404, 'customer not found')
+
+    if (!existingCustomerId) {
+      await conn.query(
+        `UPDATE sales
+         SET customer_id = ?,
+             customer_name_snapshot = ?,
+             customer_phone_snapshot = ?,
+             customer_email_snapshot = ?
+         WHERE id = ?`,
+        [
+          customer.id,
+          customer.full_name || WALK_IN_CUSTOMER_LABEL,
+          normalizeOptionalText(customer.phone),
+          normalizeOptionalText(customer.email),
+          saleId
+        ]
+      )
+    }
+
+    await conn.commit()
+
+    const updatedSale = await getSaleById(db.pool, saleId)
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'SALE_CUSTOMER_LINKED',
+      resourceType: 'Sale',
+      resourceId: saleId,
+      details: {
+        module: 'sales',
+        severity: 'low',
+        target_label: updatedSale?.receipt_no || updatedSale?.sale_number || `Sale #${saleId}`,
+        summary: `Linked sale "${updatedSale?.receipt_no || updatedSale?.sale_number || saleId}" to customer "${customer.full_name || customer.customer_code || customer.id}"`,
+        after: {
+          customer_id: customer.id,
+          customer_code: customer.customer_code || null,
+          customer_name: customer.full_name || null
+        },
+        references: {
+          sale_id: saleId,
+          customer_id: customer.id,
+          receipt_no: updatedSale?.receipt_no || saleRow.receipt_no || null,
+          sale_number: updatedSale?.sale_number || saleRow.sale_number || null
+        }
+      }
+    })
+
+    res.json(updatedSale)
+  } catch (err) {
+    await conn.rollback().catch(() => {})
+    console.error(err)
+    res.status(getErrorStatus(err)).json({ error: getErrorMessage(err, 'failed to link sale customer') })
+  } finally {
+    conn.release()
+  }
+})
+
 router.post('/', express.json(), verifyToken, authorize('sales.create'), async (req, res) => {
   await ensureSalesSchema()
   const conn = await db.pool.getConnection()
@@ -744,6 +866,14 @@ router.post('/', express.json(), verifyToken, authorize('sales.create'), async (
     const orderNote = null
     const saleNumber = await generateDocumentNumber(conn, 'sales', 'sale_number', 'SAL')
     const receiptNo = await generateDocumentNumber(conn, 'sales', 'receipt_no', 'RCT')
+
+    if (!resolvedCustomerId) {
+      const walkInCustomer = await createWalkInCustomerProfile(conn, { receiptNo, saleNumber, saleId })
+      resolvedCustomerId = walkInCustomer.id
+      customerNameSnapshot = WALK_IN_CUSTOMER_LABEL
+      customerPhoneSnapshot = null
+      customerEmailSnapshot = null
+    }
 
     if (saleId) {
       await conn.query(

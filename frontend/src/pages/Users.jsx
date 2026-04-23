@@ -42,11 +42,21 @@ function DeleteIcon() {
 }
 
 function composeDisplayName(user = {}) {
+  if (user.display_name) return user.display_name
   const composed = [user.first_name, user.last_name]
     .map((part) => String(part || '').trim())
     .filter(Boolean)
     .join(' ')
   return composed || user.full_name || user.employee?.name || '-'
+}
+
+function FieldLine({ label, value, primary = false }) {
+  return (
+    <div className={`users-field-line ${primary ? 'is-primary' : ''}`}>
+      <span className="users-field-label">{label}</span>
+      <span className="users-field-value">{value || '-'}</span>
+    </div>
+  )
 }
 
 export default function Users() {
@@ -142,8 +152,8 @@ export default function Users() {
             <thead>
               <tr>
                 <th>Account</th>
-                <th>Profile</th>
-                <th>Status</th>
+                <th>Employee</th>
+                <th>Access</th>
                 <th>Contact</th>
                 <th>Employment</th>
                 <th className="text-right">Actions</th>
@@ -158,40 +168,45 @@ export default function Users() {
                 </tr>
               ) : (
                 users.map((user) => {
-                  const primaryRole = (user.roles || [])[0] || '-'
+                  const primaryRole = user.primary_role || (user.roles || [])[0] || '-'
                   const isActive = user.is_active === 1
-                  const contactNumber = user.employee?.mobile_number || user.employee?.contact || '-'
+                  const contactNumber = user.contact_number || user.employee?.mobile_number || user.employee?.contact || '-'
                   const displayName = composeDisplayName(user)
+                  const employmentType = user.employment_type || user.employee?.employment_type || '-'
+                  const positionLabel = user.position_label || user.employee?.position_title || user.employee?.role || '-'
 
                   return (
                     <tr key={user.id}>
                       <td>
                         <div className="users-cell-stack">
-                          <div className="users-cell-primary">{user.username || '-'}</div>
-                          <div className="users-cell-secondary">{user.email || '-'}</div>
+                          <FieldLine label="Username" value={user.username} primary />
+                          <FieldLine label="Email" value={user.email} />
                         </div>
                       </td>
                       <td>
                         <div className="users-cell-stack">
-                          <div className="users-cell-primary">{displayName}</div>
-                          <div className="users-cell-secondary">{primaryRole}</div>
-                        </div>
-                      </td>
-                      <td>
-                        <span className={`badge ${isActive ? 'badge-success' : 'badge-neutral'}`}>
-                          {isActive ? 'Active' : 'Inactive'}
-                        </span>
-                      </td>
-                      <td>
-                        <div className="users-cell-stack">
-                          <div className="users-cell-primary">{contactNumber}</div>
-                          <div className="users-cell-secondary">{user.employee?.employment_type || 'No employment type'}</div>
+                          <FieldLine label="Name" value={displayName} primary />
+                          <FieldLine label="Position" value={positionLabel} />
                         </div>
                       </td>
                       <td>
                         <div className="users-cell-stack">
-                          <div className="users-cell-primary">{formatDate(user.employee?.hire_date)}</div>
-                          <div className="users-cell-secondary">Pay Rate {formatCurrency(user.employee?.pay_rate)}</div>
+                          <FieldLine label="Access Role" value={primaryRole} primary />
+                          <span className={`badge users-status-badge ${isActive ? 'badge-success' : 'badge-neutral'}`}>
+                            {isActive ? 'Active' : 'Inactive'}
+                          </span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="users-cell-stack">
+                          <FieldLine label="Mobile" value={contactNumber} primary />
+                          <FieldLine label="Employment Type" value={employmentType} />
+                        </div>
+                      </td>
+                      <td>
+                        <div className="users-cell-stack">
+                          <FieldLine label="Hire Date" value={formatDate(user.employee?.hire_date)} primary />
+                          <FieldLine label="Pay Rate" value={formatCurrency(user.employee?.pay_rate)} />
                         </div>
                       </td>
                       <td className="text-right users-actions-cell">

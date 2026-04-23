@@ -43,6 +43,44 @@ function StatCard({ label, value, tone }) {
   )
 }
 
+function isWalkInCustomer(customer) {
+  if (!customer) return false
+  if (customer.is_walk_in_customer) return true
+  if (normalizeText(customer.customer_type) === 'walk-in') return true
+  const name = normalizeText(customer.full_name || customer.name || customer.display_name)
+  return name === 'walk-in customer' || name.startsWith('walk-in customer -')
+}
+
+function customerDisplayName(customer) {
+  if (!customer) return 'Customer'
+  if (isWalkInCustomer(customer)) return 'Walk-in Customer'
+  return cleanText(customer.display_name || customer.full_name || customer.name) || `Customer #${customer.id}`
+}
+
+function customerDisplayReference(customer) {
+  const reference = cleanText(customer?.display_reference)
+  if (reference) return reference
+
+  if (isWalkInCustomer(customer)) {
+    const name = cleanText(customer?.full_name || customer?.name)
+    const prefix = 'Walk-in Customer - '
+    if (name.toLowerCase().startsWith(prefix.toLowerCase())) return name.slice(prefix.length).trim()
+  }
+
+  return cleanText(customer?.customer_code)
+}
+
+function customerContactLine(customer) {
+  if (isWalkInCustomer(customer)) {
+    const reference = customerDisplayReference(customer)
+    return reference ? `POS walk-in sale | Receipt ${reference}` : 'POS walk-in sale | No contact details captured'
+  }
+
+  return cleanText(customer?.display_contact)
+    || [customer?.phone, customer?.email].filter(Boolean).join(' | ')
+    || 'No contact details'
+}
+
 export default function Customers() {
   const navigate = useNavigate()
   const permissions = useSelector((state) => state.auth?.permissions || JSON.parse(localStorage.getItem('permissions') || '[]'))
@@ -62,6 +100,9 @@ export default function Customers() {
       [
         customer.customer_code,
         customer.full_name,
+        customer.display_name,
+        customer.display_reference,
+        customer.customer_type,
         customer.phone,
         customer.email,
         customer.recent_items_preview
@@ -124,6 +165,8 @@ export default function Customers() {
     loadCustomerDetail(selectedCustomerId)
   }, [selectedCustomerId])
 
+  const selectedIsWalkInCustomer = isWalkInCustomer(selectedCustomer)
+
   return (
     <div className="page">
       <div className="page-header" style={{ alignItems: 'flex-start', gap: 16 }}>
@@ -164,6 +207,7 @@ export default function Customers() {
               <div style={{ padding: 20, color: 'var(--text-light)' }}>No customers found.</div>
             ) : filteredCustomers.map((customer) => {
               const isActive = String(customer.id) === String(selectedCustomerId)
+              const isWalkIn = isWalkInCustomer(customer)
               return (
                 <button
                   key={customer.id}
@@ -180,11 +224,14 @@ export default function Customers() {
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                    <div style={{ fontWeight: 700, color: 'var(--text-dark)' }}>{customer.full_name || `Customer #${customer.id}`}</div>
-                    <div style={{ fontSize: 12, color: 'var(--gold-dark)' }}>{customer.customer_code || '-'}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontWeight: 700, color: 'var(--text-dark)' }}>
+                      {customerDisplayName(customer)}
+                      {isWalkIn ? <span className="badge badge-warning">Walk-in</span> : null}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--gold-dark)' }}>{customerDisplayReference(customer) || '-'}</div>
                   </div>
                   <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-light)' }}>
-                    {[customer.phone, customer.email].filter(Boolean).join(' | ') || 'No contact details'}
+                    {customerContactLine(customer)}
                   </div>
                   <div style={{ marginTop: 10, display: 'grid', gap: 4, fontSize: 12, color: 'var(--text-mid)' }}>
                     <div>Orders: {customer.total_orders || 0}</div>
@@ -211,8 +258,12 @@ export default function Customers() {
               <div className="card">
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 16 }}>
                   <div>
-                    <h2 style={{ marginBottom: 4 }}>{selectedCustomer.full_name || `Customer #${selectedCustomer.id}`}</h2>
-                    <div style={{ color: 'var(--text-light)' }}>{selectedCustomer.customer_code || 'No customer code'}</div>
+                    <h2 style={{ marginBottom: 4 }}>{customerDisplayName(selectedCustomer)}</h2>
+                    <div style={{ color: 'var(--text-light)' }}>
+                      {selectedIsWalkInCustomer
+                        ? `Auto-created from POS walk-in sale${customerDisplayReference(selectedCustomer) ? ` | Receipt ${customerDisplayReference(selectedCustomer)}` : ''}`
+                        : (selectedCustomer.customer_code || 'No customer code')}
+                    </div>
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     {can(permissions, 'customers.update') ? (
@@ -232,14 +283,29 @@ export default function Customers() {
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
-                  <div>
-                    <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 4 }}>Phone</div>
-                    <div>{selectedCustomer.phone || '-'}</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 4 }}>Email</div>
-                    <div>{selectedCustomer.email || '-'}</div>
-                  </div>
+                  {selectedIsWalkInCustomer ? (
+                    <>
+                      <div>
+                        <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 4 }}>Customer Type</div>
+                        <div>Walk-in / anonymous POS customer</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 4 }}>Contact</div>
+                        <div>No contact details captured</div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 4 }}>Phone</div>
+                        <div>{selectedCustomer.phone || '-'}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 4 }}>Email</div>
+                        <div>{selectedCustomer.email || '-'}</div>
+                      </div>
+                    </>
+                  )}
                   <div>
                     <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 4 }}>Last Purchase</div>
                     <div>{fmtDate(selectedCustomer.last_purchase_at)}</div>
@@ -256,7 +322,7 @@ export default function Customers() {
 
               <div className="card">
                 <h3 style={{ marginBottom: 12 }}>Recent Purchase Lines</h3>
-                <div className="table-wrap">
+                <div className="table-wrap" style={{ maxHeight: 'calc(100vh - 520px)', overflowY: 'auto' }}>
                   <table>
                     <thead>
                       <tr>

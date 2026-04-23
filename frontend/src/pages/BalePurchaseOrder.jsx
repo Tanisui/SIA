@@ -542,7 +542,7 @@ export default function BalePurchaseOrder() {
       }
     }
     if (!basePoNumber) {
-      setError('PO No. could not be generated. Click Generate PO No. and try again.')
+      setError('PO No. is not ready yet. Please refresh and try again.')
       return
     }
     const formForSave = { ...orderForm, bale_batch_no: basePoNumber }
@@ -854,19 +854,8 @@ export default function BalePurchaseOrder() {
                           required
                           readOnly
                           value={orderForm.bale_batch_no}
-                          placeholder={poNumberLoading ? 'Generating...' : 'Auto-generated'}
+                          placeholder="PO number"
                         />
-                        {!editingOrderId ? (
-                          <button
-                            className="btn btn-secondary btn-sm no-print"
-                            type="button"
-                            onClick={regeneratePoNumber}
-                            disabled={submitting || poNumberLoading}
-                            style={{ marginLeft: 8 }}
-                          >
-                            {poNumberLoading ? 'Generating...' : 'Generate'}
-                          </button>
-                        ) : null}
                       </div>
                       <div className="po-meta-row">
                         <span>PO Date</span>

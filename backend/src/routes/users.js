@@ -616,6 +616,14 @@ function mapPayrollProfileRow(row) {
   }
 }
 
+function composeUserDisplayName(userRow = {}, employee = null) {
+  const composed = [userRow.first_name, userRow.last_name]
+    .map((part) => normalizeText(part))
+    .filter(Boolean)
+    .join(' ')
+  return composed || normalizeText(userRow.full_name) || normalizeText(employee?.name) || null
+}
+
 function buildPayrollOverview(employee = null, payrollProfileRow = null) {
   const payrollProfile = mapPayrollProfileRow(payrollProfileRow)
   const payrollEligible = payrollProfile ? payrollProfile.status === 'active' : Boolean(employee)
@@ -751,6 +759,11 @@ async function buildUserResponse(conn, userRow, { includeDocuments = false } = {
   const payrollProfileRow = await findPayrollProfileForUser(conn, userRow.id)
   const employee = mapEmployeeRow(employeeRow)
   const payrollProfile = buildPayrollOverview(employee, payrollProfileRow)
+  const displayName = composeUserDisplayName(userRow, employee)
+  const primaryRole = roles[0] || null
+  const contactNumber = normalizeText(employee?.mobile_number) || normalizeText(employee?.contact) || null
+  const employmentType = normalizeText(employee?.employment_type) || null
+  const positionLabel = normalizeText(employee?.position_title) || normalizeText(employee?.role) || null
 
   if (employee && includeDocuments) {
     employee.documents = await getEmployeeDocuments(conn, employee.id, userRow.id)
@@ -758,6 +771,11 @@ async function buildUserResponse(conn, userRow, { includeDocuments = false } = {
 
   return {
     ...userRow,
+    display_name: displayName,
+    primary_role: primaryRole,
+    contact_number: contactNumber,
+    employment_type: employmentType,
+    position_label: positionLabel,
     roles,
     employee: employee || null,
     payroll_profile: payrollProfile,
