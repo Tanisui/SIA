@@ -14,6 +14,12 @@ export const login = createAsyncThunk('auth/login', async ({ username, password 
     const res = await api.post('/auth/login', { username, password })
     return res.data
   } catch (err) {
+    if (!err.response) {
+      const apiBase = api.defaults?.baseURL || 'the backend server'
+      return thunkAPI.rejectWithValue({
+        error: `Cannot connect to ${apiBase}. Make sure the backend server is running.`
+      })
+    }
     return thunkAPI.rejectWithValue(err.response?.data || { error: 'Login failed' })
   }
 })
