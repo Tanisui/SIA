@@ -138,6 +138,46 @@ async function getTableColumnSet(tableName) {
   return new Set(rows.map((row) => String(row.COLUMN_NAME || '').toLowerCase()))
 }
 
+function sanitizeIntegerColumnType(value, fallback = 'BIGINT UNSIGNED') {
+  const normalized = String(value || '').trim().toUpperCase()
+  if (/^(TINYINT|SMALLINT|MEDIUMINT|INT|INTEGER|BIGINT)(\(\d+\))?( UNSIGNED)?$/.test(normalized)) {
+    return normalized
+  }
+  return fallback
+}
+
+function comparableIntegerColumnType(value) {
+  return sanitizeIntegerColumnType(value).replace(/\(\d+\)/g, '')
+}
+
+async function getIntegerColumnType(tableName, columnName, fallback = 'BIGINT UNSIGNED') {
+  const [rows] = await db.pool.query(`
+    SELECT COLUMN_TYPE AS column_type
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ?
+      AND COLUMN_NAME = ?
+    LIMIT 1
+  `, [tableName, columnName])
+
+  return sanitizeIntegerColumnType(rows[0]?.column_type, fallback)
+}
+
+async function hasForeignKey(tableName, columnName, referencedTableName, referencedColumnName) {
+  const [rows] = await db.pool.query(`
+    SELECT CONSTRAINT_NAME
+    FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ?
+      AND COLUMN_NAME = ?
+      AND REFERENCED_TABLE_NAME = ?
+      AND REFERENCED_COLUMN_NAME = ?
+    LIMIT 1
+  `, [tableName, columnName, referencedTableName, referencedColumnName])
+
+  return rows.length > 0
+}
+
 async function ensureEnumColumnDefinition(tableName, columnName, expectedDefinition) {
   const [rows] = await db.pool.query(`
     SELECT COLUMN_TYPE AS column_type
@@ -206,6 +246,7 @@ async function ensureAutomatedReportsSchema() {
         standard_items INT DEFAULT 0,
         low_grade_items INT DEFAULT 0,
         damaged_items INT DEFAULT 0,
+        damage_recorded_at TIMESTAMP NULL,
         cost_per_saleable_item DECIMAL(12,2) DEFAULT 0.00,
         encoded_by BIGINT UNSIGNED NULL,
         breakdown_date DATE,
@@ -220,6 +261,7 @@ async function ensureAutomatedReportsSchema() {
     await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN standard_items INT DEFAULT 0 AFTER premium_items')
     await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN low_grade_items INT DEFAULT 0 AFTER standard_items')
     await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN damaged_items INT DEFAULT 0 AFTER low_grade_items')
+    await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN damage_recorded_at TIMESTAMP NULL AFTER damaged_items')
     await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN cost_per_saleable_item DECIMAL(12,2) DEFAULT 0.00 AFTER damaged_items')
     await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN encoded_by BIGINT UNSIGNED NULL AFTER cost_per_saleable_item')
     await runSchemaChange('ALTER TABLE bale_breakdowns ADD COLUMN breakdown_date DATE NULL AFTER encoded_by')
@@ -307,8 +349,70 @@ async function ensureAutomatedReportsSchema() {
       "ENUM('damaged', 'unsellable', 'shrinkage', 'correction') NOT NULL DEFAULT 'correction'"
     )
 
+    await runSchemaChange('ALTER TABLE inventory_transactions ADD COLUMN supplier_id BIGINT UNSIGNED NULL AFTER product_id')
+    await runSchemaChange('CREATE INDEX idx_inventory_transactions_supplier_id ON inventory_transactions(supplier_id)')
+    await runSchemaChange(`
+      ALTER TABLE inventory_transactions
+      ADD CONSTRAINT fk_inventory_transactions_supplier_id
+      FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL
+    `)
+
+    await db.pool.query(`
+      CREATE TABLE IF NOT EXISTS bale_supplier_returns (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        supplier_id BIGINT UNSIGNED NULL,
+        supplier_name VARCHAR(255) NULL,
+        bale_purchase_id BIGINT UNSIGNED NOT NULL,
+        return_date DATE NOT NULL,
+        notes TEXT NULL,
+        processed_by BIGINT UNSIGNED NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL,
+        FOREIGN KEY (bale_purchase_id) REFERENCES bale_purchases(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `)
+
+    await db.pool.query(`
+      CREATE TABLE IF NOT EXISTS bale_supplier_return_items (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        return_id BIGINT UNSIGNED NOT NULL,
+        quantity INT NOT NULL DEFAULT 0,
+        reason TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (return_id) REFERENCES bale_supplier_returns(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `)
+
+    await runSchemaChange('CREATE INDEX idx_bale_supplier_returns_supplier_id ON bale_supplier_returns(supplier_id)')
+    await runSchemaChange('CREATE INDEX idx_bale_supplier_returns_purchase_id ON bale_supplier_returns(bale_purchase_id)')
+    await runSchemaChange('CREATE INDEX idx_bale_supplier_returns_date ON bale_supplier_returns(return_date)')
+    await runSchemaChange('CREATE INDEX idx_bale_supplier_return_items_return_id ON bale_supplier_return_items(return_id)')
+
     await runSchemaChange('ALTER TABLE suppliers ADD COLUMN notes TEXT NULL')
     await runSchemaChange('ALTER TABLE suppliers ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP')
+
+    const categoryIdColumnType = await getIntegerColumnType('categories', 'id')
+    await db.pool.query(`
+      CREATE TABLE IF NOT EXISTS category_types (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        category_id ${categoryIdColumnType} NOT NULL,
+        name VARCHAR(150) NOT NULL,
+        description TEXT NULL,
+        is_active TINYINT(1) DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_category_types_category_name (category_id, name)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `)
+    const categoryTypesCategoryIdColumnType = await getIntegerColumnType('category_types', 'category_id', categoryIdColumnType)
+    if (comparableIntegerColumnType(categoryTypesCategoryIdColumnType) !== comparableIntegerColumnType(categoryIdColumnType)) {
+      await runSchemaChange(`ALTER TABLE category_types MODIFY COLUMN category_id ${categoryIdColumnType} NOT NULL`)
+    }
+    if (!await hasForeignKey('category_types', 'category_id', 'categories', 'id')) {
+      await runSchemaChange('ALTER TABLE category_types ADD CONSTRAINT fk_category_types_category FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE')
+    }
+    await runSchemaChange('CREATE INDEX idx_category_types_category_id ON category_types(category_id)')
 
     await runSchemaChange('ALTER TABLE products ADD COLUMN item_code VARCHAR(128) NULL AFTER id')
     await runSchemaChange('ALTER TABLE products ADD COLUMN bale_purchase_id BIGINT UNSIGNED NULL AFTER id')

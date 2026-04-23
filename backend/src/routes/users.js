@@ -38,6 +38,8 @@ const EMPLOYEE_DOCUMENT_TYPE_MAP = new Map(EMPLOYEE_DOCUMENT_TYPES.map((item) =>
 const EMPLOYEE_SELECT_COLUMNS = [
   'id',
   'name',
+  'first_name',
+  'last_name',
   'role',
   'contact_type',
   'contact',
@@ -180,6 +182,50 @@ function safeJsonParse(value) {
 function normalizeText(value) {
   const text = String(value ?? '').trim()
   return text || null
+}
+
+function splitFullName(value) {
+  const fullName = String(value || '').trim().replace(/\s+/g, ' ')
+  if (!fullName) return { firstName: null, lastName: null }
+  const [firstName, ...rest] = fullName.split(' ')
+  return {
+    firstName: normalizeText(firstName),
+    lastName: normalizeText(rest.join(' '))
+  }
+}
+
+function composeFullName(firstName, lastName, fallback = null) {
+  const name = [firstName, lastName].map((part) => normalizeText(part)).filter(Boolean).join(' ')
+  return normalizeText(name) || normalizeText(fallback)
+}
+
+function normalizePersonNamePayload(payload = {}, fallback = {}) {
+  const fallbackParts = splitFullName(fallback.full_name || fallback.name)
+  let firstName = Object.prototype.hasOwnProperty.call(payload, 'first_name')
+    ? normalizeText(payload.first_name)
+    : normalizeText(fallback.first_name) || fallbackParts.firstName
+  let lastName = Object.prototype.hasOwnProperty.call(payload, 'last_name')
+    ? normalizeText(payload.last_name)
+    : normalizeText(fallback.last_name) || fallbackParts.lastName
+  const legacyFullName = normalizeText(payload.full_name)
+
+  if ((!firstName || !lastName) && legacyFullName) {
+    const legacyParts = splitFullName(legacyFullName)
+    if (!firstName) firstName = legacyParts.firstName
+    if (!lastName) lastName = legacyParts.lastName
+  }
+
+  return {
+    firstName,
+    lastName,
+    fullName: composeFullName(firstName, lastName, legacyFullName || fallback.full_name || fallback.name)
+  }
+}
+
+function hasNamePayload(payload = {}) {
+  return Object.prototype.hasOwnProperty.call(payload, 'first_name')
+    || Object.prototype.hasOwnProperty.call(payload, 'last_name')
+    || Object.prototype.hasOwnProperty.call(payload, 'full_name')
 }
 
 function normalizeUpperText(value) {
@@ -395,7 +441,11 @@ async function ensureEmployeeSchema() {
 
   ensureEmployeeSchemaPromise = (async () => {
     const statements = [
+      "ALTER TABLE users ADD COLUMN first_name VARCHAR(120) NULL AFTER full_name",
+      "ALTER TABLE users ADD COLUMN last_name VARCHAR(120) NULL AFTER first_name",
       "ALTER TABLE employees ADD COLUMN birth_date DATE NULL AFTER name",
+      "ALTER TABLE employees ADD COLUMN first_name VARCHAR(120) NULL AFTER name",
+      "ALTER TABLE employees ADD COLUMN last_name VARCHAR(120) NULL AFTER first_name",
       "ALTER TABLE employees ADD COLUMN sex VARCHAR(32) NULL AFTER birth_date",
       "ALTER TABLE employees ADD COLUMN civil_status VARCHAR(32) NULL AFTER sex",
       "ALTER TABLE employees ADD COLUMN nationality VARCHAR(100) NULL AFTER civil_status",
@@ -424,6 +474,22 @@ async function ensureEmployeeSchema() {
         if (err?.code !== 'ER_DUP_FIELDNAME') throw err
       }
     }
+
+    await db.pool.query(`
+      UPDATE users
+      SET
+        first_name = COALESCE(NULLIF(TRIM(first_name), ''), NULLIF(TRIM(SUBSTRING_INDEX(COALESCE(NULLIF(full_name, ''), username, email, ''), ' ', 1)), '')),
+        last_name = COALESCE(NULLIF(TRIM(last_name), ''), NULLIF(TRIM(SUBSTRING(COALESCE(NULLIF(full_name, ''), ''), LENGTH(SUBSTRING_INDEX(COALESCE(NULLIF(full_name, ''), ''), ' ', 1)) + 1)), ''))
+      WHERE first_name IS NULL OR TRIM(first_name) = '' OR last_name IS NULL
+    `)
+
+    await db.pool.query(`
+      UPDATE employees
+      SET
+        first_name = COALESCE(NULLIF(TRIM(first_name), ''), NULLIF(TRIM(SUBSTRING_INDEX(COALESCE(NULLIF(name, ''), ''), ' ', 1)), '')),
+        last_name = COALESCE(NULLIF(TRIM(last_name), ''), NULLIF(TRIM(SUBSTRING(COALESCE(NULLIF(name, ''), ''), LENGTH(SUBSTRING_INDEX(COALESCE(NULLIF(name, ''), ''), ' ', 1)) + 1)), ''))
+      WHERE first_name IS NULL OR TRIM(first_name) = '' OR last_name IS NULL
+    `)
 
     await db.pool.query(`
       CREATE TABLE IF NOT EXISTS employee_documents (
@@ -520,6 +586,9 @@ async function findPayrollProfileForUser(conn, userId) {
 function mapEmployeeRow(row) {
   if (!row) return null
   const employee = { ...row }
+  const nameParts = splitFullName(employee.name)
+  employee.first_name = employee.first_name || nameParts.firstName || null
+  employee.last_name = employee.last_name || nameParts.lastName || null
   employee.bank_details = safeJsonParse(employee.bank_details) || null
   employee.mobile_number = employee.mobile_number || employee.contact || null
   employee.contact = employee.contact || employee.mobile_number || null
@@ -669,7 +738,7 @@ async function getEmployeeDocuments(conn, employeeId, userId) {
 async function fetchUserRow(conn, id) {
   const includeDirectRole = await hasUsersRoleIdColumn(conn)
   const includeEmployeeLink = await hasUsersEmployeeIdColumn(conn)
-  const columns = ['id', 'username', 'email', 'full_name', 'is_active', 'created_at', 'updated_at']
+  const columns = ['id', 'username', 'email', 'first_name', 'last_name', 'full_name', 'is_active', 'created_at', 'updated_at']
   if (includeDirectRole) columns.push('role_id')
   if (includeEmployeeLink) columns.push('employee_id')
   const [rows] = await conn.query(`SELECT ${columns.join(', ')} FROM users WHERE id = ? LIMIT 1`, [id])
@@ -710,6 +779,8 @@ async function getUserAuditState(conn, userId) {
     id: user.id,
     username: user.username,
     email: user.email,
+    first_name: user.first_name,
+    last_name: user.last_name,
     full_name: user.full_name,
     is_active: Number(user.is_active) === 1,
     roles,
@@ -725,14 +796,17 @@ async function getUserAuditState(conn, userId) {
   }
 }
 
-async function upsertEmployeeRecord(conn, userRow, fullName, primaryRoleLabel, employeeInput, employeeKeys) {
+async function upsertEmployeeRecord(conn, userRow, nameParts, primaryRoleLabel, employeeInput, employeeKeys) {
   const existingEmployee = await findEmployeeForUser(conn, userRow)
   const includeEmployeesEmail = await hasEmployeesEmailColumn(conn)
   const includeEmployeesUserId = await hasEmployeesUserIdColumn(conn)
   const includeEmployeeLink = await hasUsersEmployeeIdColumn(conn)
 
+  const fullName = nameParts?.fullName || userRow.full_name || userRow.username || userRow.email
   const baseValues = {
-    name: fullName || userRow.full_name || userRow.username || userRow.email,
+    name: fullName,
+    first_name: nameParts?.firstName || userRow.first_name || splitFullName(fullName).firstName,
+    last_name: nameParts?.lastName || userRow.last_name || splitFullName(fullName).lastName,
     role: primaryRoleLabel,
     contact_type: employeeInput.mobile_number ? 'Mobile' : employeeInput.contact_type,
     contact: employeeInput.mobile_number || employeeInput.contact,
@@ -785,6 +859,10 @@ async function upsertEmployeeRecord(conn, userRow, fullName, primaryRoleLabel, e
   if (fullName !== undefined) {
     updates.push('name = ?')
     params.push(baseValues.name)
+    updates.push('first_name = ?')
+    params.push(baseValues.first_name)
+    updates.push('last_name = ?')
+    params.push(baseValues.last_name)
   }
 
   if (primaryRoleLabel !== undefined) {
@@ -910,7 +988,7 @@ router.get('/', verifyToken, authorize('users.view'), async (req, res) => {
     await ensureEmployeeSchema()
     const includeDirectRole = await hasUsersRoleIdColumn()
     const includeEmployeeLink = await hasUsersEmployeeIdColumn()
-    const columns = ['id', 'username', 'email', 'full_name', 'is_active', 'created_at', 'updated_at']
+    const columns = ['id', 'username', 'email', 'first_name', 'last_name', 'full_name', 'is_active', 'created_at', 'updated_at']
     if (includeDirectRole) columns.push('role_id')
     if (includeEmployeeLink) columns.push('employee_id')
 
@@ -987,14 +1065,15 @@ router.post('/', express.json(), verifyToken, authorize('users.create'), async (
     const payload = req.body || {}
     const normalizedEmail = String(payload.email || '').trim().toLowerCase()
     const normalizedUsername = String(payload.username || normalizedEmail).trim().toLowerCase()
-    const normalizedFullName = normalizeText(payload.full_name)
+    const normalizedName = normalizePersonNamePayload(payload)
     const wantsEmployeeProfile = hasEmployeePayload(payload)
     const employeeKeys = getProvidedEmployeeKeys(payload)
     const employeeInput = normalizeEmployeePayload(payload)
     const employeeValidationError = validateEmployeePayload(employeeInput, { requireStarterProfile: wantsEmployeeProfile })
     if (!normalizedEmail) return res.status(400).json({ error: 'email required' })
     if (!normalizedUsername) return res.status(400).json({ error: 'unable to derive username from email' })
-    if (wantsEmployeeProfile && !normalizedFullName) return res.status(400).json({ error: 'Full name is required' })
+    if (wantsEmployeeProfile && !normalizedName.firstName) return res.status(400).json({ error: 'First name is required' })
+    if (wantsEmployeeProfile && !normalizedName.lastName) return res.status(400).json({ error: 'Last name is required' })
     if (employeeValidationError) return res.status(400).json({ error: employeeValidationError })
 
     const defaultPassword = getDefaultNewUserPassword()
@@ -1007,8 +1086,8 @@ router.post('/', express.json(), verifyToken, authorize('users.create'), async (
     await conn.beginTransaction()
 
     const [result] = await conn.query(
-      'INSERT INTO users (username, email, password_hash, full_name, is_active) VALUES (?, ?, ?, ?, ?)',
-      [normalizedUsername, normalizedEmail, passwordHash, normalizedFullName, isActive]
+      'INSERT INTO users (username, email, password_hash, first_name, last_name, full_name, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [normalizedUsername, normalizedEmail, passwordHash, normalizedName.firstName, normalizedName.lastName, normalizedName.fullName, isActive]
     )
     const userId = result.insertId
 
@@ -1030,7 +1109,7 @@ router.post('/', express.json(), verifyToken, authorize('users.create'), async (
     const primaryRoleLabel = await resolvePrimaryRoleLabel(roles, conn)
     let employeeId = null
     if (wantsEmployeeProfile) {
-      employeeId = await upsertEmployeeRecord(conn, userRow, normalizedFullName, primaryRoleLabel, employeeInput, employeeKeys)
+      employeeId = await upsertEmployeeRecord(conn, userRow, normalizedName, primaryRoleLabel, employeeInput, employeeKeys)
     }
 
     await conn.commit()
@@ -1352,9 +1431,25 @@ router.put('/:id', express.json(), verifyToken, authorize('users.update'), async
       updates.push('email = ?')
       params.push(String(payload.email).trim().toLowerCase())
     }
-    if (payload.full_name !== undefined) {
+    const currentUserRow = await fetchUserRow(conn, id)
+    const normalizedName = hasNamePayload(payload)
+      ? normalizePersonNamePayload(payload, currentUserRow || {})
+      : null
+    if (normalizedName) {
+      if (!normalizedName.firstName) {
+        await conn.rollback()
+        return res.status(400).json({ error: 'First name is required' })
+      }
+      if (!normalizedName.lastName) {
+        await conn.rollback()
+        return res.status(400).json({ error: 'Last name is required' })
+      }
+      updates.push('first_name = ?')
+      params.push(normalizedName.firstName)
+      updates.push('last_name = ?')
+      params.push(normalizedName.lastName)
       updates.push('full_name = ?')
-      params.push(normalizeText(payload.full_name))
+      params.push(normalizedName.fullName)
     }
     if (payload.is_active !== undefined) {
       const activeVal = (String(payload.is_active) === '1' || payload.is_active === 1 || payload.is_active === true) ? 1 : 0
@@ -1387,9 +1482,9 @@ router.put('/:id', express.json(), verifyToken, authorize('users.update'), async
 
     const userRow = await fetchUserRow(conn, id)
     const primaryRoleLabel = Array.isArray(payload.roles) ? await resolvePrimaryRoleLabel(payload.roles, conn) : undefined
-    const shouldMaintainEmployee = wantsEmployeeProfile || payload.full_name !== undefined || payload.email !== undefined || Array.isArray(payload.roles)
+    const shouldMaintainEmployee = wantsEmployeeProfile || Boolean(normalizedName) || payload.email !== undefined || Array.isArray(payload.roles)
     if (shouldMaintainEmployee) {
-      await upsertEmployeeRecord(conn, userRow, normalizeText(payload.full_name), primaryRoleLabel, employeeInput, employeeKeys)
+      await upsertEmployeeRecord(conn, userRow, normalizedName || normalizePersonNamePayload({}, userRow), primaryRoleLabel, employeeInput, employeeKeys)
     }
 
     await conn.commit()

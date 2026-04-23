@@ -1,0 +1,6 @@
+-- No-op compatibility migration.
+--
+-- Bale purchase orders follow the existing bale_purchases schema and API:
+-- supplier_id, bale_batch_no, purchase_date, po_status, quantity_ordered,
+-- quantity_received, expected_delivery_date, actual_delivery_date, and notes.
+-- See 20260414_add_po_workflow.sql for the column migration.

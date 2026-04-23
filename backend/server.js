@@ -24,9 +24,7 @@ const categoriesRoutes = require('./src/routes/categories')
 const expensesRoutes = require('./src/routes/expenses')
 const dashboardRoutes = require('./src/routes/dashboard')
 const ledgerRoutes = require('./src/routes/ledger')
-const payrollRoutes   = require('./src/routes/payroll.routes')
-const attendanceRoutes = require('./src/routes/attendance')
-const baleReturnsRoutes = require('./src/routes/baleReturns')
+const balePurchaseOrdersRoutes = require('./src/routes/balePurchaseOrders')
 
 const PORT = process.env.PORT || 3000
 
@@ -53,6 +51,7 @@ app.use('/api/customers', customersRoutes)
 app.use('/suppliers', suppliersRoutes)
 app.use('/inventory', inventoryRoutes)
 app.use('/bale-purchases', balePurchasesRoutes)
+app.use('/bale-purchase-orders', balePurchaseOrdersRoutes)
 app.use('/sales', salesRoutes)
 app.use('/api/sales', salesRoutes)
 app.use('/employees', employeesRoutes)
@@ -65,9 +64,6 @@ app.use('/categories', categoriesRoutes)
 app.use('/expenses', expensesRoutes)
 app.use('/dashboard', dashboardRoutes)
 app.use('/ledger', ledgerRoutes)
-app.use('/api/payroll', payrollRoutes)
-app.use('/attendance', attendanceRoutes)
-app.use('/bale-returns', baleReturnsRoutes)
 
 app.get('/', async (req, res) => {
   try {

@@ -44,7 +44,7 @@ function normalizeDocumentStatus(value) {
 }
 
 const SECTION_FIELDS = {
-  account: ['email', 'full_name', 'roles'],
+  account: ['email', 'first_name', 'last_name', 'roles'],
   employment: ['position_title', 'hire_date', 'employment_status'],
   personal: ['birth_date', 'sex', 'mobile_number', 'present_address'],
   compensation: ['pay_basis', 'pay_rate', 'payroll_method', 'provider_name', 'account_name', 'account_number'],
@@ -63,6 +63,8 @@ const DEFAULT_BANK_DETAILS = {
 
 const DEFAULT_FORM = {
   email: '',
+  first_name: '',
+  last_name: '',
   full_name: '',
   is_active: 1,
   roles: [],
@@ -179,6 +181,20 @@ function hasText(value) {
   return Boolean(String(value ?? '').trim())
 }
 
+function composeFullName(firstName, lastName) {
+  return [firstName, lastName].map((part) => String(part || '').trim()).filter(Boolean).join(' ')
+}
+
+function splitFullName(value) {
+  const fullName = String(value || '').trim().replace(/\s+/g, ' ')
+  if (!fullName) return { first_name: '', last_name: '' }
+  const [firstName, ...rest] = fullName.split(' ')
+  return {
+    first_name: firstName || '',
+    last_name: rest.join(' ')
+  }
+}
+
 function isPlaceholderDocumentName(value) {
   const normalized = String(value || '').trim()
   if (!normalized) return false
@@ -240,7 +256,7 @@ function getCurrentStep(isEdit, search) {
 
 function getSectionCompletion(formData) {
   return {
-    account: hasText(formData.email) && hasText(formData.full_name) && Array.isArray(formData.roles) && formData.roles.length > 0,
+    account: hasText(formData.email) && hasText(formData.first_name) && hasText(formData.last_name) && Array.isArray(formData.roles) && formData.roles.length > 0,
     employment: hasText(formData.position_title) && hasText(formData.hire_date) && hasText(formData.employment_status),
     personal: hasText(formData.birth_date) && hasText(formData.sex) && isValidMobileNumber(formData.mobile_number) && hasText(formData.present_address),
     compensation: hasText(formData.pay_basis)
@@ -287,7 +303,9 @@ function saveCredentialsSnapshot(userId, formData) {
 
   const snapshot = {
     email: String(formData.email || '').trim(),
-    full_name: String(formData.full_name || '').trim(),
+    first_name: String(formData.first_name || '').trim(),
+    last_name: String(formData.last_name || '').trim(),
+    full_name: composeFullName(formData.first_name, formData.last_name) || String(formData.full_name || '').trim(),
     roles: normalizeSingleRoleSelection(formData.roles),
     is_active: formData.is_active === 0 ? 0 : 1
   }
@@ -303,8 +321,11 @@ function loadCredentialsSnapshot(userId) {
 
   try {
     const parsed = JSON.parse(raw)
+    const splitName = splitFullName(parsed?.full_name)
     return {
       email: String(parsed?.email || '').trim(),
+      first_name: String(parsed?.first_name || splitName.first_name || '').trim(),
+      last_name: String(parsed?.last_name || splitName.last_name || '').trim(),
       full_name: String(parsed?.full_name || '').trim(),
       roles: normalizeSingleRoleSelection(parsed?.roles),
       is_active: parsed?.is_active === 0 ? 0 : 1
@@ -389,6 +410,9 @@ export default function UserFormPage({ mode = 'create' }) {
 
         const user = res.data || {}
         const employee = user.employee || {}
+        const userNameParts = splitFullName(user.full_name || employee.name)
+        const firstName = user.first_name || employee.first_name || userNameParts.first_name
+        const lastName = user.last_name || employee.last_name || userNameParts.last_name
         const roleIds = []
 
         for (const roleName of user.roles || []) {
@@ -401,7 +425,9 @@ export default function UserFormPage({ mode = 'create' }) {
 
         const nextForm = cloneForm({
           email: user.email || '',
-          full_name: user.full_name || '',
+          first_name: firstName || '',
+          last_name: lastName || '',
+          full_name: composeFullName(firstName, lastName) || user.full_name || employee.name || '',
           is_active: user.is_active === 0 ? 0 : 1,
           roles: normalizeSingleRoleSelection(roleIds),
           birth_date: employee.birth_date || '',
@@ -437,6 +463,8 @@ export default function UserFormPage({ mode = 'create' }) {
           ? cloneForm({
               ...nextForm,
               email: credentialsSnapshot.email || nextForm.email,
+              first_name: credentialsSnapshot.first_name || nextForm.first_name,
+              last_name: credentialsSnapshot.last_name || nextForm.last_name,
               full_name: credentialsSnapshot.full_name || nextForm.full_name,
               is_active: credentialsSnapshot.is_active,
               roles: normalizeSingleRoleSelection(credentialsSnapshot.roles).length
@@ -525,6 +553,14 @@ export default function UserFormPage({ mode = 'create' }) {
 
     if (name === 'is_active') {
       setFormData((prev) => ({ ...prev, is_active: value === '1' ? 1 : 0 }))
+      return
+    }
+
+    if (name === 'first_name' || name === 'last_name') {
+      setFormData((prev) => {
+        const next = { ...prev, [name]: value }
+        return { ...next, full_name: composeFullName(next.first_name, next.last_name) }
+      })
       return
     }
 
@@ -625,8 +661,9 @@ export default function UserFormPage({ mode = 'create' }) {
     const governmentIdPattern = /^[0-9-]+$/
 
     if (!hasText(formData.email)) nextErrors.email = 'Email is required'
-    if (!hasText(formData.full_name)) nextErrors.full_name = 'Full name is required'
-    if (!Array.isArray(formData.roles) || !formData.roles.length) nextErrors.roles = 'Select a role'
+    if (!hasText(formData.first_name)) nextErrors.first_name = 'First name is required'
+    if (!hasText(formData.last_name)) nextErrors.last_name = 'Last name is required'
+    if (!Array.isArray(formData.roles) || !formData.roles.length) nextErrors.roles = 'Select an access role'
     if (!hasText(formData.position_title)) nextErrors.position_title = 'Position title is required'
     if (!hasText(formData.hire_date)) nextErrors.hire_date = 'Hire date is required'
     if (!hasText(formData.employment_status)) nextErrors.employment_status = 'Employment status is required'
@@ -667,7 +704,9 @@ export default function UserFormPage({ mode = 'create' }) {
 
   const buildPayload = () => ({
     email: String(formData.email || '').trim(),
-    full_name: String(formData.full_name || '').trim(),
+    first_name: String(formData.first_name || '').trim(),
+    last_name: String(formData.last_name || '').trim(),
+    full_name: composeFullName(formData.first_name, formData.last_name),
     is_active: formData.is_active,
     roles: normalizeSingleRoleSelection(formData.roles),
     birth_date: formData.birth_date || null,
@@ -869,19 +908,24 @@ export default function UserFormPage({ mode = 'create' }) {
               {fieldErrors.email && <small className="user-form-error">{fieldErrors.email}</small>}
             </div>
             <div className="user-form-field">
-              <label className="user-form-label">Full Name *</label>
-              <input className="user-form-control" type="text" name="full_name" value={formData.full_name} onChange={handleInputChange} />
-              {fieldErrors.full_name && <small className="user-form-error">{fieldErrors.full_name}</small>}
+              <label className="user-form-label">First Name *</label>
+              <input className="user-form-control" type="text" name="first_name" value={formData.first_name} onChange={handleInputChange} />
+              {fieldErrors.first_name && <small className="user-form-error">{fieldErrors.first_name}</small>}
+            </div>
+            <div className="user-form-field">
+              <label className="user-form-label">Last Name *</label>
+              <input className="user-form-control" type="text" name="last_name" value={formData.last_name} onChange={handleInputChange} />
+              {fieldErrors.last_name && <small className="user-form-error">{fieldErrors.last_name}</small>}
             </div>
             <div className="user-form-field user-form-field-full">
-              <label className="user-form-label">Roles *</label>
+              <label className="user-form-label">Access Role *</label>
               <select
                 className="user-form-control"
                 name="roles"
                 value={Array.isArray(formData.roles) && formData.roles[0] ? formData.roles[0] : ''}
                 onChange={handleInputChange}
               >
-                <option value="">Select role</option>
+                <option value="">Select access role</option>
                 {rolesOptions.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
               </select>
               {fieldErrors.roles && <small className="user-form-error">{fieldErrors.roles}</small>}

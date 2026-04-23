@@ -20,16 +20,10 @@ import Files from './pages/Files.js'
 import Settings from './pages/Settings.jsx'
 import Notifications from './pages/Notifications.js'
 import Reports from './pages/Reports.jsx'
-import PayrollProfiles from './pages/payroll/PayrollProfiles.jsx'
-import PayrollPeriods from './pages/payroll/PayrollPeriods.jsx'
-import PayrollInputSheet from './pages/payroll/PayrollInputSheet.jsx'
-import PayrollPreview from './pages/payroll/PayrollPreview.jsx'
-import PayrollPayslip from './pages/payroll/PayrollPayslip.jsx'
-import PayrollReports from './pages/payroll/PayrollReports.jsx'
 import Layout from './components/Layout.js'
 import ProtectedRoute from './components/ProtectedRoute.js'
 import ChangePassword from './pages/ChangePassword';
-import Attendance from './pages/Attendance.jsx';
+import BalePurchaseOrder from './pages/BalePurchaseOrder.jsx';
 
 export default function App() {
   return (
@@ -61,14 +55,8 @@ export default function App() {
           React.createElement(Route, { path: 'settings', element: React.createElement(Settings, null) }),
           React.createElement(Route, { path: 'notifications', element: React.createElement(Notifications, null) }),
           React.createElement(Route, { path: 'reports', element: React.createElement(Reports, null) }),
-          React.createElement(Route, { path: 'attendance', element: React.createElement(Attendance, null) }),
-          React.createElement(Route, { path: 'payroll/profiles', element: React.createElement(PayrollProfiles, null) }),
-          React.createElement(Route, { path: 'payroll/periods', element: React.createElement(PayrollPeriods, null) }),
-          React.createElement(Route, { path: 'payroll/periods/:periodId/inputs', element: React.createElement(PayrollInputSheet, null) }),
-          React.createElement(Route, { path: 'payroll/periods/:periodId/preview', element: React.createElement(PayrollPreview, null) }),
-          React.createElement(Route, { path: 'payroll/runs/:runId/items/:itemId/payslip', element: React.createElement(PayrollPayslip, null) }),
-          React.createElement(Route, { path: 'payroll/reports', element: React.createElement(PayrollReports, null) }),
-          React.createElement(Route, { path: 'change-password', element: React.createElement(ChangePassword, null) })
+          React.createElement(Route, { path: 'change-password', element: React.createElement(ChangePassword, null) }),
+          React.createElement(Route, { path: 'bale-purchase-order', element: React.createElement(BalePurchaseOrder, null) })
         )
       }),
       React.createElement(Route, { path: '*', element: React.createElement(Navigate, { to: '/' }) })

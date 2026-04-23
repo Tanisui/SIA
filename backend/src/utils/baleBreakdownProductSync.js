@@ -20,10 +20,18 @@ function toWholeNumber(value) {
 
 function asCreatedAt(value) {
   if (!value) return new Date()
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return [
+      value.getFullYear(),
+      String(value.getMonth() + 1).padStart(2, '0'),
+      String(value.getDate()).padStart(2, '0')
+    ].join('-')
+  }
+
   const normalized = String(value).trim()
   if (!normalized) return new Date()
-  const parsed = new Date(`${normalized.slice(0, 10)}T00:00:00.000Z`)
-  return Number.isNaN(parsed.getTime()) ? new Date() : parsed
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(normalized)
+  return dateOnlyMatch ? `${dateOnlyMatch[1]}-${dateOnlyMatch[2]}-${dateOnlyMatch[3]}` : new Date()
 }
 
 function createSyncError(message) {

@@ -20,12 +20,42 @@ const {
 } = require('../repositories/productRepository')
 const { logAuditEventSafe } = require('../utils/auditLog')
 const { ensureAutomatedReportsSchema } = require('../utils/automatedReports')
+const {
+  deriveCategoryAndTypeFromBaleCategory,
+  isCategoryTableTypeForCategory,
+  mergeCategoryTypeOptions
+} = require('../utils/categoryClassification')
 
 const BARCODE_FORMAT_ERROR = 'barcode must be 4-64 chars using letters, numbers, ".", "_" or "-"'
 const BALE_GRADE_VALUES = new Set(['premium', 'standard'])
 
 function roundMoney(value) {
   return Math.round((Number(value) || 0) * 100) / 100
+}
+
+function padDatePart(value) {
+  return String(value).padStart(2, '0')
+}
+
+function formatLocalDateOnly(value) {
+  const parsed = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(parsed.getTime())) return null
+  return [
+    parsed.getFullYear(),
+    padDatePart(parsed.getMonth() + 1),
+    padDatePart(parsed.getDate())
+  ].join('-')
+}
+
+function normalizeDateOnlyValue(value) {
+  if (!value) return null
+  if (value instanceof Date) return formatLocalDateOnly(value)
+
+  const normalized = String(value || '').trim()
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(normalized)
+  if (dateOnlyMatch) return `${dateOnlyMatch[1]}-${dateOnlyMatch[2]}-${dateOnlyMatch[3]}`
+
+  return formatLocalDateOnly(normalized)
 }
 
 function createHttpError(statusCode, message) {
@@ -51,10 +81,153 @@ function normalizeComparableText(value) {
   return String(value || '').trim().toLowerCase()
 }
 
+function normalizeOptionalText(value) {
+  const normalized = String(value || '').trim()
+  return normalized || null
+}
+
 function asPositiveWhole(value, fallback = 0) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback
   return Math.floor(parsed)
+}
+
+async function normalizeCategoryType(conn, categoryId, value) {
+  const normalizedType = normalizeOptionalText(value)
+  const normalizedCategoryId = Number(categoryId)
+  if (!Number.isInteger(normalizedCategoryId) || normalizedCategoryId <= 0) {
+    if (!normalizedType) return null
+    throw createHttpError(400, 'category_id is required when type is selected')
+  }
+
+  const rows = await getCategoryTypeOptions(conn, normalizedCategoryId)
+
+  if (!normalizedType) {
+    if (rows.length > 0) throw createHttpError(400, 'type is required for the selected category')
+    return null
+  }
+
+  const matchedType = rows.find((row) => (
+    normalizeComparableText(row.name) === normalizeComparableText(normalizedType)
+  ))
+
+  if (!matchedType) throw createHttpError(400, 'type must match the selected category')
+  return matchedType.name
+}
+
+async function getCategoryTypeOptions(conn, categoryId) {
+  const normalizedCategoryId = Number(categoryId)
+  if (!Number.isInteger(normalizedCategoryId) || normalizedCategoryId <= 0) return []
+
+  const [[category]] = await conn.query(
+    'SELECT id, name, description FROM categories WHERE id = ? LIMIT 1',
+    [normalizedCategoryId]
+  )
+  if (!category) return []
+
+  const [configuredTypeRows] = await conn.query(`
+    SELECT id, category_id, name, description, 'category_types' AS source
+    FROM category_types
+    WHERE category_id = ?
+      AND COALESCE(is_active, 1) = 1
+  `, [normalizedCategoryId])
+
+  const [savedProductTypeRows] = await conn.query(`
+    SELECT
+      NULL AS id,
+      category_id,
+      TRIM(subcategory) AS name,
+      NULL AS description,
+      'products' AS source
+    FROM products
+    WHERE category_id = ?
+      AND subcategory IS NOT NULL
+      AND TRIM(subcategory) <> ''
+  `, [normalizedCategoryId])
+
+  const [categoryRows] = await conn.query('SELECT id, name, description FROM categories ORDER BY name')
+  const categoryTableTypeRows = categoryRows
+    .filter((row) => isCategoryTableTypeForCategory(row.name, category.name))
+    .map((row) => ({
+      id: row.id,
+      category_id: normalizedCategoryId,
+      name: row.name,
+      description: row.description,
+      source: 'categories'
+    }))
+
+  return mergeCategoryTypeOptions(category, [
+    ...configuredTypeRows,
+    ...savedProductTypeRows,
+    ...categoryTableTypeRows
+  ])
+}
+
+async function resolveOrCreateCategoryByName(conn, name) {
+  const [categoryRows] = await conn.query('SELECT id, name, description FROM categories ORDER BY name')
+  const resolvedInput = deriveCategoryAndTypeFromBaleCategory(name, categoryRows)
+  const normalizedName = String(resolvedInput.categoryName || '').trim().replace(/\s+/g, ' ')
+  if (!normalizedName) return null
+
+  const [existingRows] = await conn.query(`
+    SELECT id
+    FROM categories
+    WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
+    ORDER BY id ASC
+    LIMIT 1
+  `, [normalizedName])
+
+  if (existingRows.length) {
+    return {
+      categoryId: Number(existingRows[0].id) || null,
+      typeName: resolvedInput.typeName || null
+    }
+  }
+
+  try {
+    const [result] = await conn.query(
+      'INSERT INTO categories (name, description) VALUES (?, ?)',
+      [normalizedName, null]
+    )
+    return {
+      categoryId: Number(result.insertId) || null,
+      typeName: resolvedInput.typeName || null
+    }
+  } catch (err) {
+    if (err.code !== 'ER_DUP_ENTRY') throw err
+    const [rows] = await conn.query(`
+      SELECT id
+      FROM categories
+      WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
+      ORDER BY id ASC
+      LIMIT 1
+    `, [normalizedName])
+    return {
+      categoryId: Number(rows?.[0]?.id) || null,
+      typeName: resolvedInput.typeName || null
+    }
+  }
+}
+
+async function resolveSupplierId(conn, supplierId) {
+  if (supplierId === undefined || supplierId === null || String(supplierId).trim() === '') return null
+
+  const normalizedSupplierId = Number(supplierId)
+  if (!Number.isInteger(normalizedSupplierId) || normalizedSupplierId <= 0) {
+    throw createHttpError(400, 'supplier_id must be a valid supplier')
+  }
+
+  const [rows] = await conn.query('SELECT id FROM suppliers WHERE id = ? LIMIT 1', [normalizedSupplierId])
+  if (!rows.length) throw createHttpError(400, 'supplier not found')
+  return normalizedSupplierId
+}
+
+async function resolveCategoryNameById(conn, categoryId) {
+  const normalizedCategoryId = Number(categoryId)
+  if (!Number.isInteger(normalizedCategoryId) || normalizedCategoryId <= 0) return null
+
+  const [rows] = await conn.query('SELECT name FROM categories WHERE id = ? LIMIT 1', [normalizedCategoryId])
+  return normalizeOptionalText(rows?.[0]?.name)
 }
 
 async function getBaleStockedByGrade(conn, balePurchaseId) {
@@ -106,6 +279,7 @@ async function findSimilarProductForMerge(conn, options = {}) {
   const normalizedCategoryId = Number.isInteger(Number(options.categoryId)) && Number(options.categoryId) > 0
     ? Number(options.categoryId)
     : null
+  const normalizedSubcategory = normalizeComparableText(options.subcategory)
   const normalizedBalePurchaseId = Number.isInteger(Number(options.balePurchaseId)) && Number(options.balePurchaseId) > 0
     ? Number(options.balePurchaseId)
     : null
@@ -127,6 +301,7 @@ async function findSimilarProductForMerge(conn, options = {}) {
       AND LOWER(TRIM(COALESCE(p.size, ''))) = ?
       AND COALESCE(NULLIF(LOWER(TRIM(p.product_source)), ''), 'manual') = ?
       AND ((? IS NULL AND p.category_id IS NULL) OR p.category_id = ?)
+      AND LOWER(TRIM(COALESCE(p.subcategory, ''))) = ?
       AND ((? IS NULL AND p.bale_purchase_id IS NULL) OR p.bale_purchase_id = ?)
       AND ((? IS NULL AND p.condition_grade IS NULL) OR p.condition_grade = ?)
       AND ROUND(COALESCE(p.price, 0), 2) = ?
@@ -140,6 +315,7 @@ async function findSimilarProductForMerge(conn, options = {}) {
     normalizedSource,
     normalizedCategoryId,
     normalizedCategoryId,
+    normalizedSubcategory,
     normalizedBalePurchaseId,
     normalizedBalePurchaseId,
     normalizedConditionGrade,
@@ -250,6 +426,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
       brand,
       description,
       category_id,
+      subcategory,
       price,
       cost,
       stock_quantity,
@@ -258,6 +435,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
       color,
       barcode,
       product_source,
+      supplier_id,
       bale_purchase_id,
       condition_grade
     } = req.body || {}
@@ -265,8 +443,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
     const requestedSku = String(sku || '').trim()
     const requestedBarcode = String(barcode || '').trim()
 
-    const normalizedName = String(name || '').trim()
-    if (!normalizedName) throw createHttpError(400, 'name is required')
+    let normalizedName = String(name || '').trim()
 
     const normalizedBrand = String(brand || '').trim() || null
     const normalizedDescription = String(description || '').trim() || null
@@ -298,6 +475,8 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
     if (normalizedCategoryId !== null && (!Number.isInteger(normalizedCategoryId) || normalizedCategoryId <= 0)) {
       throw createHttpError(400, 'category_id must be a valid positive integer')
     }
+    let normalizedSubcategory = null
+    let normalizedSubcategoryInput = subcategory
 
     const normalizedPrice = roundMoney(price)
     const normalizedLowStockThreshold = Number.isFinite(Number(low_stock_threshold))
@@ -317,6 +496,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
     let stockInReference = null
     let stockInReason = null
     let stockInCreatedAt = new Date()
+    let normalizedManualSupplierId = null
 
     if (!isBarcodeBlank(requestedBarcode)) {
       normalizedBarcode = normalizeBarcode(requestedBarcode)
@@ -391,27 +571,30 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
       normalizedCost = normalizedCostInput > 0 ? normalizedCostInput : normalizedAllocatedCost
 
       if (!normalizedCategoryId && breakdown.bale_category) {
-        const [categoryRows] = await conn.query(`
-          SELECT id
-          FROM categories
-          WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
-          LIMIT 1
-        `, [String(breakdown.bale_category || '').trim()])
-        normalizedCategoryId = Number(categoryRows?.[0]?.id) || null
-      }
-
-      const breakdownDateValue = String(breakdown.breakdown_event_date || '').trim()
-      if (breakdownDateValue) {
-        const breakdownDate = new Date(`${breakdownDateValue.slice(0, 10)}T00:00:00.000Z`)
-        if (!Number.isNaN(breakdownDate.getTime())) {
-          normalizedDateEncoded = breakdownDate.toISOString().slice(0, 10)
-          stockInCreatedAt = breakdownDate
+        const resolvedCategory = await resolveOrCreateCategoryByName(conn, breakdown.bale_category)
+        normalizedCategoryId = resolvedCategory?.categoryId || null
+        if (!subcategory && resolvedCategory?.typeName) {
+          normalizedSubcategoryInput = resolvedCategory.typeName
         }
       }
+
+      normalizedDateEncoded = normalizeDateOnlyValue(breakdown.breakdown_event_date)
 
       stockInReference = `BALE_PRODUCT_CREATE|bale_purchase_id=${normalizedBalePurchaseId}|breakdown_id=${normalizedSourceBreakdownId || ''}|grade=${normalizedConditionGrade}`
       stockInReason = `Created from bale record (${gradeLabel})`
       normalizedProductSource = 'bale_breakdown'
+    }
+
+    if (normalizedProductSource === 'manual') {
+      normalizedManualSupplierId = await resolveSupplierId(conn, supplier_id)
+    }
+
+    normalizedSubcategory = await normalizeCategoryType(conn, normalizedCategoryId, normalizedSubcategoryInput)
+    if (!normalizedName) {
+      normalizedName = normalizedSubcategory || await resolveCategoryNameById(conn, normalizedCategoryId) || ''
+    }
+    if (!normalizedName) {
+      throw createHttpError(400, 'category or type is required when product name is not provided')
     }
 
     const shouldAttemptSimilarMerge = !requestedSku && !requestedBarcode
@@ -423,6 +606,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
         brand: normalizedBrand,
         size: normalizedSize,
         categoryId: normalizedCategoryId,
+        subcategory: normalizedSubcategory,
         productSource: normalizedProductSource,
         balePurchaseId: normalizedBalePurchaseId,
         conditionGrade: normalizedConditionGrade,
@@ -438,6 +622,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
         const stockResult = await applyProductStockDelta(conn, {
           productId: mergeCandidate.id,
           deltaQuantity: mergeDeltaQuantity,
+          supplierId: normalizedManualSupplierId,
           userId: req.auth.id,
           reference: mergeReference,
           reason: mergeReason,
@@ -446,7 +631,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
         })
 
         const [mergedRows] = await conn.query(
-          `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, qr_image_path, product_source, source_breakdown_id, bale_purchase_id, condition_grade
+          `SELECT id, sku, name, brand, description, category_id, subcategory, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, qr_image_path, product_source, source_breakdown_id, bale_purchase_id, condition_grade
            FROM products
            WHERE id = ?
            LIMIT 1`,
@@ -490,21 +675,27 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
       }
     }
 
+    const shouldRecordManualInitialStock = normalizedProductSource === 'manual'
+      && normalizedManualSupplierId
+      && normalizedStockQuantity > 0
+    const insertStockQuantity = shouldRecordManualInitialStock ? 0 : normalizedStockQuantity
+
     const [result] = await conn.query(
       `INSERT INTO products (
-        sku, name, brand, description, category_id, price, cost, stock_quantity,
+        sku, name, brand, description, category_id, subcategory, price, cost, stock_quantity,
         low_stock_threshold, size, color, barcode, product_source, source_breakdown_id,
         bale_purchase_id, condition_grade, allocated_cost, status, date_encoded
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         normalizedSku,
         normalizedName,
         normalizedBrand,
         normalizedDescription,
         normalizedCategoryId,
+        normalizedSubcategory,
         normalizedPrice || 0,
         normalizedCost || 0,
-        normalizedStockQuantity,
+        insertStockQuantity,
         normalizedLowStockThreshold,
         normalizedSize,
         normalizedColor,
@@ -543,10 +734,21 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
         createdAt: stockInCreatedAt,
         transactionType: 'IN'
       })
+    } else if (shouldRecordManualInitialStock) {
+      await applyProductStockDelta(conn, {
+        productId: result.insertId,
+        deltaQuantity: normalizedStockQuantity,
+        supplierId: normalizedManualSupplierId,
+        userId: req.auth.id,
+        reference: 'PRODUCT_CREATE_INITIAL_STOCK',
+        reason: 'Initial manual stock from product create',
+        createdAt: new Date(),
+        transactionType: 'IN'
+      })
     }
 
     const [createdRows] = await conn.query(
-      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, product_source, source_breakdown_id, bale_purchase_id, condition_grade
+      `SELECT id, sku, name, brand, description, category_id, subcategory, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, product_source, source_breakdown_id, bale_purchase_id, condition_grade
        FROM products
        WHERE id = ?
        LIMIT 1`,
@@ -597,7 +799,7 @@ router.put('/:id', express.json(), verifyToken, authorize('products.edit'), asyn
     if (!Number.isFinite(id) || id <= 0) throw createHttpError(400, 'invalid product id')
 
     const [existingRows] = await conn.query(
-      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, qr_image_path, product_source, source_breakdown_id, bale_purchase_id, condition_grade
+      `SELECT id, sku, name, brand, description, category_id, subcategory, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, qr_image_path, product_source, source_breakdown_id, bale_purchase_id, condition_grade
        FROM products
        WHERE id = ?
        LIMIT 1
@@ -614,6 +816,7 @@ router.put('/:id', express.json(), verifyToken, authorize('products.edit'), asyn
       brand,
       description,
       category_id,
+      subcategory,
       price,
       cost,
       stock_quantity,
@@ -660,7 +863,21 @@ router.put('/:id', express.json(), verifyToken, authorize('products.edit'), asyn
     }
     if (brand !== undefined) { updates.push('brand = ?'); params.push(brand || null) }
     if (description !== undefined) { updates.push('description = ?'); params.push(description) }
-    if (category_id !== undefined) { updates.push('category_id = ?'); params.push(category_id || null) }
+    const nextCategoryId = category_id !== undefined
+      ? (category_id ? Number(category_id) : null)
+      : (beforeProduct.category_id ? Number(beforeProduct.category_id) : null)
+    if (category_id !== undefined) {
+      if (nextCategoryId !== null && (!Number.isInteger(nextCategoryId) || nextCategoryId <= 0)) {
+        throw createHttpError(400, 'category_id must be a valid positive integer')
+      }
+      updates.push('category_id = ?')
+      params.push(nextCategoryId)
+    }
+    const categoryChanged = category_id !== undefined && String(nextCategoryId || '') !== String(beforeProduct.category_id || '')
+    if (subcategory !== undefined || categoryChanged) {
+      updates.push('subcategory = ?')
+      params.push(await normalizeCategoryType(conn, nextCategoryId, subcategory !== undefined ? subcategory : ''))
+    }
     if (price !== undefined) { updates.push('price = ?'); params.push(price) }
     if (cost !== undefined) { updates.push('cost = ?'); params.push(cost) }
     if (stock_quantity !== undefined) {
@@ -714,7 +931,7 @@ router.put('/:id', express.json(), verifyToken, authorize('products.edit'), asyn
     }
 
     const [updatedRows] = await conn.query(
-      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, product_source, source_breakdown_id, bale_purchase_id, condition_grade
+      `SELECT id, sku, name, brand, description, category_id, subcategory, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, product_source, source_breakdown_id, bale_purchase_id, condition_grade
        FROM products
        WHERE id = ?
        LIMIT 1`,
@@ -760,7 +977,7 @@ router.delete('/:id', verifyToken, authorize('products.delete'), async (req, res
     await ensureAutomatedReportsSchema()
     const id = Number(req.params.id)
     const [beforeRows] = await db.pool.query(
-      `SELECT id, sku, name, brand, description, category_id, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, product_source, source_breakdown_id
+      `SELECT id, sku, name, brand, description, category_id, subcategory, price, cost, stock_quantity, low_stock_threshold, size, color, barcode, is_active, product_source, source_breakdown_id
        FROM products
        WHERE id = ?
        LIMIT 1`,

@@ -6,18 +6,55 @@ const { ensureAutomatedReportsSchema } = require('../utils/automatedReports')
 const { roundMoney } = require('../utils/salesSupport')
 const { logAuditEventSafe } = require('../utils/auditLog')
 const { ensureScannerSchema } = require('../services/scannerSchemaService')
+const { getRuntimeConfig } = require('../services/runtimeConfigService')
+const { resolveStockTransactionTimestamp } = require('../utils/inventoryStock')
 
 const PAYMENT_STATUSES = ['PAID', 'PARTIAL', 'UNPAID']
 const PO_STATUSES = ['PENDING', 'ORDERED', 'RECEIVED', 'COMPLETED', 'CANCELLED']
-const PURCHASE_VIEW_PERMISSIONS = ['purchase.view', 'purchase.create', 'purchase.update', 'purchase.delete', 'purchase.receive', 'inventory.view', 'inventory.receive', 'products.view', 'reports.view', 'finance.reports.view']
-const PURCHASE_CREATE_PERMISSIONS = ['purchase.create', 'inventory.receive']
-const PURCHASE_UPDATE_PERMISSIONS = ['purchase.update', 'inventory.receive']
-const PURCHASE_DELETE_PERMISSIONS = ['purchase.delete', 'inventory.receive']
-const PURCHASE_RECEIVE_PERMISSIONS = ['purchase.receive', 'inventory.receive']
+const AUTO_PO_PREFIX = 'BALE-PO'
+const BALE_VIEW_PERMISSIONS = ['inventory.view', 'inventory.receive', 'products.view', 'reports.view', 'finance.reports.view']
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
 function isBlank(value) {
   return value === undefined || value === null || String(value).trim() === ''
+}
+
+function formatGeneratedPurchaseOrderReference(sequence) {
+  return `${AUTO_PO_PREFIX}-${String(sequence).padStart(4, '0')}`
+}
+
+function getGeneratedPurchaseOrderSequence(value) {
+  const match = String(value || '').trim().match(/^BALE-PO-(\d+)(?:-\d+)?$/i)
+  if (!match) return 0
+  const parsed = Number(match[1])
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0
+}
+
+async function getNextPurchaseOrderReference(client = db.pool) {
+  const [rows] = await client.query(`
+    SELECT bale_batch_no
+    FROM bale_purchases
+    WHERE bale_batch_no LIKE ?
+    ORDER BY id DESC
+    LIMIT 1000
+  `, [`${AUTO_PO_PREFIX}-%`])
+
+  const maxSequence = rows.reduce((max, row) => (
+    Math.max(max, getGeneratedPurchaseOrderSequence(row?.bale_batch_no))
+  ), 0)
+
+  let nextSequence = maxSequence + 1
+  while (nextSequence < maxSequence + 1000) {
+    const candidate = formatGeneratedPurchaseOrderReference(nextSequence)
+    const [existing] = await client.query(
+      'SELECT id FROM bale_purchases WHERE bale_batch_no = ? LIMIT 1',
+      [candidate]
+    )
+    if (!existing.length) return candidate
+    nextSequence += 1
+  }
+
+  return formatGeneratedPurchaseOrderReference(nextSequence)
 }
 
 function asText(value) {
@@ -115,6 +152,16 @@ function asPositiveInt(value, fieldName) {
   return parsed
 }
 
+function asRequiredPositiveInt(value, fieldName) {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    const err = new Error(`${fieldName} must be a valid positive integer`)
+    err.statusCode = 400
+    throw err
+  }
+  return parsed
+}
+
 function buildDateFilter(alias, column, from, to, params) {
   let clause = ''
   if (from) {
@@ -128,10 +175,14 @@ function buildDateFilter(alias, column, from, to, params) {
   return clause
 }
 
-async function getSupplierById(supplierId) {
+async function getSupplierByIdFrom(client, supplierId) {
   if (!supplierId) return null
-  const [rows] = await db.pool.query('SELECT id, name FROM suppliers WHERE id = ? LIMIT 1', [supplierId])
+  const [rows] = await client.query('SELECT id, name FROM suppliers WHERE id = ? LIMIT 1', [supplierId])
   return rows[0] || null
+}
+
+async function getSupplierById(supplierId) {
+  return getSupplierByIdFrom(db.pool, supplierId)
 }
 
 async function resolveSupplierReference(payload, options = {}) {
@@ -151,6 +202,31 @@ async function resolveSupplierReference(payload, options = {}) {
 
   const existingSupplierName = asText(options.existingSupplierName)
   payload.supplier_name = existingSupplierName || `Former Supplier #${requestedSupplierId}`
+}
+
+async function insertBalePurchaseRecord(client, payload) {
+  const [result] = await client.query(`
+    INSERT INTO bale_purchases (
+      supplier_id, bale_batch_no, supplier_name, purchase_date, bale_category,
+      bale_cost, total_purchase_cost, quantity_ordered,
+      payment_status, po_status, expected_delivery_date, notes
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    payload.supplier_id || null,
+    payload.bale_batch_no,
+    payload.supplier_name,
+    payload.purchase_date,
+    payload.bale_category,
+    payload.bale_cost,
+    payload.total_purchase_cost,
+    payload.quantity_ordered,
+    payload.payment_status,
+    payload.po_status || 'PENDING',
+    payload.expected_delivery_date || null,
+    payload.notes
+  ])
+
+  return result.insertId
 }
 
 function normalizeBalePurchaseInput(payload, options = {}) {
@@ -236,36 +312,6 @@ function normalizeBalePurchaseInput(payload, options = {}) {
   }
 
   if (!isUpdate || body.notes !== undefined) parsed.notes = asText(body.notes)
-
-  // Payment method & credit terms
-  const PAYMENT_METHODS = ['CASH', 'GCASH', 'BANK_TRANSFER', 'PURCHASE_ORDER', 'CHECK']
-  if (!isUpdate || body.payment_method !== undefined) {
-    const pm = String(body.payment_method || 'CASH').trim().toUpperCase()
-    parsed.payment_method = PAYMENT_METHODS.includes(pm) ? pm : 'CASH'
-  }
-  if (!isUpdate || body.payment_terms_days !== undefined) {
-    parsed.payment_terms_days = Math.max(0, parseInt(body.payment_terms_days || 0, 10) || 0)
-  }
-  if (!isUpdate || body.po_due_date !== undefined) {
-    parsed.po_due_date = body.po_due_date ? asDateOnly(body.po_due_date, 'po_due_date', false) : null
-  }
-  if (!isUpdate || body.amount_paid !== undefined) {
-    parsed.amount_paid = asNumber(body.amount_paid || 0, 'amount_paid')
-  }
-  if (!isUpdate || body.tax_amount !== undefined) {
-    parsed.tax_amount = asNumber(body.tax_amount || 0, 'tax_amount')
-  }
-  if (!isUpdate || body.shipping_handling !== undefined) {
-    parsed.shipping_handling = asNumber(body.shipping_handling || 0, 'shipping_handling')
-  }
-  if (!isUpdate || body.special_instructions !== undefined) parsed.special_instructions = asText(body.special_instructions)
-  if (!isUpdate || body.authorized_by !== undefined)      parsed.authorized_by = asText(body.authorized_by)
-  if (!isUpdate || body.ship_via !== undefined)           parsed.ship_via = asText(body.ship_via)
-  if (!isUpdate || body.fob_point !== undefined)          parsed.fob_point = asText(body.fob_point)
-  if (!isUpdate || body.shipping_terms !== undefined)     parsed.shipping_terms = asText(body.shipping_terms)
-  if (!isUpdate || body.ship_to_name !== undefined)       parsed.ship_to_name = asText(body.ship_to_name)
-  if (!isUpdate || body.ship_to_address !== undefined)    parsed.ship_to_address = asText(body.ship_to_address)
-
   return parsed
 }
 
@@ -325,24 +371,201 @@ function normalizeBreakdownInput(payload, existing = {}) {
   }
 }
 
+function normalizeSupplierReturnInput(payload) {
+  const body = payload || {}
+  const balePurchaseId = asRequiredPositiveInt(body.bale_purchase_id, 'bale_purchase_id')
+  const returnDate = asDateOnly(body.return_date, 'return_date', true)
+  const supplierId = isBlank(body.supplier_id)
+    ? null
+    : asRequiredPositiveInt(body.supplier_id, 'supplier_id')
+  const supplierName = asText(body.supplier_name)
+  const rawItems = Array.isArray(body.items) ? body.items : []
+
+  if (!rawItems.length) {
+    const err = new Error('at least one return item is required')
+    err.statusCode = 400
+    throw err
+  }
+
+  const items = rawItems.map((item, index) => {
+    const quantity = asRequiredPositiveInt(item?.quantity, `items[${index}].quantity`)
+    const reason = asText(item?.reason)
+    if (!reason) {
+      const err = new Error(`items[${index}].reason is required`)
+      err.statusCode = 400
+      throw err
+    }
+    return { quantity, reason }
+  })
+
+  const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0)
+  if (totalQuantity <= 0) {
+    const err = new Error('return quantity must be greater than 0')
+    err.statusCode = 400
+    throw err
+  }
+
+  return {
+    bale_purchase_id: balePurchaseId,
+    supplier_id: supplierId,
+    supplier_name: supplierName,
+    return_date: returnDate,
+    notes: asText(body.notes),
+    items,
+    total_quantity: totalQuantity
+  }
+}
+
 async function getBalePurchaseById(id) {
   const [rows] = await db.pool.query(`
-    SELECT bp.*
+    SELECT
+      bp.*,
+      COALESCE(return_totals.returned_quantity, 0) AS returned_quantity,
+      GREATEST(COALESCE(bp.quantity_received, 0) - COALESCE(return_totals.returned_quantity, 0), 0) AS returnable_quantity
     FROM bale_purchases bp
+    LEFT JOIN (
+      SELECT
+        bsr.bale_purchase_id,
+        COALESCE(SUM(bsri.quantity), 0) AS returned_quantity
+      FROM bale_supplier_returns bsr
+      JOIN bale_supplier_return_items bsri ON bsri.return_id = bsr.id
+      GROUP BY bsr.bale_purchase_id
+    ) return_totals ON return_totals.bale_purchase_id = bp.id
     WHERE bp.id = ?
     LIMIT 1
   `, [id])
   return rows[0] || null
 }
 
-router.get('/', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), async (req, res) => {
+async function getBaleSupplierReturns(filters = {}) {
+  const params = []
+  let whereSql = 'WHERE 1=1'
+
+  if (!isBlank(filters.id)) {
+    params.push(asRequiredPositiveInt(filters.id, 'id'))
+    whereSql += ' AND bsr.id = ?'
+  }
+
+  if (!isBlank(filters.bale_purchase_id)) {
+    params.push(asRequiredPositiveInt(filters.bale_purchase_id, 'bale_purchase_id'))
+    whereSql += ' AND bsr.bale_purchase_id = ?'
+  }
+
+  if (!isBlank(filters.supplier_id)) {
+    params.push(asRequiredPositiveInt(filters.supplier_id, 'supplier_id'))
+    whereSql += ' AND bsr.supplier_id = ?'
+  }
+
+  const fromDate = asDateOnly(filters.from, 'from')
+  const toDate = asDateOnly(filters.to, 'to')
+  whereSql += buildDateFilter('bsr', 'return_date', fromDate, toDate, params)
+
+  const [rows] = await db.pool.query(`
+    SELECT
+      bsr.*,
+      bp.bale_batch_no,
+      bp.purchase_date,
+      bp.quantity_ordered,
+      bp.quantity_received,
+      bp.po_status,
+      COALESCE(SUM(bsri.quantity), 0) AS total_returned_quantity,
+      COUNT(bsri.id) AS item_count
+    FROM bale_supplier_returns bsr
+    JOIN bale_purchases bp ON bp.id = bsr.bale_purchase_id
+    LEFT JOIN bale_supplier_return_items bsri ON bsri.return_id = bsr.id
+    ${whereSql}
+    GROUP BY
+      bsr.id,
+      bsr.supplier_id,
+      bsr.supplier_name,
+      bsr.bale_purchase_id,
+      bsr.return_date,
+      bsr.notes,
+      bsr.processed_by,
+      bsr.created_at,
+      bsr.updated_at,
+      bp.bale_batch_no,
+      bp.purchase_date,
+      bp.quantity_ordered,
+      bp.quantity_received,
+      bp.po_status
+    ORDER BY bsr.return_date DESC, bsr.id DESC
+  `, params)
+
+  if (!rows.length) return []
+
+  const returnIds = rows.map((row) => row.id)
+  const [items] = await db.pool.query(`
+    SELECT id, return_id, quantity, reason, created_at
+    FROM bale_supplier_return_items
+    WHERE return_id IN (?)
+    ORDER BY id ASC
+  `, [returnIds])
+
+  const itemsByReturnId = new Map()
+  for (const item of items) {
+    const key = String(item.return_id)
+    if (!itemsByReturnId.has(key)) itemsByReturnId.set(key, [])
+    itemsByReturnId.get(key).push(item)
+  }
+
+  return rows.map((row) => ({
+    ...row,
+    total_returned_quantity: Number(row.total_returned_quantity) || 0,
+    item_count: Number(row.item_count) || 0,
+    items: itemsByReturnId.get(String(row.id)) || []
+  }))
+}
+
+router.get('/next-po-number', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) => {
+  try {
+    await ensureAutomatedReportsSchema()
+    const poNumber = await getNextPurchaseOrderReference()
+    res.json({
+      po_number: poNumber,
+      bale_batch_no: poNumber
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(err?.statusCode || 500).json({ error: err?.message || 'failed to generate purchase order number' })
+  }
+})
+
+router.get('/config', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) => {
+  try {
+    const runtimeConfig = await getRuntimeConfig()
+    res.json({
+      currency: runtimeConfig.currency,
+      tax_rate: runtimeConfig.taxRate,
+      configured_tax_rate: runtimeConfig.configuredTaxRate,
+      tax_rate_percentage: roundMoney(runtimeConfig.taxRate * 100),
+      invoice: runtimeConfig.invoice
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'failed to load bale purchase configuration' })
+  }
+})
+
+router.get('/', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const { from, to, payment_status, search } = req.query
     const params = []
     let sql = `
-      SELECT bp.*
+      SELECT
+        bp.*,
+        COALESCE(return_totals.returned_quantity, 0) AS returned_quantity,
+        GREATEST(COALESCE(bp.quantity_received, 0) - COALESCE(return_totals.returned_quantity, 0), 0) AS returnable_quantity
       FROM bale_purchases bp
+      LEFT JOIN (
+        SELECT
+          bsr.bale_purchase_id,
+          COALESCE(SUM(bsri.quantity), 0) AS returned_quantity
+        FROM bale_supplier_returns bsr
+        JOIN bale_supplier_return_items bsri ON bsri.return_id = bsr.id
+        GROUP BY bsr.bale_purchase_id
+      ) return_totals ON return_totals.bale_purchase_id = bp.id
       WHERE 1=1
     `
 
@@ -370,7 +593,7 @@ router.get('/', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), async (req, r
   }
 })
 
-router.get('/breakdowns', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), async (req, res) => {
+router.get('/breakdowns', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const { from, to, bale_purchase_id } = req.query
@@ -379,6 +602,7 @@ router.get('/breakdowns', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), asy
       SELECT
         bb.*,
         bp.bale_batch_no,
+        bp.bale_category,
         bp.purchase_date,
         bp.supplier_name,
         COALESCE(bp.total_purchase_cost, bp.bale_cost) AS total_purchase_cost
@@ -405,7 +629,193 @@ router.get('/breakdowns', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), asy
   }
 })
 
-router.get('/:id', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), async (req, res) => {
+router.get('/returns', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) => {
+  try {
+    await ensureAutomatedReportsSchema()
+    const rows = await getBaleSupplierReturns(req.query || {})
+    res.json(rows)
+  } catch (err) {
+    console.error(err)
+    res.status(err?.statusCode || 500).json({ error: err?.message || 'failed to fetch bale supplier returns' })
+  }
+})
+
+router.post('/returns', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
+  const conn = await db.pool.getConnection()
+  let committed = false
+  let released = false
+  const safeRelease = () => {
+    if (!released) {
+      conn.release()
+      released = true
+    }
+  }
+
+  try {
+    await ensureAutomatedReportsSchema()
+    const payload = normalizeSupplierReturnInput(req.body)
+
+    await conn.beginTransaction()
+
+    const [purchaseRows] = await conn.query(`
+      SELECT
+        id,
+        supplier_id,
+        supplier_name,
+        bale_batch_no,
+        quantity_ordered,
+        quantity_received,
+        po_status
+      FROM bale_purchases
+      WHERE id = ?
+      LIMIT 1
+      FOR UPDATE
+    `, [payload.bale_purchase_id])
+
+    if (!purchaseRows.length) {
+      await conn.rollback()
+      safeRelease()
+      return res.status(404).json({ error: 'purchase order not found' })
+    }
+
+    const purchase = purchaseRows[0]
+    const currentStatus = String(purchase.po_status || '').toUpperCase()
+    if (currentStatus === 'CANCELLED') {
+      await conn.rollback()
+      safeRelease()
+      return res.status(400).json({ error: 'cancelled purchase orders cannot be returned to supplier' })
+    }
+
+    if (
+      payload.supplier_id
+      && purchase.supplier_id
+      && Number(payload.supplier_id) !== Number(purchase.supplier_id)
+    ) {
+      await conn.rollback()
+      safeRelease()
+      return res.status(400).json({ error: 'supplier_id must match the selected purchase order supplier' })
+    }
+
+    let supplierId = payload.supplier_id || purchase.supplier_id || null
+    let supplierName = payload.supplier_name || purchase.supplier_name || null
+    if (supplierId) {
+      const supplier = await getSupplierByIdFrom(conn, supplierId)
+      if (!supplier) {
+        await conn.rollback()
+        safeRelease()
+        return res.status(400).json({ error: 'supplier not found' })
+      }
+      supplierName = supplierName || supplier.name
+    }
+
+    if (!supplierId && isBlank(supplierName)) {
+      await conn.rollback()
+      safeRelease()
+      return res.status(400).json({ error: 'supplier_id or supplier_name is required' })
+    }
+
+    const [returnTotals] = await conn.query(`
+      SELECT COALESCE(SUM(bsri.quantity), 0) AS returned_quantity
+      FROM bale_supplier_returns bsr
+      JOIN bale_supplier_return_items bsri ON bsri.return_id = bsr.id
+      WHERE bsr.bale_purchase_id = ?
+    `, [payload.bale_purchase_id])
+
+    const receivedQuantity = Number(purchase.quantity_received) || 0
+    const alreadyReturnedQuantity = Number(returnTotals[0]?.returned_quantity) || 0
+    const availableToReturn = Math.max(receivedQuantity - alreadyReturnedQuantity, 0)
+
+    if (receivedQuantity <= 0) {
+      await conn.rollback()
+      safeRelease()
+      return res.status(400).json({ error: 'No received bales are available to return for this purchase order' })
+    }
+
+    if (payload.total_quantity > availableToReturn) {
+      await conn.rollback()
+      safeRelease()
+      return res.status(400).json({ error: `return quantity cannot exceed available received bales (${availableToReturn})` })
+    }
+
+    const [returnResult] = await conn.query(`
+      INSERT INTO bale_supplier_returns (
+        supplier_id, supplier_name, bale_purchase_id, return_date, notes, processed_by
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `, [
+      supplierId || null,
+      supplierName || null,
+      payload.bale_purchase_id,
+      payload.return_date,
+      payload.notes,
+      req.auth.id || null
+    ])
+
+    for (const item of payload.items) {
+      await conn.query(`
+        INSERT INTO bale_supplier_return_items (return_id, quantity, reason)
+        VALUES (?, ?, ?)
+      `, [returnResult.insertId, item.quantity, item.reason])
+    }
+
+    await conn.query(`
+      INSERT INTO inventory_adjustments (
+        bale_purchase_id, adjustment_type, quantity, reason, adjustment_date
+      ) VALUES (?, ?, ?, ?, ?)
+    `, [
+      payload.bale_purchase_id,
+      'correction',
+      -payload.total_quantity,
+      `Returned ${payload.total_quantity} bale(s) to supplier${supplierName ? ` ${supplierName}` : ''}`,
+      payload.return_date
+    ])
+
+    await conn.commit()
+    committed = true
+    safeRelease()
+
+    const createdRows = await getBaleSupplierReturns({ id: returnResult.insertId })
+    const updatedPurchase = await getBalePurchaseById(payload.bale_purchase_id)
+    const createdReturn = createdRows[0] || null
+
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'BALE_SUPPLIER_RETURN_CREATED',
+      resourceType: 'BaleSupplierReturn',
+      resourceId: returnResult.insertId,
+      details: {
+        module: 'purchasing',
+        severity: 'high',
+        target_label: purchase.bale_batch_no || `Return #${returnResult.insertId}`,
+        summary: `Returned ${payload.total_quantity} bale(s) from "${purchase.bale_batch_no || payload.bale_purchase_id}" to supplier`,
+        after: createdReturn,
+        references: {
+          bale_purchase_id: payload.bale_purchase_id,
+          supplier_id: supplierId || null
+        },
+        metrics: {
+          returned_quantity: payload.total_quantity,
+          available_before_return: availableToReturn,
+          available_after_return: Math.max(availableToReturn - payload.total_quantity, 0)
+        }
+      }
+    })
+
+    res.json({
+      success: true,
+      return: createdReturn,
+      purchase_order: updatedPurchase
+    })
+  } catch (err) {
+    if (!committed) {
+      await conn.rollback().catch(() => {})
+    }
+    safeRelease()
+    console.error(err)
+    res.status(err?.statusCode || 500).json({ error: err?.message || 'failed to record supplier return' })
+  }
+})
+
+router.get('/:id', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const id = asOptionalInt(req.params.id, 'id')
@@ -418,7 +828,115 @@ router.get('/:id', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), async (req
   }
 })
 
-router.post('/', express.json(), verifyToken, authorize(PURCHASE_CREATE_PERMISSIONS), async (req, res) => {
+router.post('/bulk', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
+  const conn = await db.pool.getConnection()
+  let committed = false
+  let released = false
+  const safeRelease = () => {
+    if (!released) {
+      conn.release()
+      released = true
+    }
+  }
+
+  try {
+    await ensureAutomatedReportsSchema()
+
+    const body = req.body || {}
+    const rawItems = Array.isArray(body.items) ? body.items : []
+    if (!rawItems.length) {
+      throw Object.assign(new Error('items must contain at least one purchase order line'), { statusCode: 400 })
+    }
+
+    const sharedFields = {
+      supplier_id: body.supplier_id,
+      supplier_name: body.supplier_name,
+      purchase_date: body.purchase_date,
+      expected_delivery_date: body.expected_delivery_date,
+      payment_status: body.payment_status,
+      po_status: body.po_status,
+      notes: body.notes
+    }
+
+    const payloads = []
+    const seenReferences = new Set()
+
+    for (let index = 0; index < rawItems.length; index += 1) {
+      const payload = normalizeBalePurchaseInput({ ...sharedFields, ...rawItems[index] }, { isUpdate: false })
+      await resolveSupplierReference(payload)
+
+      if (!payload.supplier_id && isBlank(payload.supplier_name)) {
+        throw Object.assign(new Error(`items[${index}].supplier_name or supplier_id is required`), { statusCode: 400 })
+      }
+
+      const normalizedReference = String(payload.bale_batch_no || '').trim().toLowerCase()
+      if (seenReferences.has(normalizedReference)) {
+        throw Object.assign(new Error(`duplicate bale_batch_no in request: ${payload.bale_batch_no}`), { statusCode: 400 })
+      }
+      seenReferences.add(normalizedReference)
+      payloads.push(payload)
+    }
+
+    const references = payloads.map((payload) => payload.bale_batch_no)
+    const placeholders = references.map(() => '?').join(', ')
+    const [duplicateRows] = await db.pool.query(
+      `SELECT bale_batch_no FROM bale_purchases WHERE bale_batch_no IN (${placeholders})`,
+      references
+    )
+    if (duplicateRows.length) {
+      throw Object.assign(new Error(`bale_batch_no already exists: ${duplicateRows[0].bale_batch_no}`), { statusCode: 400 })
+    }
+
+    await conn.beginTransaction()
+
+    const createdIds = []
+    for (const payload of payloads) {
+      const id = await insertBalePurchaseRecord(conn, payload)
+      createdIds.push(id)
+    }
+
+    await conn.commit()
+    committed = true
+    safeRelease()
+
+    const created = []
+    for (const id of createdIds) {
+      const row = await getBalePurchaseById(id)
+      if (row) created.push(row)
+    }
+
+    await logAuditEventSafe(db.pool, {
+      userId: req.auth.id,
+      action: 'BALE_PURCHASE_BULK_CREATED',
+      resourceType: 'PurchaseOrder',
+      resourceId: createdIds[0] || null,
+      details: {
+        module: 'purchasing',
+        severity: 'medium',
+        target_label: `${created.length} purchase order line(s)`,
+        summary: `Created ${created.length} bale purchase order line(s)`,
+        after: created,
+        metrics: {
+          order_lines_created: created.length,
+          quantity_ordered: created.reduce((sum, row) => sum + Number(row.quantity_ordered || 0), 0),
+          total_purchase_cost: roundMoney(created.reduce((sum, row) => sum + Number(row.total_purchase_cost || row.bale_cost || 0), 0))
+        }
+      }
+    })
+
+    res.status(201).json({ count: created.length, items: created })
+  } catch (err) {
+    if (!committed) {
+      await conn.rollback().catch(() => {})
+    }
+    safeRelease()
+    console.error(err)
+    if (err?.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'bale_batch_no must be unique' })
+    res.status(err?.statusCode || 500).json({ error: err?.message || 'failed to create bale purchase orders' })
+  }
+})
+
+router.post('/', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const payload = normalizeBalePurchaseInput(req.body, { isUpdate: false })
@@ -431,62 +949,19 @@ router.post('/', express.json(), verifyToken, authorize(PURCHASE_CREATE_PERMISSI
     const [dup] = await db.pool.query('SELECT id FROM bale_purchases WHERE bale_batch_no = ? LIMIT 1', [payload.bale_batch_no])
     if (dup.length) return res.status(400).json({ error: 'bale_batch_no already exists' })
 
-    // auto-compute po_due_date if payment_method=PURCHASE_ORDER and terms > 0
-    if (!payload.po_due_date && payload.payment_method === 'PURCHASE_ORDER' && payload.payment_terms_days > 0 && payload.purchase_date) {
-      const base = new Date(`${payload.purchase_date}T00:00:00Z`)
-      base.setUTCDate(base.getUTCDate() + payload.payment_terms_days)
-      payload.po_due_date = base.toISOString().slice(0, 10)
-    }
-
-    const [result] = await db.pool.query(`
-      INSERT INTO bale_purchases (
-        supplier_id, bale_batch_no, supplier_name, purchase_date, bale_category,
-        bale_cost, total_purchase_cost, quantity_ordered,
-        payment_status, po_status, expected_delivery_date, notes,
-        payment_method, payment_terms_days, po_due_date, amount_paid,
-        tax_amount, shipping_handling, special_instructions, authorized_by,
-        ship_via, fob_point, shipping_terms, ship_to_name, ship_to_address
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      payload.supplier_id || null,
-      payload.bale_batch_no,
-      payload.supplier_name,
-      payload.purchase_date,
-      payload.bale_category,
-      payload.bale_cost,
-      payload.total_purchase_cost,
-      payload.quantity_ordered,
-      payload.payment_status,
-      payload.po_status || 'PENDING',
-      payload.expected_delivery_date || null,
-      payload.notes,
-      payload.payment_method || 'CASH',
-      payload.payment_terms_days || 0,
-      payload.po_due_date || null,
-      payload.amount_paid || 0,
-      payload.tax_amount || 0,
-      payload.shipping_handling || 0,
-      payload.special_instructions || null,
-      payload.authorized_by || null,
-      payload.ship_via || null,
-      payload.fob_point || null,
-      payload.shipping_terms || null,
-      payload.ship_to_name || null,
-      payload.ship_to_address || null
-    ])
-
-    const created = await getBalePurchaseById(result.insertId)
+    const insertedId = await insertBalePurchaseRecord(db.pool, payload)
+    const created = await getBalePurchaseById(insertedId)
 
     await logAuditEventSafe(db.pool, {
       userId: req.auth.id,
       action: 'BALE_PURCHASE_CREATED',
       resourceType: 'PurchaseOrder',
-      resourceId: result.insertId,
+      resourceId: insertedId,
       details: {
         module: 'purchasing',
         severity: 'medium',
-        target_label: created?.bale_batch_no || `Purchase order #${result.insertId}`,
-        summary: `Created purchase order "${created?.bale_batch_no || result.insertId}"`,
+        target_label: created?.bale_batch_no || `Purchase order #${insertedId}`,
+        summary: `Created purchase order "${created?.bale_batch_no || insertedId}"`,
         after: created
       }
     })
@@ -498,7 +973,7 @@ router.post('/', express.json(), verifyToken, authorize(PURCHASE_CREATE_PERMISSI
   }
 })
 
-router.put('/:id', express.json(), verifyToken, authorize(PURCHASE_UPDATE_PERMISSIONS), async (req, res) => {
+router.put('/:id', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const id = asOptionalInt(req.params.id, 'id')
@@ -518,20 +993,21 @@ router.put('/:id', express.json(), verifyToken, authorize(PURCHASE_UPDATE_PERMIS
 
     const updates = []
     const params = []
-    // auto-compute po_due_date if payment_method=PURCHASE_ORDER
-    if (!payload.po_due_date && payload.payment_method === 'PURCHASE_ORDER' && payload.payment_terms_days > 0) {
-      const base = new Date(`${payload.purchase_date || existing.purchase_date}T00:00:00Z`)
-      base.setUTCDate(base.getUTCDate() + payload.payment_terms_days)
-      payload.po_due_date = base.toISOString().slice(0, 10)
-    }
-
     const allowedFields = [
-      'supplier_id', 'bale_batch_no', 'supplier_name', 'purchase_date', 'bale_category',
-      'bale_cost', 'total_purchase_cost', 'quantity_ordered', 'quantity_received',
-      'payment_status', 'po_status', 'expected_delivery_date', 'actual_delivery_date', 'notes',
-      'payment_method', 'payment_terms_days', 'po_due_date', 'amount_paid',
-      'tax_amount', 'shipping_handling', 'special_instructions', 'authorized_by',
-      'ship_via', 'fob_point', 'shipping_terms', 'ship_to_name', 'ship_to_address'
+      'supplier_id',
+      'bale_batch_no',
+      'supplier_name',
+      'purchase_date',
+      'bale_category',
+      'bale_cost',
+      'total_purchase_cost',
+      'quantity_ordered',
+      'quantity_received',
+      'payment_status',
+      'po_status',
+      'expected_delivery_date',
+      'actual_delivery_date',
+      'notes'
     ]
 
     for (const field of allowedFields) {
@@ -568,7 +1044,7 @@ router.put('/:id', express.json(), verifyToken, authorize(PURCHASE_UPDATE_PERMIS
   }
 })
 
-router.delete('/:id', verifyToken, authorize(PURCHASE_DELETE_PERMISSIONS), async (req, res) => {
+router.delete('/:id', verifyToken, authorize('inventory.receive'), async (req, res) => {
   const conn = await db.pool.getConnection()
   let committed = false
   let released = false
@@ -621,7 +1097,7 @@ router.delete('/:id', verifyToken, authorize(PURCHASE_DELETE_PERMISSIONS), async
   }
 })
 
-router.get('/:id/breakdown', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), async (req, res) => {
+router.get('/:id/breakdown', verifyToken, authorize(BALE_VIEW_PERMISSIONS), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const id = asOptionalInt(req.params.id, 'id')
@@ -629,6 +1105,9 @@ router.get('/:id/breakdown', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), 
       SELECT
         bb.*,
         bp.bale_batch_no,
+        bp.bale_category,
+        bp.purchase_date,
+        bp.supplier_name,
         COALESCE(bp.total_purchase_cost, bp.bale_cost) AS total_purchase_cost
       FROM bale_breakdowns bb
       JOIN bale_purchases bp ON bp.id = bb.bale_purchase_id
@@ -695,6 +1174,12 @@ async function upsertBreakdown(req, res) {
       ? (existing.breakdown_date || new Date().toISOString().slice(0, 10))
       : payload.breakdown_date
     const notes = payload.notes === undefined ? existing.notes || null : payload.notes
+    const saveTimestamp = resolveStockTransactionTimestamp(new Date())
+    const existingDamagedItems = Number(existing.damaged_items || 0)
+    const damageRecordedAt = payload.damaged_items > 0
+      && (!existingRows.length || existingDamagedItems !== payload.damaged_items || !existing.damage_recorded_at)
+      ? saveTimestamp
+      : (payload.damaged_items > 0 ? existing.damage_recorded_at || null : null)
     let breakdownRecordId = existing.id || null
 
     if (!existingRows.length) {
@@ -702,8 +1187,8 @@ async function upsertBreakdown(req, res) {
         INSERT INTO bale_breakdowns (
           bale_purchase_id, total_pieces, saleable_items, premium_items,
           standard_items, low_grade_items, damaged_items, cost_per_saleable_item,
-          encoded_by, breakdown_date, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          damage_recorded_at, encoded_by, breakdown_date, notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         balePurchaseId,
         payload.total_pieces,
@@ -713,9 +1198,12 @@ async function upsertBreakdown(req, res) {
         payload.low_grade_items,
         payload.damaged_items,
         costPerSaleableItem,
+        damageRecordedAt,
         encodedBy,
         breakdownDate,
-        notes
+        notes,
+        saveTimestamp,
+        saveTimestamp
       ])
       breakdownRecordId = insertResult.insertId
     } else {
@@ -727,10 +1215,12 @@ async function upsertBreakdown(req, res) {
             standard_items = ?,
             low_grade_items = ?,
             damaged_items = ?,
+            damage_recorded_at = ?,
             cost_per_saleable_item = ?,
             encoded_by = ?,
             breakdown_date = ?,
-            notes = ?
+            notes = ?,
+            updated_at = ?
         WHERE bale_purchase_id = ?
       `, [
         payload.total_pieces,
@@ -739,10 +1229,12 @@ async function upsertBreakdown(req, res) {
         payload.standard_items,
         payload.low_grade_items,
         payload.damaged_items,
+        damageRecordedAt,
         costPerSaleableItem,
         encodedBy,
         breakdownDate,
         notes,
+        saveTimestamp,
         balePurchaseId
       ])
     }
@@ -755,6 +1247,9 @@ async function upsertBreakdown(req, res) {
       SELECT
         bb.*,
         bp.bale_batch_no,
+        bp.bale_category,
+        bp.purchase_date,
+        bp.supplier_name,
         COALESCE(bp.total_purchase_cost, bp.bale_cost) AS total_purchase_cost
       FROM bale_breakdowns bb
       JOIN bale_purchases bp ON bp.id = bb.bale_purchase_id
@@ -792,11 +1287,11 @@ async function upsertBreakdown(req, res) {
   }
 }
 
-router.post('/:id/breakdown', express.json(), verifyToken, authorize(PURCHASE_RECEIVE_PERMISSIONS), upsertBreakdown)
-router.put('/:id/breakdown', express.json(), verifyToken, authorize(PURCHASE_RECEIVE_PERMISSIONS), upsertBreakdown)
+router.post('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
+router.put('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
 
 // Receive a bale purchase: update receipt totals and keep a generic audit trail entry.
-router.post('/:id/receive', express.json(), verifyToken, authorize(PURCHASE_RECEIVE_PERMISSIONS), async (req, res) => {
+router.post('/:id/receive', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
   const conn = await db.pool.getConnection()
   let committed = false
   let released = false
@@ -908,89 +1403,6 @@ router.post('/:id/receive', express.json(), verifyToken, authorize(PURCHASE_RECE
     safeRelease()
     console.error(err)
     res.status(err?.statusCode || 500).json({ error: err?.message || 'failed to receive purchase order' })
-  }
-})
-
-// ── PO Line Items ─────────────────────────────────────────────────────────
-router.get('/:id/items', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), async (req, res) => {
-  try {
-    const id = asOptionalInt(req.params.id, 'id')
-    const [rows] = await db.pool.query(
-      'SELECT * FROM bale_purchase_items WHERE bale_purchase_id = ? ORDER BY sort_order, id',
-      [id]
-    )
-    res.json(rows)
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-router.post('/:id/items', express.json(), verifyToken, authorize(PURCHASE_CREATE_PERMISSIONS), async (req, res) => {
-  try {
-    const bale_purchase_id = asOptionalInt(req.params.id, 'id')
-    const bp = await getBalePurchaseById(bale_purchase_id)
-    if (!bp) return res.status(404).json({ error: 'bale purchase not found' })
-
-    const items = Array.isArray(req.body) ? req.body : [req.body]
-    await db.pool.query('DELETE FROM bale_purchase_items WHERE bale_purchase_id = ?', [bale_purchase_id])
-
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i]
-      const qty   = Number(item.quantity  || 1)
-      const price = roundMoney(Number(item.unit_price || 0))
-      const total = roundMoney(qty * price)
-      await db.pool.query(
-        `INSERT INTO bale_purchase_items (bale_purchase_id, item_code, description, quantity, unit, unit_price, line_total, sort_order)
-         VALUES (?,?,?,?,?,?,?,?)`,
-        [bale_purchase_id, asText(item.item_code), asText(item.description) || '', qty, asText(item.unit), price, total, i]
-      )
-    }
-
-    const [saved] = await db.pool.query(
-      'SELECT * FROM bale_purchase_items WHERE bale_purchase_id = ? ORDER BY sort_order, id',
-      [bale_purchase_id]
-    )
-
-    const subtotal = saved.reduce((s, r) => s + roundMoney(Number(r.line_total || 0)), 0)
-    await db.pool.query('UPDATE bale_purchases SET bale_cost = ?, total_purchase_cost = ? WHERE id = ?', [subtotal, subtotal, bale_purchase_id])
-
-    res.json(saved)
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ error: err.message })
-  }
-})
-
-// ── PO Report data ────────────────────────────────────────────────────────
-router.get('/:id/po-report', verifyToken, authorize(PURCHASE_VIEW_PERMISSIONS), async (req, res) => {
-  try {
-    const id = asOptionalInt(req.params.id, 'id')
-    const bp = await getBalePurchaseById(id)
-    if (!bp) return res.status(404).json({ error: 'bale purchase not found' })
-
-    const [items] = await db.pool.query(
-      'SELECT * FROM bale_purchase_items WHERE bale_purchase_id = ? ORDER BY sort_order, id',
-      [id]
-    )
-
-    let supplier = null
-    if (bp.supplier_id) {
-      const [[s]] = await db.pool.query('SELECT * FROM suppliers WHERE id = ?', [bp.supplier_id])
-      supplier = s || null
-    }
-
-    const subtotal         = items.reduce((s, r) => s + roundMoney(Number(r.line_total || 0)), 0)
-    const tax_amount       = roundMoney(Number(bp.tax_amount || 0))
-    const shipping_handling = roundMoney(Number(bp.shipping_handling || 0))
-    const total_due        = roundMoney(subtotal + tax_amount + shipping_handling)
-
-    res.json({
-      purchase_order: bp,
-      supplier,
-      items,
-      summary: { subtotal, tax_amount, shipping_handling, total_due }
-    })
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ error: err.message })
   }
 })
 

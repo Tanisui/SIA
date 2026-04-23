@@ -58,6 +58,19 @@ CREATE TABLE IF NOT EXISTS `categories` (
 	`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS `category_types` (
+	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+	`category_id` INT UNSIGNED NOT NULL,
+	`name` VARCHAR(150) NOT NULL,
+	`description` TEXT,
+	`is_active` TINYINT(1) DEFAULT 1,
+	`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	`updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+	UNIQUE KEY `uq_category_types_category_name` (`category_id`, `name`),
+	KEY `idx_category_types_category_id` (`category_id`),
+	FOREIGN KEY (`category_id`) REFERENCES `categories`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS `products` (
 	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 	`sku` VARCHAR(100) UNIQUE,
@@ -65,6 +78,7 @@ CREATE TABLE IF NOT EXISTS `products` (
 	`brand` VARCHAR(255),
 	`description` TEXT,
 	`category_id` INT UNSIGNED,
+	`subcategory` VARCHAR(150),
 	`price` DECIMAL(12,2) DEFAULT 0.00,
 	`cost` DECIMAL(12,2) DEFAULT 0.00,
 	`stock_quantity` INT DEFAULT 0,
@@ -83,6 +97,7 @@ CREATE TABLE IF NOT EXISTS `products` (
 CREATE TABLE IF NOT EXISTS `inventory_transactions` (
 	`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 	`product_id` BIGINT UNSIGNED NOT NULL,
+	`supplier_id` BIGINT UNSIGNED,
 	`transaction_type` ENUM('IN','OUT','ADJUST','RETURN') NOT NULL,
 	`quantity` INT NOT NULL,
 	`location` VARCHAR(255),
@@ -91,6 +106,7 @@ CREATE TABLE IF NOT EXISTS `inventory_transactions` (
 	`reason` TEXT,
 	`balance_after` INT,
 	`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	KEY `idx_inventory_transactions_supplier_id` (`supplier_id`),
 	FOREIGN KEY (`product_id`) REFERENCES `products`(`id`) ON DELETE CASCADE,
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

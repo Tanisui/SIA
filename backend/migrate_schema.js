@@ -68,6 +68,20 @@ async function run() {
     console.log('  · full_name column already exists')
   }
 
+  if (!colNames.includes('first_name')) {
+    await exec('Add first_name column', "ALTER TABLE users ADD COLUMN first_name VARCHAR(120) AFTER full_name")
+    await exec('Populate first_name from full_name', "UPDATE users SET first_name = NULLIF(TRIM(SUBSTRING_INDEX(COALESCE(NULLIF(full_name, ''), username, email, ''), ' ', 1)), '') WHERE first_name IS NULL OR TRIM(first_name) = ''")
+  } else {
+    console.log('  · first_name column already exists')
+  }
+
+  if (!colNames.includes('last_name')) {
+    await exec('Add last_name column', "ALTER TABLE users ADD COLUMN last_name VARCHAR(120) AFTER first_name")
+    await exec('Populate last_name from full_name', "UPDATE users SET last_name = NULLIF(TRIM(SUBSTRING(COALESCE(NULLIF(full_name, ''), ''), LENGTH(SUBSTRING_INDEX(COALESCE(NULLIF(full_name, ''), ''), ' ', 1)) + 1)), '') WHERE last_name IS NULL OR TRIM(last_name) = ''")
+  } else {
+    console.log('  · last_name column already exists')
+  }
+
   if (!colNames.includes('is_active')) {
     await exec('Add is_active column', "ALTER TABLE users ADD COLUMN is_active TINYINT(1) DEFAULT 1")
   } else {

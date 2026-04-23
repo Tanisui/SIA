@@ -8,29 +8,70 @@ import { PRODUCT_SIZE_OPTIONS } from '../constants/productSizes.js'
 
 // ─── Helpers ───
 const fmt = (n) => Number(n || 0).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })
-const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
 const normalizeScanCode = (v) => String(v || '').trim().toUpperCase()
 
-function readStoredPosDraftCart() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem('pos_draft_sale_snapshot') || '{}')
-    return Array.isArray(parsed?.cart) ? parsed.cart : []
-  } catch {
-    return []
+function parseInventoryDateTime(value) {
+  if (!value) return null
+  if (value instanceof Date) return value
+
+  const normalized = String(value || '').trim()
+  const localDateTimeMatch = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(normalized)
+  if (localDateTimeMatch && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(normalized)) {
+    return new Date(
+      Number(localDateTimeMatch[1]),
+      Number(localDateTimeMatch[2]) - 1,
+      Number(localDateTimeMatch[3]),
+      Number(localDateTimeMatch[4]),
+      Number(localDateTimeMatch[5]),
+      Number(localDateTimeMatch[6] || 0)
+    )
   }
+
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(normalized)
+  if (dateOnlyMatch) {
+    return new Date(
+      Number(dateOnlyMatch[1]),
+      Number(dateOnlyMatch[2]) - 1,
+      Number(dateOnlyMatch[3])
+    )
+  }
+
+  return new Date(normalized)
 }
 
-function posDraftQuantityForProduct(productId) {
-  const normalizedProductId = Number(productId)
-  if (!Number.isFinite(normalizedProductId) || normalizedProductId <= 0) return 0
+function hasExplicitTime(value) {
+  if (value instanceof Date) return true
+  return /\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}|T\d{2}:\d{2}/.test(String(value || '').trim())
+}
 
-  return readStoredPosDraftCart().reduce((sum, item) => (
-    Number(item?.product_id) === normalizedProductId ? sum + Math.max(0, Number(item?.quantity) || 0) : sum
-  ), 0)
+const fmtDate = (d) => {
+  const parsedDate = parseInventoryDateTime(d)
+  if (!parsedDate || Number.isNaN(parsedDate.getTime())) return ''
+
+  const options = { year: 'numeric', month: 'short', day: 'numeric' }
+  if (hasExplicitTime(d)) {
+    options.hour = '2-digit'
+    options.minute = '2-digit'
+  }
+
+  return parsedDate.toLocaleDateString('en-PH', options)
+}
+
+function padDateTimePart(value) {
+  return String(value).padStart(2, '0')
+}
+
+function buildStockInTimestamp(dateOnly) {
+  const normalized = String(dateOnly || '').trim()
+  if (!normalized) return undefined
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return normalized
+
+  const now = new Date()
+  return `${normalized} ${padDateTimePart(now.getHours())}:${padDateTimePart(now.getMinutes())}:${padDateTimePart(now.getSeconds())}`
 }
 
 function formatDateStackParts(value) {
-  const parsedValue = value ? new Date(value) : null
+  const parsedValue = parseInventoryDateTime(value)
   if (!parsedValue || Number.isNaN(parsedValue.getTime())) return { date: '—', time: '' }
 
   return {
@@ -39,10 +80,12 @@ function formatDateStackParts(value) {
       month: 'short',
       day: 'numeric'
     }),
-    time: parsedValue.toLocaleTimeString('en-PH', {
-      hour: 'numeric',
-      minute: '2-digit'
-    })
+    time: hasExplicitTime(value)
+      ? parsedValue.toLocaleTimeString('en-PH', {
+        hour: 'numeric',
+        minute: '2-digit'
+      })
+      : ''
   }
 }
 
@@ -153,12 +196,14 @@ function createEmptyProductForm(overrides = {}) {
     brand: '',
     description: '',
     category_id: '',
+    subcategory: '',
     price: '',
     stock_quantity: '1',
     low_stock_threshold: '10',
     size: '',
     barcode: '',
     product_source: 'manual',
+    supplier_id: '',
     bale_purchase_id: '',
     condition_grade: 'premium',
     ...overrides
@@ -285,6 +330,174 @@ function getStockOutTypeLabel(value) {
   const normalized = String(value || '').trim().toUpperCase()
   if (!normalized) return ''
   return STOCK_OUT_REASON_LABELS[normalized] || toTitleCaseWords(normalized)
+}
+
+function normalizeProductSearchValue(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function compactProductSearchValue(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '')
+}
+
+function buildProductNameFromClassification(form, categories, categorySearch = '') {
+  const typeName = String(form?.subcategory || '').trim()
+  if (typeName) return typeName
+
+  const categoryId = String(form?.category_id || '').trim()
+  const matchedCategory = categories.find((category) => String(category?.id) === categoryId)
+  const categoryName = String(matchedCategory?.name || (categoryId ? categorySearch : '') || '').trim()
+  if (categoryName) return categoryName
+
+  return String(form?.name || '').trim()
+}
+
+function productSearchMatches(product, linkedBaleOption, rawQuery) {
+  const query = normalizeProductSearchValue(rawQuery)
+  if (!query) return true
+
+  const referenceParts = [
+    product?.reference,
+    product?.item_code,
+    product?.sku,
+    product?.barcode,
+    product?.bale_purchase_id ? `bale ${product.bale_purchase_id}` : '',
+    product?.source_breakdown_id ? `breakdown ${product.source_breakdown_id}` : '',
+    product?.bale_batch_no,
+    linkedBaleOption?.bale_batch_no,
+    linkedBaleOption?.breakdown_id ? `breakdown ${linkedBaleOption.breakdown_id}` : ''
+  ]
+
+  const searchableText = [
+    product?.name,
+    product?.barcode,
+    normalizeScanCode(product?.barcode),
+    product?.category,
+    product?.subcategory,
+    product?.brand,
+    productSourceLabel(product),
+    product?.product_source,
+    product?.condition_grade ? toTitleCaseWords(product.condition_grade) : '',
+    product?.supplier_name,
+    product?.bale_supplier_name,
+    linkedBaleOption?.supplier_name,
+    ...referenceParts
+  ].filter(Boolean).join(' ')
+
+  const normalizedText = normalizeProductSearchValue(searchableText)
+  const compactText = compactProductSearchValue(searchableText)
+  const compactQuery = compactProductSearchValue(rawQuery)
+  const queryTokens = query.split(/\s+/).filter(Boolean)
+
+  if (normalizedText.includes(query)) return true
+  if (compactQuery && compactText.includes(compactQuery)) return true
+  return queryTokens.every((token) => normalizedText.includes(token) || compactText.includes(compactProductSearchValue(token)))
+}
+
+function transactionSearchMatches(transaction, rawQuery) {
+  const query = normalizeProductSearchValue(rawQuery)
+  if (!query) return true
+
+  const legacySaleLinkInReason = !String(transaction?.reference || '').trim() && /^SALE_LINK[:|]/.test(String(transaction?.reason || '').trim())
+  const resolvedReference = legacySaleLinkInReason ? transaction.reason : transaction?.reference
+  const resolvedReason = formatTransactionReason(transaction?.reason, resolvedReference)
+  const displayReference = formatTransactionReference(resolvedReference)
+  const compactReference = formatPosReference(resolvedReference)
+  const transactionDisplay = getPosTransactionDisplay(transaction, resolvedReference)
+  const dateParts = formatDateStackParts(transaction?.created_at)
+
+  const searchableText = [
+    transaction?.product_name,
+    transaction?.sku,
+    transaction?.barcode,
+    normalizeScanCode(transaction?.barcode),
+    transaction?.reference,
+    resolvedReference,
+    displayReference,
+    compactReference,
+    transaction?.reason,
+    resolvedReason,
+    transactionDisplay.label,
+    transaction?.transaction_type,
+    transaction?.supplier_name,
+    transaction?.user_name,
+    dateParts.date,
+    dateParts.time
+  ].filter(Boolean).join(' ')
+
+  const normalizedText = normalizeProductSearchValue(searchableText)
+  const compactText = compactProductSearchValue(searchableText)
+  const compactQuery = compactProductSearchValue(rawQuery)
+  const queryTokens = query.split(/\s+/).filter(Boolean)
+
+  if (normalizedText.includes(query)) return true
+  if (compactQuery && compactText.includes(compactQuery)) return true
+  return queryTokens.every((token) => normalizedText.includes(token) || compactText.includes(compactProductSearchValue(token)))
+}
+
+function inventoryReportSearchMatches(product, rawQuery) {
+  const query = normalizeProductSearchValue(rawQuery)
+  if (!query) return true
+
+  const stockQuantity = Number(product?.stock_quantity || 0)
+  const lowStockThreshold = Number(product?.low_stock_threshold || 0)
+  const stockStatus = stockQuantity <= lowStockThreshold ? 'low stock' : 'healthy stock'
+  const sourceLabel = productSourceLabel(product)
+  const gradeLabel = product?.condition_grade ? toTitleCaseWords(product.condition_grade) : ''
+  const statusLabel = product?.status ? toTitleCaseWords(product.status) : (Number(product?.is_active ?? 1) === 1 ? 'Active' : 'Inactive')
+  const dateValues = [
+    product?.date_encoded,
+    product?.bale_purchase_date,
+    product?.breakdown_date,
+    product?.last_transaction_at,
+    product?.created_at,
+    product?.updated_at
+  ]
+
+  const searchableText = [
+    product?.sku,
+    product?.item_code,
+    product?.barcode,
+    normalizeScanCode(product?.barcode),
+    product?.name,
+    product?.brand,
+    product?.description,
+    product?.category,
+    product?.subcategory,
+    product?.bale_category,
+    sourceLabel,
+    product?.product_source,
+    gradeLabel,
+    statusLabel,
+    product?.bale_batch_no,
+    product?.supplier_name,
+    product?.source_breakdown_id ? `breakdown ${product.source_breakdown_id}` : '',
+    stockStatus,
+    `stock ${stockQuantity}`,
+    `low threshold ${lowStockThreshold}`,
+    `cost ${fmt(product?.cost)}`,
+    `allocated ${fmt(product?.allocated_cost)}`,
+    `price ${fmt(product?.price)}`,
+    `cost value ${fmt(product?.stock_value)}`,
+    `retail value ${fmt(product?.retail_value)}`,
+    `in ${Number(product?.total_in_units || 0)}`,
+    `out ${Number(product?.total_out_units || 0)}`,
+    `adjust ${Number(product?.total_adjustment_units || 0)}`,
+    `return ${Number(product?.total_return_units || 0)}`,
+    ...dateValues.flatMap((value) => value ? [value, fmtDate(value)] : [])
+  ].filter(Boolean).join(' ')
+
+  const normalizedText = normalizeProductSearchValue(searchableText)
+  const compactText = compactProductSearchValue(searchableText)
+  const compactQuery = compactProductSearchValue(rawQuery)
+  const queryTokens = query.split(/\s+/).filter(Boolean)
+
+  if (normalizedText.includes(query)) return true
+  if (compactQuery && compactText.includes(compactQuery)) return true
+  return queryTokens.every((token) => normalizedText.includes(token) || compactText.includes(compactProductSearchValue(token)))
 }
 
 function parseStockOutReason(value) {
@@ -492,6 +705,7 @@ export default function Inventory() {
   const [products, setProducts] = useState([])
   const [employees, setEmployees] = useState([])
   const [categories, setCategories] = useState([])
+  const [suppliers, setSuppliers] = useState([])
   const [transactions, setTransactions] = useState([])
   const [stockInRecords, setStockInRecords] = useState([])
   const [damaged, setDamaged] = useState([])
@@ -505,7 +719,7 @@ export default function Inventory() {
   const navigate = useNavigate()
 
   // forms
-  const [stockInForm, setStockInForm] = useState({ product_id: '', quantity: '', reference: '', date: '' })
+  const [stockInForm, setStockInForm] = useState({ product_id: '', supplier_id: '', quantity: '', reference: '', date: '' })
   const [stockInMode, setStockInMode] = useState('bale')
   const [baleStockOptions, setBaleStockOptions] = useState([])
   const [baleStockLoading, setBaleStockLoading] = useState(false)
@@ -526,6 +740,8 @@ export default function Inventory() {
   const [stockInFrom, setStockInFrom] = useState('')
   const [stockInTo, setStockInTo] = useState('')
   const [filterType, setFilterType] = useState('')
+  const [transactionSearchQuery, setTransactionSearchQuery] = useState('')
+  const [inventoryReportSearchQuery, setInventoryReportSearchQuery] = useState('')
   const [damagedSourceFilter, setDamagedSourceFilter] = useState('')
   const [damagedFrom, setDamagedFrom] = useState('')
   const [damagedTo, setDamagedTo] = useState('')
@@ -534,6 +750,10 @@ export default function Inventory() {
   const [selectedDamagedRecordKey, setSelectedDamagedRecordKey] = useState('')
   const [categorySearch, setCategorySearch] = useState('')
   const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false)
+  const [categoryTypeOptions, setCategoryTypeOptions] = useState([])
+  const [categoryTypeLoading, setCategoryTypeLoading] = useState(false)
+  const [categoryTypeCategoryId, setCategoryTypeCategoryId] = useState('')
+  const [productSearchQuery, setProductSearchQuery] = useState('')
   const [repairCategorySearch, setRepairCategorySearch] = useState('')
   const [repairCategoryDropdownOpen, setRepairCategoryDropdownOpen] = useState(false)
   const [labelProductId, setLabelProductId] = useState('')
@@ -556,10 +776,11 @@ export default function Inventory() {
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [prodRes, catRes, empRes] = await Promise.allSettled([
+      const [prodRes, catRes, empRes, supplierRes] = await Promise.allSettled([
         api.get('/products'),
         api.get('/categories'),
-        api.get('/employees')
+        api.get('/employees'),
+        api.get('/suppliers')
       ])
 
       if (prodRes.status === 'fulfilled') {
@@ -570,6 +791,11 @@ export default function Inventory() {
       }
       if (empRes.status === 'fulfilled') {
         setEmployees(Array.isArray(empRes.value?.data) ? empRes.value.data : [])
+      }
+      if (supplierRes.status === 'fulfilled') {
+        setSuppliers(Array.isArray(supplierRes.value?.data) ? supplierRes.value.data : [])
+      } else {
+        setSuppliers([])
       }
     } catch (e) { /* ignore */ }
     setLoading(false)
@@ -583,6 +809,13 @@ export default function Inventory() {
       setTransactions(res.data || [])
     } catch (e) { /* ignore */ }
   }, [filterType])
+
+  const fetchOverviewTransactions = useCallback(async () => {
+    try {
+      const res = await api.get('/inventory/transactions')
+      setTransactions(Array.isArray(res.data) ? res.data : [])
+    } catch (e) { /* ignore */ }
+  }, [])
 
   const fetchStockInRecords = useCallback(async () => {
     try {
@@ -884,6 +1117,107 @@ export default function Inventory() {
     }
   }, [categories])
 
+  const findCategoryByName = useCallback((name) => {
+    const normalizedName = String(name || '').trim().toLowerCase()
+    if (!normalizedName) return null
+    return categories.find((category) => String(category?.name || '').trim().toLowerCase() === normalizedName) || null
+  }, [categories])
+
+  const fetchCategoryTypes = useCallback(async (categoryId) => {
+    const normalizedCategoryId = Number(categoryId)
+    if (!Number.isInteger(normalizedCategoryId) || normalizedCategoryId <= 0) {
+      setCategoryTypeOptions([])
+      setCategoryTypeCategoryId('')
+      return
+    }
+
+    try {
+      setCategoryTypeLoading(true)
+      setCategoryTypeCategoryId('')
+      const res = await api.get(`/categories/${normalizedCategoryId}/types`)
+      setCategoryTypeOptions(Array.isArray(res.data) ? res.data : [])
+      setCategoryTypeCategoryId(String(normalizedCategoryId))
+    } catch (err) {
+      setCategoryTypeOptions([])
+      setCategoryTypeCategoryId(String(normalizedCategoryId))
+    } finally {
+      setCategoryTypeLoading(false)
+    }
+  }, [])
+
+  const resolveCategoryByName = useCallback(async (name) => {
+    const normalizedName = String(name || '').trim().replace(/\s+/g, ' ')
+    if (!normalizedName) return null
+
+    const existingCategory = findCategoryByName(normalizedName)
+    if (existingCategory) return existingCategory
+
+    const res = await api.post('/categories/resolve', { name: normalizedName })
+    const resolvedCategory = res?.data?.id
+      ? {
+          id: res.data.id,
+          name: res.data.name || normalizedName,
+          description: res.data.description || null,
+          type_name: res.data.type_name || null
+        }
+      : null
+
+    if (!resolvedCategory) return null
+
+    setCategories((prev) => {
+      const rows = Array.isArray(prev) ? prev : []
+      const exists = rows.some((category) => String(category?.id) === String(resolvedCategory.id))
+      const nextRows = exists
+        ? rows.map((category) => String(category?.id) === String(resolvedCategory.id) ? { ...category, ...resolvedCategory } : category)
+        : [...rows, resolvedCategory]
+      return nextRows.sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')))
+    })
+
+    return resolvedCategory
+  }, [findCategoryByName])
+
+  const applyBaleCategoryToProductForm = useCallback(async (balePurchaseId) => {
+    const normalizedBalePurchaseId = String(balePurchaseId || '').trim()
+    if (!normalizedBalePurchaseId) return null
+
+    const selectedBale = baleStockOptions.find((row) => String(row.bale_purchase_id) === normalizedBalePurchaseId)
+    let baleCategory = String(selectedBale?.bale_category || '').trim()
+
+    if (!baleCategory) {
+      try {
+        const res = await api.get(`/bale-purchases/${normalizedBalePurchaseId}`)
+        baleCategory = String(res?.data?.bale_category || '').trim()
+      } catch (err) {
+        return null
+      }
+    }
+
+    if (!baleCategory) return null
+
+    const resolvedCategory = await resolveCategoryByName(baleCategory)
+    if (!resolvedCategory?.id) return null
+    setCategorySearch(resolvedCategory.name || baleCategory)
+
+    setProductForm((form) => {
+      if (String(form.bale_purchase_id || '') !== normalizedBalePurchaseId) return form
+      if (String(form.product_source || '').trim().toLowerCase() !== 'bale_breakdown') return form
+
+      const nextCategoryId = String(resolvedCategory.id)
+      const nextSubcategory = String(resolvedCategory.type_name || '').trim()
+      const categoryChanged = String(form.category_id || '') !== nextCategoryId
+      const typeChanged = nextSubcategory && String(form.subcategory || '').trim() !== nextSubcategory
+      if (!categoryChanged && !typeChanged) return form
+
+      return {
+        ...form,
+        category_id: nextCategoryId,
+        subcategory: categoryChanged ? nextSubcategory : (nextSubcategory || form.subcategory)
+      }
+    })
+
+    return resolvedCategory
+  }, [baleStockOptions, resolveCategoryByName])
+
   const fetchShrinkage = useCallback(async () => {
     try { const res = await api.get('/inventory/reports/shrinkage'); setShrinkage(res.data || []) } catch (e) { /* ignore */ }
   }, [])
@@ -905,8 +1239,8 @@ export default function Inventory() {
     if (tab === 'low-stock') fetchLowStock()
     if (tab === 'shrinkage') fetchShrinkage()
     if (tab === 'reports') fetchSummary()
-    if (tab === 'overview') { fetchSummary(); fetchLowStock() }
-  }, [tab, fetchStockInRecords, fetchBaleStockOptions, fetchTransactions, fetchDamaged, fetchLowStock, fetchShrinkage, fetchSummary])
+    if (tab === 'overview') { fetchSummary(); fetchOverviewTransactions() }
+  }, [tab, fetchStockInRecords, fetchBaleStockOptions, fetchTransactions, fetchOverviewTransactions, fetchDamaged, fetchLowStock, fetchShrinkage, fetchSummary])
 
   useEffect(() => {
     if (location.pathname !== '/inventory') return
@@ -929,6 +1263,50 @@ export default function Inventory() {
       setSelectedBaleStockOptionId('')
     }
   }, [baleStockOptions, selectedBaleStockOptionId])
+
+  useEffect(() => {
+    if (!showProductModal || !productForm.category_id) {
+      setCategoryTypeOptions([])
+      setCategoryTypeLoading(false)
+      setCategoryTypeCategoryId('')
+      return
+    }
+
+    fetchCategoryTypes(productForm.category_id)
+  }, [fetchCategoryTypes, productForm.category_id, showProductModal])
+
+  useEffect(() => {
+    if (!showProductModal || categoryTypeLoading || !productForm.subcategory) return
+    if (String(categoryTypeCategoryId || '') !== String(productForm.category_id || '')) return
+    const selectedTypeExists = categoryTypeOptions.some((option) => (
+      String(option?.name || '').trim().toLowerCase() === String(productForm.subcategory || '').trim().toLowerCase()
+    ))
+    if (!selectedTypeExists) setProductForm((form) => ({ ...form, subcategory: '' }))
+  }, [categoryTypeCategoryId, categoryTypeLoading, categoryTypeOptions, productForm.category_id, productForm.subcategory, showProductModal])
+
+  useEffect(() => {
+    if (!showProductModal) return
+    if (String(productForm.product_source || '').trim().toLowerCase() !== 'bale_breakdown') return
+    if (!productForm.bale_purchase_id) return
+
+    const selectedBale = baleStockOptions.find((row) => String(row.bale_purchase_id) === String(productForm.bale_purchase_id))
+    const baleCategory = String(selectedBale?.bale_category || '').trim()
+    if (baleCategory && categorySearch === baleCategory) {
+      const matchedCategory = findCategoryByName(baleCategory)
+      if (matchedCategory && String(productForm.category_id || '') === String(matchedCategory.id)) return
+    }
+
+    applyBaleCategoryToProductForm(productForm.bale_purchase_id).catch(() => {})
+  }, [
+    applyBaleCategoryToProductForm,
+    baleStockOptions,
+    categorySearch,
+    findCategoryByName,
+    productForm.bale_purchase_id,
+    productForm.category_id,
+    productForm.product_source,
+    showProductModal
+  ])
 
   useEffect(() => {
     if (tab !== 'barcode-labels') return undefined
@@ -1083,16 +1461,11 @@ export default function Inventory() {
 
   const productAvailableForPos = useCallback((product) => {
     const availableStock = Number(product?.stock_quantity || 0)
-    const alreadyInDraft = posDraftQuantityForProduct(product?.id)
-    if (availableStock > 0 && alreadyInDraft < availableStock) return true
+    if (availableStock > 0) return true
 
     const productName = String(product?.name || product?.barcode || 'Selected product').trim()
     clearMessages()
-    if (availableStock <= 0) {
-      setError(`0 stock: ${productName} will not be sent to Sales`)
-    } else {
-      setError(`${productName} is already at the stock limit in the current Sales draft`)
-    }
+    setError(`0 stock: ${productName} will not be sent to Sales`)
     return false
   }, [])
 
@@ -1105,12 +1478,7 @@ export default function Inventory() {
     if (!productAvailableForPos(product)) return false
 
     closeQrPreview()
-    const params = new URLSearchParams({ scan: normalizedCode })
-    const draftSaleId = Number(localStorage.getItem('pos_draft_sale_id'))
-    if (Number.isFinite(draftSaleId) && draftSaleId > 0) {
-      params.set('draft_sale_id', String(draftSaleId))
-    }
-    navigate(`/sales?${params.toString()}`, { preventScrollReset: true })
+    navigate(`/sales?scan=${encodeURIComponent(normalizedCode)}`, { preventScrollReset: true })
     return true
   }, [closeQrPreview, navigate, productAvailableForPos])
 
@@ -1603,10 +1971,11 @@ export default function Inventory() {
       await api.post('/inventory/stock-in', {
         product_id: productId,
         quantity,
+        supplier_id: stockInForm.supplier_id ? Number(stockInForm.supplier_id) : null,
         reference: stockInForm.reference,
-        date: stockInForm.date || undefined
+        date: buildStockInTimestamp(stockInForm.date)
       })
-      setStockInForm({ product_id: '', quantity: '', reference: '', date: '' })
+      setStockInForm({ product_id: '', supplier_id: '', quantity: '', reference: '', date: '' })
       showMsg('Stock in recorded successfully')
       fetchAll()
       fetchStockInRecords()
@@ -1616,10 +1985,23 @@ export default function Inventory() {
   const openCreateProductModal = (overrides = {}) => {
     setEditingProduct(null)
     const nextForm = createEmptyProductForm(overrides)
-    setProductForm(nextForm)
+    let nextCategorySearch = ''
 
-    const selectedCategory = categories.find((category) => String(category.id) === String(nextForm.category_id || ''))
-    setCategorySearch(selectedCategory?.name || '')
+    if (String(nextForm.product_source || '').trim().toLowerCase() === 'bale_breakdown' && nextForm.bale_purchase_id) {
+      const selectedBale = baleStockOptions.find((row) => String(row.bale_purchase_id) === String(nextForm.bale_purchase_id))
+      const baleCategory = String(selectedBale?.bale_category || '').trim()
+      if (baleCategory) {
+        nextForm.subcategory = ''
+      }
+    }
+
+    if (!nextCategorySearch) {
+      const selectedCategory = categories.find((category) => String(category.id) === String(nextForm.category_id || ''))
+      nextCategorySearch = selectedCategory?.name || ''
+    }
+
+    setProductForm(nextForm)
+    setCategorySearch(nextCategorySearch)
     setShowProductModal(true)
   }
 
@@ -2099,11 +2481,11 @@ export default function Inventory() {
           : 'manual'
       const isSystemManagedSource = normalizedSource === 'bale_breakdown' || normalizedSource === 'repaired_damage'
 
-      payload.name = String(payload.name || '').trim()
       payload.sku = String(payload.sku || '').trim()
       payload.barcode = String(payload.barcode || '').trim()
       payload.brand = String(payload.brand || '').trim()
       payload.description = String(payload.description || '').trim()
+      payload.subcategory = String(payload.subcategory || '').trim()
 
       payload.price = Number(payload.price)
       payload.stock_quantity = payload.stock_quantity === '' || payload.stock_quantity === undefined
@@ -2113,12 +2495,19 @@ export default function Inventory() {
         ? 10
         : Number(payload.low_stock_threshold)
       payload.category_id = payload.category_id ? Number(payload.category_id) : null
+      payload.name = buildProductNameFromClassification(payload, categories, categorySearch)
 
-      if (!payload.name) return setError('Product name is required')
+      if (!payload.name) return setError('Select a category or type before saving this product')
       if (!Number.isFinite(payload.price) || payload.price <= 0) return setError('Selling price must be greater than 0')
       if (!Number.isFinite(payload.stock_quantity) || payload.stock_quantity < 0) return setError('Stock quantity must be 0 or greater')
       payload.stock_quantity = Math.floor(payload.stock_quantity)
       payload.low_stock_threshold = Number.isFinite(payload.low_stock_threshold) ? Math.max(0, payload.low_stock_threshold) : 10
+
+      const selectedCategoryTypeOptionsLoaded = String(categoryTypeCategoryId || '') === String(payload.category_id || '')
+      if (payload.category_id && categoryTypeLoading) return setError('Wait for product types to finish loading')
+      if (selectedCategoryTypeOptionsLoaded && categoryTypeOptions.length > 0 && !payload.subcategory) {
+        return setError('Type is required for the selected category')
+      }
 
       if (!isEditing && normalizedSource === 'bale_breakdown') {
         const balePurchaseId = Number(payload.bale_purchase_id)
@@ -2128,7 +2517,7 @@ export default function Inventory() {
 
         const conditionGrade = String(payload.condition_grade || '').trim().toLowerCase()
         if (!['premium', 'standard'].includes(conditionGrade)) {
-          return setError('Choose Product Type: Premium or Standard')
+          return setError('Choose Bale Grade: Premium or Standard')
         }
 
         const baleOption = baleStockOptions.find((row) => String(row.bale_purchase_id) === String(balePurchaseId))
@@ -2154,6 +2543,11 @@ export default function Inventory() {
         payload.stock_quantity = requestedBaleQuantity
       } else if (!isEditing) {
         payload.product_source = 'manual'
+        payload.supplier_id = payload.supplier_id ? Number(payload.supplier_id) : null
+        if (payload.supplier_id !== null && (!Number.isInteger(payload.supplier_id) || payload.supplier_id <= 0)) {
+          return setError('Please select a valid supplier')
+        }
+        if (payload.supplier_id === null) delete payload.supplier_id
         delete payload.bale_purchase_id
         delete payload.condition_grade
       }
@@ -2165,6 +2559,7 @@ export default function Inventory() {
 
       if (isEditing) {
         delete payload.product_source
+        delete payload.supplier_id
         delete payload.bale_purchase_id
         delete payload.condition_grade
         if (isSystemManagedSource) delete payload.stock_quantity
@@ -2203,7 +2598,7 @@ export default function Inventory() {
               product_id: editingProductId,
               quantity: stockDelta,
               reference: 'PRODUCT_EDIT_QUANTITY_COMPAT',
-              date: new Date().toISOString().slice(0, 10)
+              date: buildStockInTimestamp(new Date().toISOString().slice(0, 10))
             })
           } else if (stockDelta < 0) {
             await api.post('/inventory/stock-out/adjust', {
@@ -2242,6 +2637,8 @@ export default function Inventory() {
 
       setProductForm(createEmptyProductForm())
       setCategorySearch('')
+      setCategoryTypeOptions([])
+      setCategoryTypeCategoryId('')
       setEditingProduct(null)
       setShowProductModal(false)
     } catch (err) { setError(err?.response?.data?.error || 'Save product failed') }
@@ -2252,6 +2649,7 @@ export default function Inventory() {
     setProductForm({
       sku: p.sku || '', name: p.name || '', brand: p.brand || '', description: p.description || '',
       category_id: p.category_id || '', price: p.price || '',
+      subcategory: p.subcategory || '',
       stock_quantity: String(p.stock_quantity ?? 0), low_stock_threshold: p.low_stock_threshold || '10',
       size: p.size || '',
       barcode: p.barcode || '',
@@ -2302,9 +2700,19 @@ export default function Inventory() {
     }
     return nextMap
   }, [baleStockOptions])
+  const productSearchText = String(productSearchQuery || '').trim()
+  const searchedProducts = useMemo(() => (
+    listedProducts.filter((product) => {
+      const linkedBaleOption = Number(product?.bale_purchase_id || 0) > 0
+        ? baleOptionByPurchaseId.get(String(product.bale_purchase_id))
+        : null
+      return productSearchMatches(product, linkedBaleOption, productSearchText)
+    })
+  ), [baleOptionByPurchaseId, listedProducts, productSearchText])
   const selectedBaleStockOption = useMemo(() => (
     baleStockOptions.find((row) => String(row.bale_purchase_id) === String(selectedBaleStockOptionId)) || null
   ), [baleStockOptions, selectedBaleStockOptionId])
+  const selectedBaleStockCategory = String(selectedBaleStockOption?.bale_category || '').trim()
   const selectedBaleListedProducts = useMemo(() => (
     !selectedBaleStockOption
       ? []
@@ -2381,6 +2789,9 @@ export default function Inventory() {
   const productFormAvailableForSelectedGrade = productFormSelectedGrade === 'premium'
     ? productFormPendingPremium
     : productFormPendingStandard
+  const categoryTypeOptionsMatchSelectedCategory = String(categoryTypeCategoryId || '') === String(productForm.category_id || '')
+  const selectedProductCategoryHasTypes = categoryTypeOptionsMatchSelectedCategory && categoryTypeOptions.length > 0
+  const isBaleCategorySyncedProduct = isCreateBaleSource || isEditingBaleProduct
   const previewQueuedQr = () => {
     const preferredProductId = Number(labelProductId) || Number(resolvedLabelRows[0]?.product_id)
     const product = products.find((item) => Number(item.id) === preferredProductId)
@@ -2415,8 +2826,61 @@ export default function Inventory() {
     'reports': { title: 'Inventory Reports', subtitle: 'Analytics and detailed inventory reports.' }
   }
   const currentLabel = tabLabels[tab] || tabLabels['overview']
+  const inventoryReportProducts = Array.isArray(summary?.products) ? summary.products : []
+  const overviewProducts = Array.isArray(summary?.products) ? summary.products : products
+  const overviewStockHealth = useMemo(() => {
+    return overviewProducts.reduce((acc, product) => {
+      const stockQuantity = Number(product?.stock_quantity || 0)
+      const lowStockThreshold = Number(product?.low_stock_threshold || 0)
+
+      if (stockQuantity <= 0) {
+        acc.outOfStock += 1
+      } else if (stockQuantity <= lowStockThreshold) {
+        acc.lowStock += 1
+      } else {
+        acc.healthy += 1
+      }
+
+      return acc
+    }, {
+      healthy: 0,
+      lowStock: 0,
+      outOfStock: 0
+    })
+  }, [overviewProducts])
+  const overviewSourceSummary = useMemo(() => {
+    return overviewProducts.reduce((acc, product) => {
+      if (isBaleGeneratedProduct(product)) {
+        acc.baleLinked += 1
+      } else {
+        acc.manual += 1
+      }
+      return acc
+    }, {
+      manual: 0,
+      baleLinked: 0
+    })
+  }, [overviewProducts])
+  const recentOverviewTransactions = useMemo(() => {
+    const resolveTransactionTime = (transaction) => {
+      const parsedDate = parseInventoryDateTime(transaction?.created_at)
+      return parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate.getTime() : 0
+    }
+
+    return [...transactions]
+      .sort((left, right) => resolveTransactionTime(right) - resolveTransactionTime(left))
+      .slice(0, 5)
+  }, [transactions])
+  const inventoryReportSearchText = String(inventoryReportSearchQuery || '').trim()
+  const filteredInventoryReportProducts = useMemo(() => (
+    inventoryReportProducts.filter((product) => inventoryReportSearchMatches(product, inventoryReportSearchText))
+  ), [inventoryReportProducts, inventoryReportSearchText])
+  const transactionSearchText = String(transactionSearchQuery || '').trim()
+  const searchedTransactions = useMemo(() => (
+    transactions.filter((row) => transactionSearchMatches(row, transactionSearchText))
+  ), [transactions, transactionSearchText])
   const transactionSummary = useMemo(() => {
-    return transactions.reduce((acc, row) => {
+    return searchedTransactions.reduce((acc, row) => {
       const quantity = Number(row?.quantity) || 0
       const legacySaleLinkInReason = !String(row?.reference || '').trim() && /^SALE_LINK[:|]/.test(String(row?.reason || '').trim())
       const resolvedReference = legacySaleLinkInReason ? row.reason : row.reference
@@ -2435,7 +2899,7 @@ export default function Inventory() {
       unitsOut: 0,
       shrinkageRows: 0
     })
-  }, [transactions])
+  }, [searchedTransactions])
   const shrinkageSummary = useMemo(() => {
     return shrinkage.reduce((acc, row) => {
       const totalShrinkage = Number(row?.total_shrinkage) || 0
@@ -2500,27 +2964,99 @@ export default function Inventory() {
           React.createElement('div', { className: 'card-value', style: { color: summary.lowStockCount > 0 ? 'var(--error)' : 'var(--success)' } }, summary.lowStockCount || 0)
         )
       ),
-      lowStock.length > 0 && React.createElement('div', { className: 'card', style: { marginTop: 20 } },
-        React.createElement('h3', { style: { marginBottom: 12 } }, 'Low Stock Alerts'),
-        React.createElement('div', { className: 'table-wrap' },
-          React.createElement('table', null,
-            React.createElement('thead', null,
-              React.createElement('tr', null,
-                React.createElement('th', null, 'SKU'),
-                React.createElement('th', null, 'Product'),
-                React.createElement('th', null, 'Stock'),
-                React.createElement('th', null, 'Threshold')
-              )
-            ),
-            React.createElement('tbody', null,
-              lowStock.map(p => React.createElement('tr', { key: p.id },
-                React.createElement('td', null, p.sku || '—'),
-                React.createElement('td', null, p.name),
-                React.createElement('td', { style: { color: 'var(--error)', fontWeight: 600 } }, p.stock_quantity),
-                React.createElement('td', null, p.low_stock_threshold)
-              ))
-            )
+      React.createElement('div', {
+        style: {
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+          gap: 16,
+          marginTop: 20
+        }
+      },
+        React.createElement('div', { className: 'card', style: { margin: 0 } },
+          React.createElement('h3', { style: { marginBottom: 14 } }, 'Stock Health'),
+          React.createElement('div', { style: { display: 'grid', gap: 10 } },
+            [
+              { label: 'Healthy stock', value: overviewStockHealth.healthy, color: 'var(--success)' },
+              { label: 'Low stock', value: overviewStockHealth.lowStock, color: 'var(--error)' },
+              { label: 'Out of stock', value: overviewStockHealth.outOfStock, color: 'var(--text-light)' }
+            ].map((row) => React.createElement('div', {
+              key: `overview-health-${row.label}`,
+              style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }
+            },
+              React.createElement('span', { style: { color: 'var(--text-light)' } }, row.label),
+              React.createElement('strong', { style: { color: row.color, fontSize: 18 } }, row.value)
+            ))
           )
+        ),
+        React.createElement('div', { className: 'card', style: { margin: 0 } },
+          React.createElement('h3', { style: { marginBottom: 14 } }, 'Inventory Source'),
+          React.createElement('div', { style: { display: 'grid', gap: 10 } },
+            [
+              { label: 'Manual products', value: overviewSourceSummary.manual },
+              { label: 'Bale-linked products', value: overviewSourceSummary.baleLinked }
+            ].map((row) => React.createElement('div', {
+              key: `overview-source-${row.label}`,
+              style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }
+            },
+              React.createElement('span', { style: { color: 'var(--text-light)' } }, row.label),
+              React.createElement('strong', { style: { fontSize: 18 } }, row.value)
+            ))
+          )
+        )
+      ),
+      React.createElement('div', {
+        style: {
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+          gap: 16,
+          marginTop: 20
+        }
+      },
+        React.createElement('div', { className: 'card', style: { margin: 0 } },
+          React.createElement('h3', { style: { marginBottom: 12 } }, 'Recent Inventory Activity'),
+          recentOverviewTransactions.length === 0
+            ? React.createElement('p', { style: { color: 'var(--text-light)', margin: 0 } }, 'No recent inventory activity.')
+            : React.createElement('div', { className: 'table-wrap' },
+                React.createElement('table', null,
+                  React.createElement('thead', null,
+                    React.createElement('tr', null,
+                      React.createElement('th', null, 'Type'),
+                      React.createElement('th', null, 'Item'),
+                      React.createElement('th', null, 'Qty'),
+                      React.createElement('th', null, 'Date')
+                    )
+                  ),
+                  React.createElement('tbody', null,
+                    recentOverviewTransactions.map((transaction) => {
+                      const legacySaleLinkInReason = !String(transaction.reference || '').trim() && /^SALE_LINK[:|]/.test(String(transaction.reason || '').trim())
+                      const resolvedReference = legacySaleLinkInReason ? transaction.reason : transaction.reference
+                      const transactionDisplay = getPosTransactionDisplay(transaction, resolvedReference)
+                      const quantity = Number(transaction.quantity) || 0
+                      const dateParts = formatDateStackParts(transaction.created_at)
+
+                      return React.createElement('tr', { key: `overview-transaction-${transaction.id}` },
+                        React.createElement('td', null,
+                          React.createElement('span', { className: `badge ${transactionDisplay.badgeClass}` }, transactionDisplay.label)
+                        ),
+                        React.createElement('td', null,
+                          React.createElement('div', { style: { fontWeight: 600 } }, transaction.product_name || 'Unassigned item'),
+                          React.createElement('div', { style: { color: 'var(--text-light)', fontSize: 12 } }, transaction.sku || formatPosReference(resolvedReference) || 'No reference')
+                        ),
+                        React.createElement('td', {
+                          style: {
+                            fontWeight: 700,
+                            color: quantity >= 0 ? 'var(--success)' : 'var(--error)'
+                          }
+                        }, quantity > 0 ? `+${quantity}` : String(quantity)),
+                        React.createElement('td', null,
+                          React.createElement('div', null, dateParts.date),
+                          React.createElement('div', { style: { color: 'var(--text-light)', fontSize: 12 } }, dateParts.time || 'No time')
+                        )
+                      )
+                    })
+                  )
+                )
+              )
         )
       ),
       false && React.createElement('div', { className: 'card', style: { marginTop: 20 } },
@@ -2593,21 +3129,40 @@ export default function Inventory() {
 
         stockInMode === 'bale'
           ? React.createElement('div', null,
-              React.createElement('div', { className: 'form-group', style: { maxWidth: 560, marginBottom: 14 } },
-                React.createElement('label', { className: 'form-label' }, 'Bale Record'),
-                React.createElement('select', {
-                  className: 'form-input',
-                  value: selectedBaleStockOptionId,
-                  onChange: (e) => setSelectedBaleStockOptionId(e.target.value),
-                  disabled: baleStockLoading,
-                  required: true
-                },
-                  React.createElement('option', { value: '' }, baleStockLoading ? 'Loading bale records...' : 'Choose a bale record'),
-                  ...baleStockOptions.map((row) => {
-                    return React.createElement('option', {
-                      key: `bale-option-${row.breakdown_id}`,
-                      value: row.bale_purchase_id
-                    }, `${row.bale_batch_no || 'N/A'} - ${row.supplier_name || 'Unknown Supplier'}`)
+              React.createElement('div', {
+                style: {
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(260px, 560px) minmax(180px, 280px)',
+                  gap: 12,
+                  alignItems: 'end',
+                  marginBottom: 14
+                }
+              },
+                React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+                  React.createElement('label', { className: 'form-label' }, 'Bale Record'),
+                  React.createElement('select', {
+                    className: 'form-input',
+                    value: selectedBaleStockOptionId,
+                    onChange: (e) => setSelectedBaleStockOptionId(e.target.value),
+                    disabled: baleStockLoading,
+                    required: true
+                  },
+                    React.createElement('option', { value: '' }, baleStockLoading ? 'Loading bale records...' : 'Choose a bale record'),
+                    ...baleStockOptions.map((row) => {
+                      return React.createElement('option', {
+                        key: `bale-option-${row.breakdown_id}`,
+                        value: row.bale_purchase_id
+                      }, `${row.bale_batch_no || 'N/A'} - ${row.supplier_name || 'Unknown Supplier'}`)
+                    })
+                  )
+                ),
+                React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+                  React.createElement('label', { className: 'form-label' }, 'Category'),
+                  React.createElement('input', {
+                    className: 'form-input',
+                    readOnly: true,
+                    value: selectedBaleStockCategory,
+                    placeholder: 'Auto-filled from bale record'
                   })
                 )
               ),
@@ -2643,7 +3198,7 @@ export default function Inventory() {
               },
                 React.createElement('div', { style: { color: 'var(--text-light)', fontSize: 12 } },
                   selectedBaleStockOption
-                    ? `Selected batch ${selectedBaleStockOption.bale_batch_no || '-'}: Left ${selectedBaleLeftToStockIn}, Ready ${selectedBaleReadyForProductManagement}, Breakdown date ${fmtDate(selectedBaleStockOption.breakdown_date || selectedBaleStockOption.purchase_date)}.`
+                    ? `Selected batch ${selectedBaleStockOption.bale_batch_no || '-'}: Category ${selectedBaleStockCategory || '-'}, Left ${selectedBaleLeftToStockIn}, Ready ${selectedBaleReadyForProductManagement}, Breakdown date ${fmtDate(selectedBaleStockOption.breakdown_date || selectedBaleStockOption.purchase_date)}.`
                     : 'Choose a bale record from the list to start stock in.'
                 ),
                 React.createElement('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
@@ -2688,6 +3243,20 @@ export default function Inventory() {
                   },
                     React.createElement('option', { value: '' }, '— Select product —'),
                     ...stockInProductOptions
+                  )
+                ),
+                React.createElement('div', { className: 'form-group' },
+                  React.createElement('label', { className: 'form-label' }, 'Supplier'),
+                  React.createElement('select', {
+                    className: 'form-input',
+                    value: stockInForm.supplier_id,
+                    onChange: (e) => setStockInForm((f) => ({ ...f, supplier_id: e.target.value }))
+                  },
+                    React.createElement('option', { value: '' }, suppliers.length ? '-- Select supplier --' : 'No suppliers available'),
+                    ...suppliers.map((supplier) => React.createElement('option', {
+                      key: `stock-in-supplier-${supplier.id}`,
+                      value: supplier.id
+                    }, supplier.name))
                   )
                 ),
                 React.createElement('div', { className: 'form-group' },
@@ -2857,8 +3426,41 @@ export default function Inventory() {
           ? `Selected bale ${selectedBaleStockOption.bale_batch_no || '-'}: Total items ${selectedBaleTotalItems}, Premium remaining ${selectedBalePendingPremium} of ${selectedBalePremiumTotal}, Standard remaining ${selectedBalePendingStandard} of ${selectedBaleStandardTotal}, Current products available ${selectedBaleReadyForProductManagement}. The table below shows all active products.`
           : `No bale selected. Current products listed: ${currentProductsListedCount}. In-stock products: ${currentProductsInStockCount}. Bale-linked products: ${currentBaleLinkedProductsCount}. Individual products: ${currentIndividualProductsCount}, including repaired items received from Damaged.`
       ),
-      React.createElement('div', { className: 'inventory-products-toolbar', style: { marginBottom: 16 } },
-          React.createElement('button', { className: 'btn btn-primary inventory-create-product-btn', onClick: () => openCreateProductModal() }, '+ Create Product')
+      React.createElement('div', {
+        className: 'inventory-products-toolbar',
+        style: {
+          display: 'flex',
+          gap: 12,
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 16,
+          flexWrap: 'wrap'
+        }
+      },
+        React.createElement('div', {
+          className: 'inventory-products-search',
+          style: { flex: '1 1 360px', maxWidth: 620 }
+        },
+          React.createElement('label', { className: 'form-label', htmlFor: 'product-management-search' }, 'Search Products'),
+          React.createElement('div', { style: { display: 'flex', gap: 8 } },
+            React.createElement('input', {
+              id: 'product-management-search',
+              className: 'form-input',
+              type: 'search',
+              value: productSearchQuery,
+              onChange: (event) => setProductSearchQuery(event.target.value),
+              placeholder: 'Search reference, category, name, or barcode',
+              autoComplete: 'off',
+              style: { minWidth: 260 }
+            }),
+            productSearchText && React.createElement('button', {
+              type: 'button',
+              className: 'btn btn-secondary',
+              onClick: () => setProductSearchQuery('')
+            }, 'Clear')
+          )
+        ),
+        React.createElement('button', { className: 'btn btn-primary inventory-create-product-btn', onClick: () => openCreateProductModal() }, '+ Create Product')
       ),
 
       showProductModal && React.createElement('div', { className: 'card inventory-product-editor', style: { marginBottom: 20 } },
@@ -2879,21 +3481,45 @@ export default function Inventory() {
                     value: productForm.product_source,
                     onChange: (e) => {
                       const nextSource = e.target.value === 'bale_breakdown' ? 'bale_breakdown' : 'manual'
+                      const nextBalePurchaseId = nextSource === 'bale_breakdown'
+                        ? (productForm.bale_purchase_id || String(selectedBaleStockOptionId || ''))
+                        : ''
+                      const selectedBale = baleStockOptions.find((row) => String(row.bale_purchase_id) === String(nextBalePurchaseId))
+                      const baleCategory = String(selectedBale?.bale_category || '').trim()
+                      if (nextSource === 'bale_breakdown' && baleCategory) setCategorySearch('')
+                      if (nextSource !== 'bale_breakdown') setCategoryDropdownOpen(false)
                       setProductForm((form) => ({
                         ...form,
                         product_source: nextSource,
-                        bale_purchase_id: nextSource === 'bale_breakdown'
-                          ? (form.bale_purchase_id || String(selectedBaleStockOptionId || ''))
-                          : '',
+                        supplier_id: nextSource === 'manual' ? form.supplier_id : '',
+                        bale_purchase_id: nextBalePurchaseId,
+                        category_id: nextSource === 'bale_breakdown' ? '' : form.category_id,
+                        subcategory: nextSource === 'bale_breakdown' ? '' : form.subcategory,
                         condition_grade: nextSource === 'bale_breakdown'
                           ? (String(form.condition_grade || '').trim().toLowerCase() === 'standard' ? 'standard' : 'premium')
                           : 'premium'
                       }))
+                      if (nextSource === 'bale_breakdown' && nextBalePurchaseId) applyBaleCategoryToProductForm(nextBalePurchaseId).catch(() => {})
                     }
                   },
                     React.createElement('option', { value: 'manual' }, 'Manual'),
                     React.createElement('option', { value: 'bale_breakdown' }, 'From Bale Record')
                   )
+            ),
+            !editingProduct && !isCreateBaleSource && React.createElement('div', { className: 'form-group' },
+              React.createElement('label', { className: 'form-label' }, 'Supplier'),
+              React.createElement('select', {
+                className: 'form-input',
+                value: productForm.supplier_id || '',
+                onChange: (e) => setProductForm((form) => ({ ...form, supplier_id: e.target.value })),
+                disabled: suppliers.length === 0
+              },
+                React.createElement('option', { value: '' }, suppliers.length ? '-- Select supplier --' : 'No suppliers available'),
+                ...suppliers.map((supplier) => React.createElement('option', {
+                  key: `product-manual-supplier-${supplier.id}`,
+                  value: supplier.id
+                }, supplier.name))
+              )
             ),
             (isCreateBaleSource || isEditingBaleProduct) && React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Bale Record *'),
@@ -2911,8 +3537,18 @@ export default function Inventory() {
                     value: productForm.bale_purchase_id,
                     onChange: (e) => {
                       const nextBalePurchaseId = String(e.target.value || '')
-                      setProductForm((form) => ({ ...form, bale_purchase_id: nextBalePurchaseId }))
+                      const selectedBale = baleStockOptions.find((row) => String(row.bale_purchase_id) === nextBalePurchaseId)
+                      const baleCategory = String(selectedBale?.bale_category || '').trim()
+                      if (baleCategory) setCategorySearch('')
+                      if (!nextBalePurchaseId) setCategorySearch('')
+                      setProductForm((form) => ({
+                        ...form,
+                        bale_purchase_id: nextBalePurchaseId,
+                        category_id: '',
+                        subcategory: ''
+                      }))
                       setSelectedBaleStockOptionId(nextBalePurchaseId)
+                      if (nextBalePurchaseId) applyBaleCategoryToProductForm(nextBalePurchaseId).catch(() => {})
                     },
                     required: true,
                     disabled: baleStockLoading
@@ -2927,7 +3563,7 @@ export default function Inventory() {
                   )
             ),
             (isCreateBaleSource || isEditingBaleProduct) && React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Product Type *'),
+              React.createElement('label', { className: 'form-label' }, 'Bale Grade *'),
               isEditingBaleProduct
                 ? React.createElement('input', {
                     className: 'form-input',
@@ -2949,10 +3585,6 @@ export default function Inventory() {
               React.createElement('input', { className: 'form-input', value: productForm.sku, onChange: e => setProductForm(f => ({ ...f, sku: e.target.value })), placeholder: 'Auto-generated if left blank' })
             ),
             React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Name *'),
-              React.createElement('input', { className: 'form-input', value: productForm.name, onChange: e => setProductForm(f => ({ ...f, name: e.target.value })), required: true })
-            ),
-            React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Barcode', infoTip('Auto-generated unless you change it')),
               React.createElement('input', { className: 'form-input', value: productForm.barcode, onChange: e => setProductForm(f => ({ ...f, barcode: e.target.value })), placeholder: 'Scan, enter, or leave blank to auto-generate' })
             ),
@@ -2961,12 +3593,24 @@ export default function Inventory() {
               React.createElement('input', {
                 className: 'form-input',
                 value: categorySearch,
-                onChange: e => { setCategorySearch(e.target.value); setCategoryDropdownOpen(true); if (!e.target.value) setProductForm(f => ({ ...f, category_id: '' })) },
-                onFocus: () => setCategoryDropdownOpen(true),
+                onChange: e => {
+                  if (isBaleCategorySyncedProduct) return
+                  const nextValue = e.target.value
+                  const matchedCategory = findCategoryByName(nextValue)
+                  setCategorySearch(nextValue)
+                  setCategoryDropdownOpen(true)
+                  setProductForm((form) => ({
+                    ...form,
+                    category_id: matchedCategory ? String(matchedCategory.id) : '',
+                    subcategory: ''
+                  }))
+                },
+                onFocus: () => { if (!isBaleCategorySyncedProduct) setCategoryDropdownOpen(true) },
                 placeholder: '— Search or select category —',
-                autoComplete: 'off'
+                autoComplete: 'off',
+                readOnly: isBaleCategorySyncedProduct
               }),
-              categoryDropdownOpen && React.createElement('div', {
+              categoryDropdownOpen && !isBaleCategorySyncedProduct && React.createElement('div', {
                 style: {
                   position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
                   background: 'var(--card-bg, #fff)', border: '1px solid var(--border, #ddd)',
@@ -2986,15 +3630,38 @@ export default function Inventory() {
                           background: String(productForm.category_id) === String(c.id) ? 'var(--gold-light, #fef3c7)' : 'transparent',
                           borderBottom: '1px solid var(--border-light, #f0f0f0)'
                         },
-                        onMouseDown: (e) => { e.preventDefault(); setProductForm(f => ({ ...f, category_id: c.id })); setCategorySearch(c.name); setCategoryDropdownOpen(false) },
+                        onMouseDown: (e) => { e.preventDefault(); setProductForm(f => ({ ...f, category_id: c.id, subcategory: '' })); setCategorySearch(c.name); setCategoryDropdownOpen(false) },
                         onMouseEnter: (e) => { e.currentTarget.style.background = 'var(--gold-light, #fef3c7)' },
                         onMouseLeave: (e) => { e.currentTarget.style.background = String(productForm.category_id) === String(c.id) ? 'var(--gold-light, #fef3c7)' : 'transparent' }
                       }, c.name))
               ),
-              categoryDropdownOpen && React.createElement('div', {
+              categoryDropdownOpen && !isBaleCategorySyncedProduct && React.createElement('div', {
                 style: { position: 'fixed', inset: 0, zIndex: 49 },
                 onClick: () => setCategoryDropdownOpen(false)
               })
+            ),
+            React.createElement('div', { className: 'form-group' },
+              React.createElement('label', { className: 'form-label' }, selectedProductCategoryHasTypes ? 'Type *' : 'Type'),
+              React.createElement('select', {
+                className: 'form-input',
+                value: productForm.subcategory || '',
+                disabled: !productForm.category_id || categoryTypeLoading || !categoryTypeOptionsMatchSelectedCategory,
+                onChange: (e) => setProductForm((form) => ({ ...form, subcategory: e.target.value }))
+              },
+                React.createElement('option', { value: '' },
+                  !productForm.category_id
+                    ? 'Select category first'
+                    : categoryTypeLoading || !categoryTypeOptionsMatchSelectedCategory
+                      ? 'Loading types...'
+                      : categoryTypeOptions.length
+                        ? '-- Select type --'
+                        : 'No types for this category'
+                ),
+                ...(categoryTypeOptionsMatchSelectedCategory ? categoryTypeOptions : []).map((typeOption) => React.createElement('option', {
+                  key: `category-type-${typeOption.id || typeOption.name}`,
+                  value: typeOption.name
+                }, typeOption.name))
+              )
             ),
             React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Brand'),
@@ -3035,9 +3702,10 @@ export default function Inventory() {
           ),
           React.createElement('div', { className: 'inventory-product-form-help', style: { marginBottom: 14, color: 'var(--text-light)', fontSize: 12 } },
             React.createElement('div', null, `Stock Source: ${editingProductSourceText}.`),
+            React.createElement('div', { style: { marginTop: 4 } }, 'Product name is generated automatically from Type, or from Category when no Type is selected.'),
             (isCreateBaleSource || isEditingBaleProduct) && React.createElement('div', { style: { marginTop: 4 } },
               isEditingBaleProduct
-                ? 'Product Type (Premium or Standard) is locked for bale-linked products and cannot be changed during edit.'
+                ? 'Bale Grade (Premium or Standard) is locked for bale-linked products and cannot be changed during edit.'
                 : `Available for ${productFormSelectedGrade === 'premium' ? 'Premium' : 'Standard'}: ${productFormAvailableForSelectedGrade}.`
             ),
             isCreateBaleSource && React.createElement('div', { style: { marginTop: 4 } },
@@ -3051,7 +3719,7 @@ export default function Inventory() {
           ),
           React.createElement('div', { className: 'inventory-product-form-actions', style: { display: 'flex', gap: 8 } },
             React.createElement('button', { type: 'submit', className: 'btn btn-primary' }, editingProduct ? 'Update Product' : 'Create Product'),
-            React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: () => { setShowProductModal(false); setCategorySearch('') } }, 'Cancel')
+            React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: () => { setShowProductModal(false); setCategorySearch(''); setCategoryTypeOptions([]); setCategoryTypeCategoryId('') } }, 'Cancel')
           )
         )
       ),
@@ -3065,8 +3733,8 @@ export default function Inventory() {
         }
       },
         selectedBaleStockOption
-          ? `All active products listed: ${listedProducts.length}. Products linked to selected bale ${selectedBaleStockOption.bale_batch_no || '-'}: ${selectedBaleListedProducts.length}. In-stock products for this selected bale: ${selectedBaleReadyForProductManagement}.`
-          : `All active products listed: ${listedProducts.length}. Repaired items received from Damaged appear here as individual products ready to sell.`
+          ? `Showing ${searchedProducts.length} of ${listedProducts.length} active products. Products linked to selected bale ${selectedBaleStockOption.bale_batch_no || '-'}: ${selectedBaleListedProducts.length}. In-stock products for this selected bale: ${selectedBaleReadyForProductManagement}.`
+          : `Showing ${searchedProducts.length} of ${listedProducts.length} active products. Repaired items received from Damaged appear here as individual products ready to sell.`
       ),
       React.createElement('div', { className: 'table-wrap responsive inventory-products-table' },
         React.createElement('table', { className: 'inventory-products-grid-table' },
@@ -3080,9 +3748,9 @@ export default function Inventory() {
             )
           ),
           React.createElement('tbody', null,
-            listedProducts.length === 0
-              ? React.createElement('tr', null, React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No products found.'))
-              : listedProducts.map((p) => {
+            searchedProducts.length === 0
+              ? React.createElement('tr', null, React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, productSearchText ? 'No products match your search.' : 'No products found.'))
+              : searchedProducts.map((p) => {
                 const linkedBaleOption = Number(p?.bale_purchase_id || 0) > 0
                   ? baleOptionByPurchaseId.get(String(p.bale_purchase_id))
                   : null
@@ -3091,7 +3759,7 @@ export default function Inventory() {
               React.createElement('td', { className: 'inventory-product-cell-main' },
                 React.createElement('div', { className: 'inventory-product-primary' }, p.name || 'Unnamed product'),
                 React.createElement('div', { className: 'inventory-product-meta' }, `${p.sku || 'No SKU'} • ${p.barcode || 'No barcode'}`),
-                React.createElement('div', { className: 'inventory-product-meta' }, `${p.brand || 'No brand'} • ${p.category || 'Uncategorized'}`)
+                React.createElement('div', { className: 'inventory-product-meta' }, `${p.brand || 'No brand'} • ${p.category || 'Uncategorized'}${p.subcategory ? ` • ${p.subcategory}` : ''}`)
               ),
               React.createElement('td', { className: 'inventory-product-cell-source' },
                 React.createElement('div', { className: 'inventory-product-chips' },
@@ -3314,16 +3982,44 @@ export default function Inventory() {
         React.createElement('div', { className: 'inventory-report-toolbar' },
           React.createElement('div', { className: 'inventory-report-title-group' },
             React.createElement('h3', null, 'Transaction History'),
-            React.createElement('p', null, `${transactionSummary.rows} ${transactionSummary.rows === 1 ? 'transaction' : 'transactions'} shown`)
+            React.createElement('p', null,
+              transactionSearchText
+                ? `Showing ${searchedTransactions.length} of ${transactions.length} transactions`
+                : `${transactionSummary.rows} ${transactionSummary.rows === 1 ? 'transaction' : 'transactions'} shown`
+            )
           ),
-          React.createElement('div', { className: 'inventory-report-toolbar-actions inventory-report-filter-group' },
-            React.createElement('span', { className: 'inventory-report-filter-label' }, 'Show'),
-            React.createElement('select', { className: 'form-input inventory-report-filter', value: filterType, onChange: e => setFilterType(e.target.value), 'aria-label': 'Filter inventory transactions by type' },
-              React.createElement('option', { value: '' }, 'All types'),
-              React.createElement('option', { value: 'IN' }, 'Stock In'),
-              React.createElement('option', { value: 'OUT' }, 'Stock Out'),
-              React.createElement('option', { value: 'ADJUST' }, 'Adjustments'),
-              React.createElement('option', { value: 'RETURN' }, 'Returns')
+          React.createElement('div', {
+            className: 'inventory-report-toolbar-actions inventory-report-filter-group',
+            style: { display: 'flex', gap: 10, alignItems: 'end', flexWrap: 'wrap' }
+          },
+            React.createElement('div', { className: 'form-group', style: { marginBottom: 0, minWidth: 280 } },
+              React.createElement('label', { className: 'form-label', htmlFor: 'inventory-transaction-search' }, 'Search Transactions'),
+              React.createElement('div', { style: { display: 'flex', gap: 8 } },
+                React.createElement('input', {
+                  id: 'inventory-transaction-search',
+                  className: 'form-input',
+                  type: 'search',
+                  value: transactionSearchQuery,
+                  onChange: (event) => setTransactionSearchQuery(event.target.value),
+                  placeholder: 'Search item, SKU, barcode, reference, reason',
+                  autoComplete: 'off'
+                }),
+                transactionSearchText && React.createElement('button', {
+                  type: 'button',
+                  className: 'btn btn-secondary',
+                  onClick: () => setTransactionSearchQuery('')
+                }, 'Clear')
+              )
+            ),
+            React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+              React.createElement('label', { className: 'form-label' }, 'Show'),
+              React.createElement('select', { className: 'form-input inventory-report-filter', value: filterType, onChange: e => setFilterType(e.target.value), 'aria-label': 'Filter inventory transactions by type' },
+                React.createElement('option', { value: '' }, 'All types'),
+                React.createElement('option', { value: 'IN' }, 'Stock In'),
+                React.createElement('option', { value: 'OUT' }, 'Stock Out'),
+                React.createElement('option', { value: 'ADJUST' }, 'Adjustments'),
+                React.createElement('option', { value: 'RETURN' }, 'Returns')
+              )
             )
           )
         ),
@@ -3339,11 +4035,11 @@ export default function Inventory() {
               )
             ),
             React.createElement('tbody', null,
-              transactions.length === 0
+              searchedTransactions.length === 0
                 ? React.createElement('tr', null,
-                    React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No transactions found.')
+                    React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, transactionSearchText ? 'No transactions match your search.' : 'No transactions found.')
                   )
-                : transactions.map((t) => {
+                : searchedTransactions.map((t) => {
                     const legacySaleLinkInReason = !String(t.reference || '').trim() && /^SALE_LINK[:|]/.test(String(t.reason || '').trim())
                     const resolvedReference = legacySaleLinkInReason ? t.reason : t.reference
                     const resolvedReason = formatTransactionReason(t.reason, resolvedReference)
@@ -3357,6 +4053,7 @@ export default function Inventory() {
                     if (compactReference) itemMeta.push(compactReference)
 
                     const detailMeta = [`Stock after: ${t.balance_after ?? '—'}`]
+                    if (t.supplier_name) detailMeta.push(`Supplier: ${t.supplier_name}`)
                     if (t.user_name) detailMeta.push(`By ${t.user_name}`)
 
                     return React.createElement('tr', { key: t.id },
@@ -3606,31 +4303,173 @@ export default function Inventory() {
           React.createElement('div', { className: 'card-value-sm' }, fmt(summary.totalValue))
         ),
         React.createElement('div', { className: 'card' },
+          React.createElement('div', { className: 'card-title' }, 'Potential Retail Value'),
+          React.createElement('div', { className: 'card-value-sm' }, fmt(summary.totalRetailValue))
+        ),
+        React.createElement('div', { className: 'card' },
           React.createElement('div', { className: 'card-title' }, 'Low Stock Count'),
           React.createElement('div', { className: 'card-value', style: { color: summary.lowStockCount > 0 ? 'var(--error)' : 'var(--success)' } }, summary.lowStockCount)
         )
       ),
-      React.createElement('div', { className: 'table-wrap', style: { marginTop: 20 } },
-        React.createElement('table', null,
+      React.createElement('div', {
+        style: {
+          marginTop: 18,
+          marginBottom: 10,
+          color: 'var(--text-light)',
+          fontSize: 12,
+          lineHeight: 1.6
+        }
+      }, `Showing ${filteredInventoryReportProducts.length} of ${inventoryReportProducts.length} inventory records. Detailed inventory snapshot includes codes, category/type, source, bale data, pricing, movement totals, and dates.`),
+      React.createElement('div', {
+        className: 'inventory-report-toolbar',
+        style: {
+          marginBottom: 12,
+          display: 'flex',
+          gap: 10,
+          alignItems: 'end',
+          flexWrap: 'wrap'
+        }
+      },
+        React.createElement('div', { className: 'form-group', style: { marginBottom: 0, flex: '1 1 360px', maxWidth: 620 } },
+          React.createElement('label', { className: 'form-label', htmlFor: 'inventory-report-search' }, 'Search Inventory Report'),
+          React.createElement('div', { style: { display: 'flex', gap: 8 } },
+            React.createElement('input', {
+              id: 'inventory-report-search',
+              className: 'form-input',
+              type: 'search',
+              value: inventoryReportSearchQuery,
+              onChange: (event) => setInventoryReportSearchQuery(event.target.value),
+              placeholder: 'Search SKU, barcode, product, category, bale, supplier',
+              autoComplete: 'off'
+            }),
+            inventoryReportSearchText && React.createElement('button', {
+              type: 'button',
+              className: 'btn btn-secondary',
+              onClick: () => setInventoryReportSearchQuery('')
+            }, 'Clear')
+          )
+        )
+      ),
+      React.createElement('div', { className: 'table-wrap responsive', style: { marginTop: 20 } },
+        React.createElement('table', { className: 'inventory-report-table' },
           React.createElement('thead', null,
             React.createElement('tr', null,
-              React.createElement('th', null, 'SKU'),
-              React.createElement('th', null, 'Product'),
-              React.createElement('th', null, 'Category'),
+              React.createElement('th', null, 'Codes'),
+              React.createElement('th', null, 'Product Details'),
+              React.createElement('th', null, 'Category / Type'),
+              React.createElement('th', null, 'Source / Bale'),
               React.createElement('th', null, 'Stock'),
-              React.createElement('th', null, 'Price'),
-              React.createElement('th', null, 'Stock Value')
+              React.createElement('th', null, 'Pricing'),
+              React.createElement('th', null, 'Movement'),
+              React.createElement('th', null, 'Dates')
             )
           ),
           React.createElement('tbody', null,
-            (summary.products || []).map(p => React.createElement('tr', { key: p.id },
+            filteredInventoryReportProducts.length === 0
+              ? React.createElement('tr', null, React.createElement('td', { colSpan: 8, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, inventoryReportSearchText ? 'No inventory records match your search.' : 'No active inventory products found.'))
+              : filteredInventoryReportProducts.map((p) => {
+                const stockQuantity = Number(p.stock_quantity || 0)
+                const lowStockThreshold = Number(p.low_stock_threshold || 0)
+                const isLowStockProduct = stockQuantity <= lowStockThreshold
+                const sourceLabel = productSourceLabel(p)
+                const statusLabel = p.status ? toTitleCaseWords(p.status) : (Number(p.is_active ?? 1) === 1 ? 'Active' : 'Inactive')
+                const gradeLabel = p.condition_grade ? toTitleCaseWords(p.condition_grade) : ''
+
+                return React.createElement('tr', { key: `detailed-report-${p.id}` },
+                  React.createElement('td', null,
+                    React.createElement('div', { className: 'inventory-report-primary' }, p.sku || 'No SKU'),
+                    React.createElement('div', { className: 'inventory-report-secondary' }, p.barcode ? `Barcode: ${p.barcode}` : 'No barcode'),
+                    p.item_code && React.createElement('div', { className: 'inventory-report-secondary' }, `Item code: ${p.item_code}`)
+                  ),
+                  React.createElement('td', null,
+                    React.createElement('div', { className: 'inventory-report-primary' }, p.name || 'Unnamed product'),
+                    React.createElement('div', { className: 'inventory-report-secondary' }, p.brand ? `Brand: ${p.brand}` : 'No brand'),
+                    React.createElement('div', { className: 'inventory-report-secondary' }, `${p.size ? `Size: ${p.size}` : 'No size'}${p.color ? ` - Color: ${p.color}` : ''}`),
+                    p.description && React.createElement('div', { className: 'inventory-report-secondary' }, p.description)
+                  ),
+                  React.createElement('td', null,
+                    React.createElement('div', { className: 'inventory-report-primary' }, p.category || 'Uncategorized'),
+                    React.createElement('div', { className: 'inventory-report-secondary' }, p.subcategory ? `Type: ${p.subcategory}` : 'No type'),
+                    p.bale_category && React.createElement('div', { className: 'inventory-report-secondary' }, `Bale category: ${p.bale_category}`)
+                  ),
+                  React.createElement('td', null,
+                    React.createElement('div', { className: 'inventory-product-chips' },
+                      React.createElement('span', { className: 'inventory-chip' }, sourceLabel),
+                      gradeLabel && React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, gradeLabel),
+                      React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, statusLabel)
+                    ),
+                    p.bale_batch_no && React.createElement('div', { className: 'inventory-report-secondary', style: { marginTop: 6 } }, `Bale: ${p.bale_batch_no}`),
+                    p.supplier_name && React.createElement('div', { className: 'inventory-report-secondary' }, `Supplier: ${p.supplier_name}`),
+                    p.source_breakdown_id && React.createElement('div', { className: 'inventory-report-secondary' }, `Breakdown #${p.source_breakdown_id}`)
+                  ),
+                  React.createElement('td', null,
+                    React.createElement('div', {
+                      className: 'inventory-report-primary',
+                      style: { fontWeight: 700, color: isLowStockProduct ? 'var(--error)' : 'var(--text-dark)' }
+                    }, stockQuantity),
+                    React.createElement('div', { className: 'inventory-report-secondary' }, `Low threshold: ${lowStockThreshold}`),
+                    React.createElement('div', { className: 'inventory-report-secondary' }, isLowStockProduct ? 'Low stock' : 'Healthy stock')
+                  ),
+                  React.createElement('td', null,
+                    React.createElement('div', { className: 'inventory-report-secondary' }, `Cost: ${fmt(p.cost)}`),
+                    p.allocated_cost && React.createElement('div', { className: 'inventory-report-secondary' }, `Allocated: ${fmt(p.allocated_cost)}`),
+                    React.createElement('div', { className: 'inventory-report-secondary' }, `Price: ${fmt(p.price)}`),
+                    React.createElement('div', { className: 'inventory-report-primary' }, `Cost value: ${fmt(p.stock_value)}`),
+                    React.createElement('div', { className: 'inventory-report-secondary' }, `Retail value: ${fmt(p.retail_value)}`)
+                  ),
+                  React.createElement('td', null,
+                    React.createElement('div', { className: 'inventory-report-secondary' }, `In: ${Number(p.total_in_units || 0)}`),
+                    React.createElement('div', { className: 'inventory-report-secondary' }, `Out: ${Number(p.total_out_units || 0)}`),
+                    React.createElement('div', { className: 'inventory-report-secondary' }, `Adjust: ${Number(p.total_adjustment_units || 0)}`),
+                    React.createElement('div', { className: 'inventory-report-secondary' }, `Return: ${Number(p.total_return_units || 0)}`),
+                    React.createElement('div', { className: 'inventory-report-secondary' }, `Last: ${p.last_transaction_at ? fmtDate(p.last_transaction_at) : 'No movement'}`)
+                  ),
+                  React.createElement('td', null,
+                    React.createElement('div', { className: 'inventory-report-secondary' }, `Encoded: ${p.date_encoded ? fmtDate(p.date_encoded) : 'Not set'}`),
+                    p.bale_purchase_date && React.createElement('div', { className: 'inventory-report-secondary' }, `Bale purchase: ${fmtDate(p.bale_purchase_date)}`),
+                    p.breakdown_date && React.createElement('div', { className: 'inventory-report-secondary' }, `Breakdown: ${fmtDate(p.breakdown_date)}`),
+                    React.createElement('div', { className: 'inventory-report-secondary' }, `Created: ${p.created_at ? fmtDate(p.created_at) : 'Not set'}`),
+                    React.createElement('div', { className: 'inventory-report-secondary' }, `Updated: ${p.updated_at ? fmtDate(p.updated_at) : 'Not set'}`)
+                  )
+                )
+              })
+          )
+        )
+      ),
+      false && React.createElement('div', { className: 'table-wrap', style: { marginTop: 20 } },
+        React.createElement('table', null,
+          React.createElement('thead', null,
+            React.createElement('tr', null,
+              React.createElement('th', null, 'Codes'),
+              React.createElement('th', null, 'Product Details'),
+              React.createElement('th', null, 'Category / Type'),
+              React.createElement('th', null, 'Source / Bale'),
+              React.createElement('th', null, 'Stock'),
+              React.createElement('th', null, 'Pricing'),
+              React.createElement('th', null, 'Movement'),
+              React.createElement('th', null, 'Dates')
+            )
+          ),
+          React.createElement('tbody', null,
+            (summary.products || []).length === 0
+              ? React.createElement('tr', null, React.createElement('td', { colSpan: 8, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No active inventory products found.'))
+              : (summary.products || []).map(p => {
+                const stockQuantity = Number(p.stock_quantity || 0)
+                const lowStockThreshold = Number(p.low_stock_threshold || 0)
+                const isLowStockProduct = stockQuantity <= lowStockThreshold
+                const sourceLabel = productSourceLabel(p)
+                const statusLabel = p.status ? toTitleCaseWords(p.status) : (Number(p.is_active ?? 1) === 1 ? 'Active' : 'Inactive')
+                const gradeLabel = p.condition_grade ? toTitleCaseWords(p.condition_grade) : ''
+
+                return React.createElement('tr', { key: p.id },
               React.createElement('td', null, p.sku || '—'),
               React.createElement('td', null, p.name),
               React.createElement('td', null, p.category || '—'),
               React.createElement('td', { style: { fontWeight: 600, color: p.stock_quantity <= p.low_stock_threshold ? 'var(--error)' : 'var(--text-dark)' } }, p.stock_quantity),
               React.createElement('td', null, fmt(p.price)),
               React.createElement('td', { style: { fontWeight: 500 } }, fmt(p.stock_value))
-            ))
+                )
+              })
           )
         )
       )

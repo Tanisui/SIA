@@ -4,7 +4,7 @@ const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 const { logAuditEventSafe } = require('../utils/auditLog')
 const { ensureAutomatedReportsSchema } = require('../utils/automatedReports')
-const { applyProductStockDelta } = require('../utils/inventoryStock')
+const { applyProductStockDelta, resolveStockTransactionTimestamp } = require('../utils/inventoryStock')
 const {
   normalizeBarcode,
   isBarcodeBlank,
@@ -65,6 +65,44 @@ function createHttpError(statusCode, message) {
   return err
 }
 
+function resolveTransactionTimestamp(value, label = 'date') {
+  const normalized = String(value || '').trim()
+  if (!normalized) return new Date()
+
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(normalized)
+  if (dateOnlyMatch) {
+    const now = new Date()
+    const year = Number(dateOnlyMatch[1])
+    const month = Number(dateOnlyMatch[2])
+    const day = Number(dateOnlyMatch[3])
+    const parsed = new Date(
+      year,
+      month - 1,
+      day,
+      now.getHours(),
+      now.getMinutes(),
+      now.getSeconds(),
+      now.getMilliseconds()
+    )
+
+    if (
+      parsed.getFullYear() !== year ||
+      parsed.getMonth() !== month - 1 ||
+      parsed.getDate() !== day
+    ) {
+      throw createHttpError(400, `${label} must be a valid date`)
+    }
+
+    return parsed
+  }
+
+  const parsed = new Date(normalized)
+  if (Number.isNaN(parsed.getTime())) {
+    throw createHttpError(400, `${label} must be a valid date`)
+  }
+  return parsed
+}
+
 async function resolveCategoryIdByName(conn, categoryName) {
   const normalized = String(categoryName || '').trim()
   if (!normalized) return null
@@ -77,6 +115,22 @@ async function resolveCategoryIdByName(conn, categoryName) {
   `, [normalized])
 
   return Number(rows?.[0]?.id) || null
+}
+
+async function resolveSupplierForStockIn(conn, supplierId) {
+  if (!supplierId) return null
+
+  const normalizedSupplierId = Number(supplierId)
+  if (!Number.isInteger(normalizedSupplierId) || normalizedSupplierId <= 0) {
+    throw createHttpError(400, 'supplier_id must be a valid supplier')
+  }
+
+  const [rows] = await conn.query(
+    'SELECT id, name FROM suppliers WHERE id = ? LIMIT 1',
+    [normalizedSupplierId]
+  )
+  if (!rows.length) throw createHttpError(400, 'supplier not found')
+  return rows[0]
 }
 
 async function createInventoryProductRecord(conn, options) {
@@ -234,7 +288,7 @@ async function loadTransactionDamageSource(conn, transactionId) {
   const [rows] = await conn.query(`
     SELECT
       it.id,
-      it.created_at,
+      DATE_FORMAT(it.created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
       it.product_id,
       ABS(it.quantity) AS quantity,
       it.reason,
@@ -305,7 +359,7 @@ async function loadBaleBreakdownDamageSource(conn, breakdownId) {
   const [rows] = await conn.query(`
     SELECT
       bb.id,
-      COALESCE(bb.breakdown_date, bp.purchase_date) AS created_at,
+      DATE_FORMAT(COALESCE(bb.damage_recorded_at, bb.updated_at, bb.created_at, bb.breakdown_date, bp.purchase_date), '%Y-%m-%d %H:%i:%s') AS created_at,
       NULL AS product_id,
       COALESCE(bb.damaged_items, 0) AS quantity,
       'Auto-recorded from bale breakdown' AS reason,
@@ -394,9 +448,10 @@ router.get('/transactions', verifyToken, authorize(['inventory.view', 'products.
     const from = normalizeDateOnly(req.query.from, 'from')
     const to = normalizeDateOnly(req.query.to, 'to')
     let sql = `
-      SELECT it.*, p.name AS product_name, p.sku, u.username AS user_name
+      SELECT it.*, p.name AS product_name, p.sku, p.barcode, s.name AS supplier_name, u.username AS user_name
       FROM inventory_transactions it
       LEFT JOIN products p ON p.id = it.product_id
+      LEFT JOIN suppliers s ON s.id = it.supplier_id
       LEFT JOIN users u ON u.id = it.user_id
       WHERE 1=1
     `
@@ -404,7 +459,7 @@ router.get('/transactions', verifyToken, authorize(['inventory.view', 'products.
     if (type) { sql += ' AND it.transaction_type = ?'; params.push(type) }
     if (product_id) { sql += ' AND it.product_id = ?'; params.push(product_id) }
     sql += buildDateFilter('it', 'created_at', from, to, params)
-    sql += ' ORDER BY it.created_at DESC'
+    sql += ' ORDER BY it.created_at DESC, it.id DESC'
     const [rows] = await db.pool.query(sql, params)
     const mappedRows = rows
       .map((row) => ({
@@ -436,6 +491,7 @@ router.get('/stock-in/bale-options', verifyToken, authorize('inventory.receive')
         bp.bale_batch_no,
         bp.supplier_name,
         bp.purchase_date,
+        bp.bale_category,
         bb.breakdown_date,
         COALESCE(bb.cost_per_saleable_item, 0) AS cost_per_saleable_item,
         COALESCE(bb.premium_items, 0) AS premium_items,
@@ -565,20 +621,20 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
     await ensureAutomatedReportsSchema()
     await conn.beginTransaction()
     const { product_id, quantity, cost, reference, supplier_id, date } = req.body
-    if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
-    if (supplier_id) {
-      await conn.rollback(); conn.release()
-      return res.status(400).json({ error: 'Direct stock-in does not accept supplier details. Record supplier activity outside this inventory flow.' })
-    }
+    if (!product_id || !quantity || quantity <= 0) throw createHttpError(400, 'product_id and positive quantity required')
+
+    const supplier = await resolveSupplierForStockIn(conn, supplier_id)
+    const createdAt = resolveTransactionTimestamp(date, 'date')
 
     const stockResult = await applyProductStockDelta(conn, {
       productId: product_id,
       deltaQuantity: quantity,
       cost,
+      supplierId: supplier?.id || null,
       userId: req.auth.id,
       reference: reference || null,
       reason: 'Manual stock in',
-      createdAt: date || new Date(),
+      createdAt,
       transactionType: 'IN',
       disallowedProductSources: ['bale_breakdown', 'repaired_damage'],
       disallowedSourceMessage: 'Stock for bale breakdown and repaired-damage products is managed through their dedicated creation flow.'
@@ -597,7 +653,11 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
         before: { stock_quantity: stockResult.beforeQuantity, cost: stockResult.beforeCost },
         after: { stock_quantity: stockResult.afterQuantity, cost: stockResult.afterCost },
         metrics: { quantity_received: Number(quantity) || 0 },
-        references: { reference: reference || null }
+        references: {
+          reference: reference || null,
+          supplier_id: supplier?.id || null,
+          supplier_name: supplier?.name || null
+        }
       }
     })
     await conn.commit()
@@ -709,10 +769,11 @@ router.post('/stock-out/damage', express.json(), verifyToken, authorize('invento
     const fullReason = employee_id
       ? `STOCK_OUT:DAMAGE | ${reason || 'Damaged/defective stock'} (Employee #${employee_id})`
       : `STOCK_OUT:DAMAGE | ${reason || 'Damaged/defective stock'}`
+    const damageRecordedAt = resolveStockTransactionTimestamp(req.body?.created_at || req.body?.date || new Date())
     const [transactionResult] = await conn.query(
-      `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after)
-       VALUES (?, 'OUT', ?, ?, ?, ?, ?)`,
-      [product_id, -qtyToRemove, reference || null, req.auth.id, fullReason, newQty]
+      `INSERT INTO inventory_transactions (product_id, transaction_type, quantity, reference, user_id, reason, balance_after, created_at)
+       VALUES (?, 'OUT', ?, ?, ?, ?, ?, ?)`,
+      [product_id, -qtyToRemove, reference || null, req.auth.id, fullReason, newQty, damageRecordedAt]
     )
 
     await logAuditEventSafe(conn, {
@@ -757,7 +818,7 @@ router.get('/damaged', verifyToken, authorize(['inventory.view', 'products.view'
     const [transactionRows] = await db.pool.query(`
       SELECT
         it.id,
-        it.created_at,
+        DATE_FORMAT(it.created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
         it.product_id,
         ABS(it.quantity) AS quantity,
         it.reason,
@@ -786,7 +847,7 @@ router.get('/damaged', verifyToken, authorize(['inventory.view', 'products.view'
           OR it.reference LIKE 'STOCK_OUT|disposition=DAMAGE%'
         )
         ${transactionDateFilter}
-      ORDER BY it.created_at DESC
+      ORDER BY it.created_at DESC, it.id DESC
     `, transactionParams)
 
     const damagedTransactions = transactionRows
@@ -823,7 +884,7 @@ router.get('/damaged', verifyToken, authorize(['inventory.view', 'products.view'
     const [breakdownRows] = await db.pool.query(`
       SELECT
         bb.id,
-        COALESCE(bb.breakdown_date, bp.purchase_date) AS created_at,
+        DATE_FORMAT(COALESCE(bb.damage_recorded_at, bb.updated_at, bb.created_at, bb.breakdown_date, bp.purchase_date), '%Y-%m-%d %H:%i:%s') AS created_at,
         NULL AS product_id,
         COALESCE(bb.damaged_items, 0) AS quantity,
         'Auto-recorded from bale breakdown' AS reason,
@@ -856,7 +917,7 @@ router.get('/damaged', verifyToken, authorize(['inventory.view', 'products.view'
       JOIN (
         SELECT
           bb2.id,
-          COALESCE(bb2.breakdown_date, bp2.purchase_date) AS event_date
+          COALESCE(bb2.damage_recorded_at, bb2.updated_at, bb2.created_at, bb2.breakdown_date, bp2.purchase_date) AS event_date
         FROM bale_breakdowns bb2
         JOIN bale_purchases bp2 ON bp2.id = bb2.bale_purchase_id
       ) x ON x.id = bb.id
@@ -1117,7 +1178,7 @@ router.get('/reports/stock-out', verifyToken, authorize(['inventory.view', 'prod
           OR it.reference LIKE 'STOCK_OUT|disposition=DAMAGE%'
           OR it.reference LIKE 'STOCK_OUT|disposition=SHRINKAGE%'
         )
-      ORDER BY it.created_at DESC
+      ORDER BY it.created_at DESC, it.id DESC
     `)
     res.json(rows)
   } catch (err) {
@@ -1129,19 +1190,73 @@ router.get('/reports/stock-out', verifyToken, authorize(['inventory.view', 'prod
 // ─── Inventory summary report (Allow products.view to access) ───
 router.get('/reports/summary', verifyToken, authorize(['inventory.view', 'products.view']), async (req, res) => {
   try {
+    await ensureAutomatedReportsSchema()
     const [products] = await db.pool.query(`
-      SELECT p.id, p.sku, p.name, p.stock_quantity, p.cost, p.price, p.low_stock_threshold,
-             c.name AS category,
-             (p.stock_quantity * p.cost) AS stock_value
+      SELECT
+        p.id,
+        p.item_code,
+        p.sku,
+        p.name,
+        p.brand,
+        p.description,
+        p.category_id,
+        c.name AS category,
+        p.subcategory,
+        p.stock_quantity,
+        p.low_stock_threshold,
+        p.cost,
+        p.allocated_cost,
+        p.price,
+        p.selling_price,
+        p.size,
+        p.color,
+        p.barcode,
+        p.is_active,
+        p.product_source,
+        p.source_breakdown_id,
+        p.bale_purchase_id,
+        p.condition_grade,
+        p.status,
+        p.date_encoded,
+        p.created_at,
+        p.updated_at,
+        bp.bale_batch_no,
+        bp.supplier_id AS bale_supplier_id,
+        COALESCE(NULLIF(bp.supplier_name, ''), s.name) AS supplier_name,
+        bp.purchase_date AS bale_purchase_date,
+        bp.bale_category,
+        bb.breakdown_date,
+        COALESCE(m.total_in_units, 0) AS total_in_units,
+        COALESCE(m.total_out_units, 0) AS total_out_units,
+        COALESCE(m.total_adjustment_units, 0) AS total_adjustment_units,
+        COALESCE(m.total_return_units, 0) AS total_return_units,
+        m.last_transaction_at,
+        (p.stock_quantity * p.cost) AS stock_value,
+        (p.stock_quantity * p.price) AS retail_value
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
+      LEFT JOIN bale_purchases bp ON bp.id = p.bale_purchase_id
+      LEFT JOIN suppliers s ON s.id = bp.supplier_id
+      LEFT JOIN bale_breakdowns bb ON bb.id = p.source_breakdown_id
+      LEFT JOIN (
+        SELECT
+          product_id,
+          SUM(CASE WHEN transaction_type = 'IN' THEN GREATEST(quantity, 0) ELSE 0 END) AS total_in_units,
+          SUM(CASE WHEN transaction_type = 'OUT' THEN ABS(quantity) ELSE 0 END) AS total_out_units,
+          SUM(CASE WHEN transaction_type = 'ADJUST' THEN quantity ELSE 0 END) AS total_adjustment_units,
+          SUM(CASE WHEN transaction_type = 'RETURN' THEN quantity ELSE 0 END) AS total_return_units,
+          MAX(created_at) AS last_transaction_at
+        FROM inventory_transactions
+        GROUP BY product_id
+      ) m ON m.product_id = p.id
       WHERE p.is_active = 1
       ORDER BY p.name ASC
     `)
-    const totalItems = products.reduce((s, p) => s + p.stock_quantity, 0)
+    const totalItems = products.reduce((s, p) => s + Number(p.stock_quantity || 0), 0)
     const totalValue = products.reduce((s, p) => s + Number(p.stock_value || 0), 0)
+    const totalRetailValue = products.reduce((s, p) => s + Number(p.retail_value || 0), 0)
     const lowStock = products.filter(p => p.stock_quantity <= p.low_stock_threshold)
-    res.json({ products, totalItems, totalValue, lowStockCount: lowStock.length })
+    res.json({ products, totalItems, totalValue, totalRetailValue, lowStockCount: lowStock.length })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'failed to fetch inventory summary' })

@@ -24,15 +24,7 @@ export default function Header({ onMenuToggle }) {
         className: 'topbar-toggle',
         'aria-label': 'Toggle sidebar',
         onClick: onMenuToggle
-      }, 'Menu'),
-      React.createElement('div', { className: 'topbar-search-wrap' },
-        React.createElement('input', {
-          type: 'search',
-          className: 'topbar-search',
-          placeholder: 'Search',
-          disabled: true
-        })
-      )
+      }, 'Menu')
     ),
     React.createElement('div', { className: 'header-right topbar-right' },
       user && React.createElement('span', { className: 'header-user topbar-user' },
