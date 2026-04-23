@@ -24,6 +24,12 @@ import Layout from './components/Layout.js'
 import ProtectedRoute from './components/ProtectedRoute.js'
 import ChangePassword from './pages/ChangePassword';
 import BalePurchaseOrder from './pages/BalePurchaseOrder.jsx';
+import PayrollProfiles from './pages/payroll/PayrollProfiles.jsx'
+import PayrollPeriods from './pages/payroll/PayrollPeriods.jsx'
+import PayrollInputSheet from './pages/payroll/PayrollInputSheet.jsx'
+import PayrollPreview from './pages/payroll/PayrollPreview.jsx'
+import PayrollPayslip from './pages/payroll/PayrollPayslip.jsx'
+import PayrollReports from './pages/payroll/PayrollReports.jsx'
 
 export default function App() {
   return (
@@ -55,6 +61,13 @@ export default function App() {
           React.createElement(Route, { path: 'settings', element: React.createElement(Settings, null) }),
           React.createElement(Route, { path: 'notifications', element: React.createElement(Notifications, null) }),
           React.createElement(Route, { path: 'reports', element: React.createElement(Reports, null) }),
+          React.createElement(Route, { path: 'payroll/profiles', element: React.createElement(PayrollProfiles, null) }),
+          React.createElement(Route, { path: 'payroll/periods', element: React.createElement(PayrollPeriods, null) }),
+          React.createElement(Route, { path: 'payroll/periods/:periodId/inputs', element: React.createElement(PayrollInputSheet, null) }),
+          React.createElement(Route, { path: 'payroll/periods/:periodId/preview', element: React.createElement(PayrollPreview, null) }),
+          React.createElement(Route, { path: 'payroll/runs/:runId/items/:itemId/payslip', element: React.createElement(PayrollPayslip, null) }),
+          React.createElement(Route, { path: 'payroll/reports', element: React.createElement(PayrollReports, null) }),
+          React.createElement(Route, { path: 'payroll', element: React.createElement(Navigate, { to: '/payroll/periods', replace: true }) }),
           React.createElement(Route, { path: 'change-password', element: React.createElement(ChangePassword, null) }),
           React.createElement(Route, { path: 'bale-purchase-order', element: React.createElement(BalePurchaseOrder, null) })
         )

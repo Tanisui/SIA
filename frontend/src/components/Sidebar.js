@@ -54,6 +54,24 @@ const NAV_ITEMS = [
       { to: '/reports', tab: 'inventoryMovement', label: 'Inventory Movement' }
     ]
   },
+  {
+    to: '/payroll',
+    label: 'Payroll',
+    icon: 'PR',
+    perm: [
+      'payroll.view',
+      'payroll.profile.view',
+      'payroll.period.view',
+      'payroll.period.compute',
+      'payroll.report.view',
+      'payroll.payslip.view_own'
+    ],
+    children: [
+      { to: '/payroll/periods', label: 'Periods' },
+      { to: '/payroll/profiles', label: 'Profiles' },
+      { to: '/payroll/reports', label: 'Reports' }
+    ]
+  },
   { section: 'System' },
   { to: '/users', label: 'Users', icon: 'US', perm: 'users.view' },
   { to: '/roles', label: 'Roles', icon: 'RL', perm: 'roles.view' },
