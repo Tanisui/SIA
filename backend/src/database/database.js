@@ -15,15 +15,15 @@ const hasExplicitDbPassword = Object.prototype.hasOwnProperty.call(process.env, 
 const resolvedDbPassword = hasExplicitDbPassword ? DB_PASSWORD : ''
 
 if (!DB_HOST || !DB_DATABASE || !DB_USERNAME) {
-  console.warn('Missing DB configuration in .env — database connection may fail.')
+  console.warn('Missing DB configuration in .env - database connection may fail.')
 }
 
 const pool = mysql.createPool({
   host: DB_HOST || 'localhost',
   port: DB_PORT ? Number(DB_PORT) : 3306,
   user: DB_USERNAME || 'root',
-  password: 'root',
-  database: DB_DATABASE || "cecilles_nstyle_db",
+  password: "",
+  database: DB_DATABASE || 'cecilles_nstyle_db',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0
