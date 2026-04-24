@@ -1,7 +1,15 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../api/api.js'
-import { formatCurrency, formatDate, getErrorMessage, statusBadgeClass } from './payrollUtils.js'
+import {
+  buildAttendanceSyncFeedback,
+  buildComputeSyncFeedback,
+  buildLoadInputsMessage,
+  formatCurrency,
+  formatDate,
+  getErrorMessage,
+  statusBadgeClass
+} from './payrollUtils.js'
 
 const FREQ_LABEL = { weekly: 'Weekly', semi_monthly: 'Semi-Monthly', monthly: 'Monthly' }
 const STATUS_STYLES = {
@@ -65,7 +73,18 @@ export default function PayrollPeriods() {
 
   async function loadInputs(period) {
     setActionId(period.id); setError(null)
-    try { await api.post(`/api/payroll/periods/${period.id}/load-inputs`); navigate(`/payroll/periods/${period.id}/inputs`) }
+    try {
+      const r = await api.post(`/api/payroll/periods/${period.id}/load-inputs`)
+      const message = buildLoadInputsMessage(r.data || {})
+      const inputCount = Number(r.data?.period?.inputs?.length || 0)
+      if (inputCount > 0) {
+        showMsg(message)
+        navigate(`/payroll/periods/${period.id}/inputs`)
+      } else {
+        setError(message)
+        await loadPeriods()
+      }
+    }
     catch (err) { setError(getErrorMessage(err, 'Failed to load payroll inputs')) }
     finally { setActionId(null) }
   }
@@ -74,7 +93,9 @@ export default function PayrollPeriods() {
     setSyncingId(period.id); setError(null)
     try {
       const r = await api.post(`/api/payroll/periods/${period.id}/inputs/sync-attendance`)
-      showMsg(r.data?.message || 'Attendance synced.')
+      const feedback = buildAttendanceSyncFeedback(r.data || {})
+      if (feedback.isError) setError(feedback.message)
+      else showMsg(feedback.message)
       await loadPeriods()
     } catch (err) { setError(getErrorMessage(err, 'Attendance sync failed')) }
     finally { setSyncingId(null) }
@@ -82,7 +103,15 @@ export default function PayrollPeriods() {
 
   async function compute(period) {
     setActionId(period.id); setError(null)
-    try { await api.post(`/api/payroll/periods/${period.id}/compute`); navigate(`/payroll/periods/${period.id}/preview`) }
+    try {
+      const r = await api.post(`/api/payroll/periods/${period.id}/compute`)
+      const feedback = buildComputeSyncFeedback(r.data?.sync_summary || {})
+      navigate(`/payroll/periods/${period.id}/preview`, {
+        state: feedback.isWarning
+          ? { flashWarning: feedback.message }
+          : { flashSuccess: feedback.message }
+      })
+    }
     catch (err) { setError(getErrorMessage(err, 'Failed to compute payroll')) }
     finally { setActionId(null) }
   }
@@ -94,7 +123,7 @@ export default function PayrollPeriods() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Payroll Periods</h1>
-          <p className="page-subtitle">Create payroll cutoffs, sync attendance, compute deductions, and release payslips.</p>
+          <p className="page-subtitle">Create payroll cutoffs, load profiles, and compute payroll. Compute refreshes attendance before deductions are applied.</p>
         </div>
         <button className="btn btn-secondary btn-sm" onClick={loadPeriods} disabled={loading}>↺ Refresh</button>
       </div>
@@ -212,10 +241,10 @@ export default function PayrollPeriods() {
           {[
             { step: '1', label: 'Create Period', desc: 'Set start/end dates and frequency' },
             { step: '2', label: 'Record Attendance', desc: 'Go to Attendance → add time-in/out records' },
-            { step: '3', label: 'Sync Attendance', desc: 'Click "Sync Attendance" to pull attendance into inputs' },
-            { step: '4', label: 'Load Profiles', desc: 'Loads employees with active payroll profiles' },
-            { step: '5', label: 'Edit Inputs', desc: 'Adjust days, OT, bonuses, deductions manually' },
-            { step: '6', label: 'Compute', desc: 'Run payroll with all statutory deductions' },
+            { step: '3', label: 'Load Profiles', desc: 'Create payroll input rows and bootstrap missing payroll profiles' },
+            { step: '4', label: 'Sync Attendance', desc: 'Optional pre-check to review attendance before compute' },
+            { step: '5', label: 'Edit Inputs', desc: 'Adjust bonuses, loans, and other manual payroll fields' },
+            { step: '6', label: 'Compute', desc: 'Compute refreshes attendance fields, then runs statutory deductions' },
             { step: '7', label: 'Preview & Release', desc: 'Finalize and release payslips' }
           ].map((item, i, arr) => (
             <div key={item.step} style={{ display: 'flex', alignItems: 'center', minWidth: 'fit-content' }}>

@@ -39,6 +39,9 @@ function computeSSS({ taxableIncome, monthlyCompensation, payPeriodsPerMonth = 1
 
   const sss = settings.sss || {}
   const monthlyBaseInput = Math.max(num(monthlyCompensation, taxableIncome), 0)
+  if (monthlyBaseInput <= 0) {
+    return { employee_sss: 0, employer_sss: 0, ec_contribution: 0 }
+  }
   const bracket = findBracket(sss.brackets, monthlyBaseInput)
 
   if (bracket) {

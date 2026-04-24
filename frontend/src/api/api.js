@@ -18,9 +18,8 @@ api.interceptors.response.use((res) => res, (err) => {
 
     // If it's a 401 Unauthorized error
     if (status === 401) {
-      // Check if this error came from the change-password request
-      // If it did, we DON'T logout so the user can see the error message
-      if (url.includes('/auth/change-password')) {
+      // Keep the user on the account security page so the validation message is visible.
+      if (url.includes('/auth/change-password') || url.includes('/auth/account-security')) {
         return Promise.reject(err)
       }
 

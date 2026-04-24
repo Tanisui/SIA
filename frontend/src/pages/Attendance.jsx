@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSelector } from 'react-redux'
 import api from '../api/api.js'
+import { buildAttendanceSyncFeedback } from './payroll/payrollUtils.js'
 
 const STATUS_OPTIONS = ['PRESENT', 'LATE', 'HALF_DAY', 'ABSENT', 'ON_LEAVE', 'REST_DAY', 'HOLIDAY']
 const STATUS_COLORS  = {
@@ -13,10 +14,28 @@ const STATUS_COLORS  = {
   HOLIDAY:  { bg: '#FFF7ED', color: '#C2410C', label: 'Holiday' }
 }
 
-function todayStr() { return new Date().toISOString().slice(0, 10) }
+function padDatePart(v) { return String(v).padStart(2, '0') }
+function toDateInputValue(value) {
+  if (!value) return ''
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${value.getFullYear()}-${padDatePart(value.getMonth() + 1)}-${padDatePart(value.getDate())}`
+  }
+  const text = String(value).trim()
+  if (!text) return ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text
+  const parsed = new Date(text)
+  if (!Number.isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}-${padDatePart(parsed.getMonth() + 1)}-${padDatePart(parsed.getDate())}`
+  }
+  return text.slice(0, 10)
+}
+function todayStr() { return toDateInputValue(new Date()) }
 function fmtDate(v) {
-  if (!v) return '-'
-  return new Date(v + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: '2-digit', year: 'numeric' })
+  const normalized = toDateInputValue(v)
+  if (!normalized) return '-'
+  const parsed = new Date(`${normalized}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) return normalized
+  return parsed.toLocaleDateString('en-PH', { month: 'short', day: '2-digit', year: 'numeric' })
 }
 function fmtTime(v) { return v ? String(v).slice(0, 5) : '-' }
 function fmtHours(v) {
@@ -127,7 +146,7 @@ export default function Attendance() {
     setEditingId(row.id)
     setForm({
       employee_id:       String(row.employee_id || ''),
-      date:              String(row.date || '').slice(0, 10),
+      date:              toDateInputValue(row.date),
       clock_in:          fmtTime(row.clock_in) === '-' ? '' : fmtTime(row.clock_in),
       clock_out:         fmtTime(row.clock_out) === '-' ? '' : fmtTime(row.clock_out),
       expected_clock_in: fmtTime(row.expected_clock_in) === '-' ? '08:00' : fmtTime(row.expected_clock_in),
@@ -199,7 +218,9 @@ export default function Attendance() {
     try {
       setSyncing(true); clearMsg()
       const res = await api.post(`/api/payroll/periods/${periods.trim()}/inputs/sync-attendance`)
-      showMsg(`Synced: ${res.data?.message || 'Done'}`)
+      const feedback = buildAttendanceSyncFeedback(res.data || {})
+      if (feedback.isError) setError(feedback.message)
+      else showMsg(feedback.message)
     } catch (err) {
       setError(err?.response?.data?.error || 'Sync failed')
     } finally {

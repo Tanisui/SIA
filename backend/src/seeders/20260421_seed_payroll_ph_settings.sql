@@ -8,6 +8,14 @@ SET is_active = 0,
 WHERE is_active = 1
   AND version_name <> 'Payroll V1 PH Statutory Baseline 2026';
 
+UPDATE payroll_settings_versions
+SET settings_json = JSON_SET(
+      COALESCE(settings_json, JSON_OBJECT()),
+      '$.night_differential_multiplier',
+      0.1
+    )
+WHERE JSON_EXTRACT(settings_json, '$.night_differential_multiplier') IS NULL;
+
 INSERT INTO payroll_settings_versions (
   version_name,
   effective_from,
@@ -20,6 +28,7 @@ SELECT
   1,
   '{
     "overtime_multiplier": 1.25,
+    "night_differential_multiplier": 0.1,
     "regular_holiday_multiplier": 2,
     "special_holiday_multiplier": 1.3,
     "rest_day_multiplier": 1.3,

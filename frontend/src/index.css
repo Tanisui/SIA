@@ -3689,6 +3689,31 @@ tfoot td {
   min-width: 120px;
 }
 
+.payroll-report-filter-grid {
+  grid-template-columns: minmax(180px, 0.9fr) minmax(180px, 0.9fr) minmax(220px, 1.2fr) auto;
+  gap: 14px;
+}
+
+.payroll-report-filter-field {
+  min-width: 0;
+}
+
+.payroll-report-filter-field .form-input,
+.payroll-report-filter-field .form-select {
+  width: 100%;
+}
+
+.payroll-report-filter-field-employee {
+  min-width: 0;
+}
+
+.payroll-report-filter-actions {
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
 .reports-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -3832,6 +3857,23 @@ tfoot td {
   .reports-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .payroll-report-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .payroll-report-filter-field-employee,
+  .payroll-report-filter-actions {
+    grid-column: 1 / -1;
+  }
+
+  .payroll-report-filter-actions {
+    justify-content: stretch;
+  }
+
+  .payroll-report-filter-actions .reports-refresh-btn {
+    width: 100%;
+  }
 }
 
 @media (max-width: 900px) {
@@ -3845,6 +3887,14 @@ tfoot td {
 
   .reports-highlight-grid {
     grid-template-columns: 1fr;
+  }
+
+  .payroll-report-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .payroll-report-filter-actions {
+    grid-column: auto;
   }
 }
 
@@ -4639,5 +4689,234 @@ tbody tr:hover {
 
   .inventory-damaged-toolbar-actions .btn {
     flex: 1;
+  }
+}
+
+.payroll-slip-shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.payroll-slip-paper {
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: 1.25rem;
+  display: grid;
+  gap: 1.25rem;
+}
+
+.payroll-slip-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.payroll-slip-run {
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-light);
+  margin-bottom: 0.45rem;
+}
+
+.payroll-slip-period-block {
+  text-align: right;
+  display: grid;
+  gap: 0.35rem;
+  justify-items: end;
+}
+
+.payroll-slip-employee-line {
+  font-size: 0.95rem;
+  color: var(--text-dark);
+}
+
+.payroll-slip-section {
+  border: 1px solid var(--border-light);
+  border-radius: 0.35rem;
+  overflow: hidden;
+}
+
+.payroll-slip-section-title {
+  padding: 0.75rem 0.9rem;
+  background: var(--cream-white);
+  border-bottom: 1px solid var(--border-light);
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--text-dark);
+}
+
+.payroll-slip-summary-table,
+.payroll-slip-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.payroll-slip-summary-table td,
+.payroll-slip-table td,
+.payroll-slip-table th {
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.payroll-slip-summary-table tr:last-child td,
+.payroll-slip-table tr:last-child td {
+  border-bottom: none;
+}
+
+.payroll-slip-summary-table td:nth-child(odd) {
+  color: var(--text-mid);
+  width: 34%;
+}
+
+.payroll-slip-summary-table td:nth-child(even) {
+  width: 16%;
+  font-weight: 700;
+  color: var(--text-dark);
+}
+
+.payroll-slip-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.payroll-slip-panel {
+  border: 1px solid var(--border-light);
+  border-radius: 0.35rem;
+  overflow: hidden;
+}
+
+.payroll-slip-table thead th {
+  background: var(--cream-white);
+  color: var(--text-dark);
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.payroll-slip-total-row td {
+  font-weight: 800;
+  color: var(--text-dark);
+}
+
+.payroll-slip-calculation {
+  padding-bottom: 0.9rem;
+}
+
+.payroll-slip-calculation-main {
+  padding: 0.9rem 0.9rem 0.25rem;
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text-dark);
+}
+
+.payroll-slip-calculation-sub {
+  padding: 0 0.9rem 0.4rem;
+  color: var(--text-mid);
+}
+
+.payroll-slip-positive {
+  color: var(--success);
+}
+
+.payroll-slip-negative {
+  color: var(--error);
+}
+
+.payroll-slip-formulas {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.65rem 0.9rem 0;
+}
+
+.payroll-slip-formula-row {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.payroll-slip-formula-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-light);
+  font-weight: 800;
+}
+
+.payroll-slip-formula-detail {
+  font-size: 0.88rem;
+  color: var(--text-dark);
+  line-height: 1.5;
+}
+
+.payroll-slip-signatures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3rem;
+  padding-top: 0.5rem;
+}
+
+.payroll-slip-signature-line {
+  border-top: 1px solid var(--text-light);
+  margin-bottom: 0.4rem;
+}
+
+.payroll-slip-signatures span {
+  display: block;
+  text-align: center;
+  color: var(--text-mid);
+  font-size: 0.88rem;
+}
+
+.payroll-slip-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+@media (max-width: 900px) {
+  .payroll-slip-header,
+  .payroll-slip-columns,
+  .payroll-slip-signatures {
+    grid-template-columns: 1fr;
+  }
+
+  .payroll-slip-header {
+    display: grid;
+  }
+
+  .payroll-slip-period-block {
+    justify-items: start;
+    text-align: left;
+  }
+}
+
+@media print {
+  .page.payroll-slip-page {
+    padding: 0;
+  }
+
+  .page.payroll-slip-page .page-header,
+  .page.payroll-slip-page .error-msg,
+  .page.payroll-slip-page .success-msg,
+  .page.payroll-slip-page .no-print,
+  .sidebar,
+  .header.topbar {
+    display: none !important;
+  }
+
+  .main-content {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .payroll-slip-paper {
+    max-width: none;
+    margin: 0;
+    border: none;
+    box-shadow: none;
+    padding: 0;
   }
 }

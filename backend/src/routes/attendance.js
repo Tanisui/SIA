@@ -13,6 +13,28 @@ const DATE_RE        = /^\d{4}-\d{2}-\d{2}$/
 
 function isBlank(v) { return v === undefined || v === null || String(v).trim() === '' }
 function asText(v)  { return isBlank(v) ? null : String(v).trim() }
+function padDatePart(v) { return String(v).padStart(2, '0') }
+function formatDateOnly(value) {
+  if (isBlank(value)) return null
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${value.getFullYear()}-${padDatePart(value.getMonth() + 1)}-${padDatePart(value.getDate())}`
+  }
+  const text = String(value).trim()
+  if (DATE_RE.test(text)) return text
+  const parsed = new Date(text)
+  if (!Number.isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}-${padDatePart(parsed.getMonth() + 1)}-${padDatePart(parsed.getDate())}`
+  }
+  return text.slice(0, 10)
+}
+function todayDateOnly() { return formatDateOnly(new Date()) }
+function serializeAttendanceRow(row) {
+  if (!row) return row
+  return {
+    ...row,
+    date: formatDateOnly(row.date)
+  }
+}
 function asDate(v, field, required = false) {
   if (isBlank(v)) {
     if (required) { const e = new Error(`${field} is required`); e.statusCode = 400; throw e }
@@ -94,7 +116,7 @@ router.get('/', verifyToken, authorize(ATTENDANCE_VIEW_PERMS), async (req, res) 
       `SELECT COUNT(*) AS total FROM attendance a ${where}`,
       params
     )
-    res.json({ data: rows, total, page: Number(page), limit: Number(limit) })
+    res.json({ data: rows.map(serializeAttendanceRow), total, page: Number(page), limit: Number(limit) })
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message })
   }
@@ -142,7 +164,7 @@ router.get('/:id', verifyToken, authorize(ATTENDANCE_VIEW_PERMS), async (req, re
       [req.params.id]
     )
     if (!row) return res.status(404).json({ error: 'Attendance record not found' })
-    res.json(row)
+    res.json(serializeAttendanceRow(row))
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -163,7 +185,7 @@ router.post('/', verifyToken, authorize(ATTENDANCE_MANAGE_PERMS), async (req, re
 
     const record = await upsertRecord(body, req.auth?.id)
     await logAuditEventSafe(req, 'attendance.create', 'attendance', record.id)
-    res.status(201).json(record)
+    res.status(201).json(serializeAttendanceRow(record))
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message })
   }
@@ -203,7 +225,7 @@ router.put('/:id', verifyToken, authorize(ATTENDANCE_MANAGE_PERMS), async (req, 
     )
     const [[updated]] = await db.pool.query('SELECT * FROM attendance WHERE id = ?', [req.params.id])
     await logAuditEventSafe(req, 'attendance.update', 'attendance', req.params.id)
-    res.json(updated)
+    res.json(serializeAttendanceRow(updated))
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message })
   }
@@ -228,7 +250,7 @@ router.post('/clock-in', verifyToken, authorize(ATTENDANCE_MANAGE_PERMS), async 
     const { employee_id, expected_clock_in, expected_clock_out } = req.body
     if (!employee_id) return res.status(400).json({ error: 'employee_id is required' })
 
-    const today = new Date().toISOString().slice(0, 10)
+    const today = todayDateOnly()
     const now   = new Date().toTimeString().slice(0, 5)
 
     const exp_in  = asTime(expected_clock_in,  'expected_clock_in')
@@ -247,7 +269,7 @@ router.post('/clock-in', verifyToken, authorize(ATTENDANCE_MANAGE_PERMS), async 
         [now, status, late, exp_in, exp_out, req.auth?.id, existing.id]
       )
       const [[updated]] = await db.pool.query('SELECT * FROM attendance WHERE id = ?', [existing.id])
-      return res.json(updated)
+      return res.json(serializeAttendanceRow(updated))
     }
 
     const [result] = await db.pool.query(
@@ -256,7 +278,7 @@ router.post('/clock-in', verifyToken, authorize(ATTENDANCE_MANAGE_PERMS), async 
       [employee_id, today, now, status, late, exp_in, exp_out, req.auth?.id]
     )
     const [[created]] = await db.pool.query('SELECT * FROM attendance WHERE id = ?', [result.insertId])
-    res.status(201).json(created)
+    res.status(201).json(serializeAttendanceRow(created))
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message })
   }
@@ -268,7 +290,7 @@ router.post('/clock-out', verifyToken, authorize(ATTENDANCE_MANAGE_PERMS), async
     const { employee_id } = req.body
     if (!employee_id) return res.status(400).json({ error: 'employee_id is required' })
 
-    const today = new Date().toISOString().slice(0, 10)
+    const today = todayDateOnly()
     const now   = new Date().toTimeString().slice(0, 5)
 
     const [[existing]] = await db.pool.query(
@@ -288,7 +310,7 @@ router.post('/clock-out', verifyToken, authorize(ATTENDANCE_MANAGE_PERMS), async
       [now, hours_worked, undertime, overtime, req.auth?.id, existing.id]
     )
     const [[updated]] = await db.pool.query('SELECT * FROM attendance WHERE id = ?', [existing.id])
-    res.json(updated)
+    res.json(serializeAttendanceRow(updated))
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message })
   }
@@ -323,7 +345,7 @@ async function upsertRecord(body, userId) {
        asText(body.notes), userId, existing.id]
     )
     const [[updated]] = await db.pool.query('SELECT * FROM attendance WHERE id = ?', [existing.id])
-    return updated
+    return serializeAttendanceRow(updated)
   }
 
   const [result] = await db.pool.query(
@@ -339,7 +361,7 @@ async function upsertRecord(body, userId) {
      asText(body.notes), userId]
   )
   const [[created]] = await db.pool.query('SELECT * FROM attendance WHERE id = ?', [result.insertId])
-  return created
+  return serializeAttendanceRow(created)
 }
 
 module.exports = router

@@ -69,6 +69,7 @@ const NAV_ITEMS = [
     children: [
       { to: '/payroll/periods', label: 'Periods' },
       { to: '/payroll/profiles', label: 'Profiles' },
+      { to: '/attendance', label: 'Attendance' },
       { to: '/payroll/reports', label: 'Reports' }
     ]
   },
@@ -78,7 +79,7 @@ const NAV_ITEMS = [
   { to: '/settings', label: 'Settings', icon: 'ST', perm: 'system.config.update' },
   { to: '/audit', label: 'Audit', icon: 'AD', perm: 'system.audit.view' },
   { section: 'Account' },
-  { to: '/change-password', label: 'Change Password', icon: 'PW', perm: null }
+  { to: '/account-security', label: 'Account Security', icon: 'AS', perm: null }
 ]
 
 export default function Sidebar({ mobileOpen = false, onNavigate }) {

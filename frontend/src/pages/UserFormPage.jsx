@@ -294,47 +294,6 @@ function normalizeEmploymentType(value) {
   return ALLOWED_EMPLOYMENT_TYPES.has(normalized) ? normalized : ''
 }
 
-function getCredentialsCacheKey(userId) {
-  return `user-form-saved-credentials:${userId}`
-}
-
-function saveCredentialsSnapshot(userId, formData) {
-  if (!userId || typeof window === 'undefined') return
-
-  const snapshot = {
-    email: String(formData.email || '').trim(),
-    first_name: String(formData.first_name || '').trim(),
-    last_name: String(formData.last_name || '').trim(),
-    full_name: composeFullName(formData.first_name, formData.last_name) || String(formData.full_name || '').trim(),
-    roles: normalizeSingleRoleSelection(formData.roles),
-    is_active: formData.is_active === 0 ? 0 : 1
-  }
-
-  window.sessionStorage.setItem(getCredentialsCacheKey(userId), JSON.stringify(snapshot))
-}
-
-function loadCredentialsSnapshot(userId) {
-  if (!userId || typeof window === 'undefined') return null
-
-  const raw = window.sessionStorage.getItem(getCredentialsCacheKey(userId))
-  if (!raw) return null
-
-  try {
-    const parsed = JSON.parse(raw)
-    const splitName = splitFullName(parsed?.full_name)
-    return {
-      email: String(parsed?.email || '').trim(),
-      first_name: String(parsed?.first_name || splitName.first_name || '').trim(),
-      last_name: String(parsed?.last_name || splitName.last_name || '').trim(),
-      full_name: String(parsed?.full_name || '').trim(),
-      roles: normalizeSingleRoleSelection(parsed?.roles),
-      is_active: parsed?.is_active === 0 ? 0 : 1
-    }
-  } catch (err) {
-    return null
-  }
-}
-
 function getDocumentStatusLabel(status) {
   const normalizedStatus = normalizeDocumentStatus(status)
   return DOCUMENT_STATUS_OPTIONS.find((option) => option.value === normalizedStatus)?.label || normalizedStatus
@@ -458,28 +417,13 @@ export default function UserFormPage({ mode = 'create' }) {
           emergency_contact_address: employee.emergency_contact_address || ''
         })
 
-        const credentialsSnapshot = loadCredentialsSnapshot(id)
-        const hydratedForm = credentialsSnapshot
-          ? cloneForm({
-              ...nextForm,
-              email: credentialsSnapshot.email || nextForm.email,
-              first_name: credentialsSnapshot.first_name || nextForm.first_name,
-              last_name: credentialsSnapshot.last_name || nextForm.last_name,
-              full_name: credentialsSnapshot.full_name || nextForm.full_name,
-              is_active: credentialsSnapshot.is_active,
-              roles: normalizeSingleRoleSelection(credentialsSnapshot.roles).length
-                ? normalizeSingleRoleSelection(credentialsSnapshot.roles)
-                : nextForm.roles
-            })
-          : nextForm
-
         const nextDocuments = mergeDocuments(employee.documents || [])
-        setFormData(hydratedForm)
-        setOriginalForm(cloneForm(hydratedForm))
+        setFormData(nextForm)
+        setOriginalForm(cloneForm(nextForm))
         setDocuments(nextDocuments)
         setOriginalDocuments(nextDocuments)
         setHasEmployeeRecord(Boolean(user.employee))
-        setOpenSection(getDefaultOpenSection(hydratedForm, true))
+        setOpenSection(getDefaultOpenSection(nextForm, true))
       } catch (err) {
         if (!mounted) return
         setError(err?.response?.data?.error || 'Failed to load user')
@@ -804,17 +748,16 @@ export default function UserFormPage({ mode = 'create' }) {
 
       if (isEdit) {
         await api.put(`/users/${id}`, payload)
-        saveCredentialsSnapshot(id, formData)
-        setOriginalForm(cloneForm(formData))
-        setHasEmployeeRecord(true)
-        setSuccess('Profile saved.')
-      } else {
-        const response = await api.post('/users', payload)
-        const createdUserId = response.data?.id
-        saveCredentialsSnapshot(createdUserId, formData)
-        navigate(`/users/${createdUserId}/edit?step=documents`, {
+        navigate('/users', {
           replace: true,
-          state: { flashSuccess: 'Profile saved. Continue with documents.' }
+          state: { flashSuccess: 'Profile saved successfully.' }
+        })
+        return
+      } else {
+        await api.post('/users', payload)
+        navigate('/users', {
+          replace: true,
+          state: { flashSuccess: 'Profile created successfully.' }
         })
         return
       }
@@ -1247,7 +1190,7 @@ export default function UserFormPage({ mode = 'create' }) {
     ? 'Save the current document register changes for this employee?'
     : isEdit
       ? 'Save the employee profile changes?'
-      : 'Create this employee profile now? You can continue with documents on the next step.'
+      : 'Create this employee profile now? Government documents can be managed later from the edit screen.'
 
   return (
     <div className="page">

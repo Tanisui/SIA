@@ -21,6 +21,13 @@ function mockModule(modulePath, exportsValue) {
 test('syncAttendanceToInputs writes attendance summaries into payroll inputs', async (t) => {
   const restorers = []
   let insertParams = null
+  let resetParams = null
+
+  restorers.push(mockModule('../src/services/payroll/computePayrollRun', {
+    async ensureProfilesForPeriod() {
+      return { auto_created_count: 0, skipped_count: 0, skipped_employees: [] }
+    }
+  }))
 
   restorers.push(mockModule('../src/database', {
     pool: {
@@ -40,6 +47,7 @@ test('syncAttendanceToInputs writes attendance summaries into payroll inputs', a
           const [tableName, columnName] = params
           if (tableName === 'users' && columnName === 'employee_id') return [[{ found: 1 }]]
           if (tableName === 'employees' && columnName === 'user_id') return [[]]
+          if (tableName === 'attendance' && columnName === 'night_differential_minutes') return [[]]
         }
 
         if (normalizedSql.includes('FROM attendance a') && normalizedSql.includes('GROUP BY a.employee_id, e.name')) {
@@ -50,12 +58,18 @@ test('syncAttendanceToInputs writes attendance summaries into payroll inputs', a
             absent_days: 1,
             hours_worked: 80,
             overtime_hours: 2.5,
+            night_differential_minutes: 0,
             late_minutes: 15,
             undertime_minutes: 5,
             regular_holiday_days: 1,
             rest_day_days: 0,
             paid_leave_days: 0
           }]]
+        }
+
+        if (normalizedSql.startsWith('UPDATE payroll_inputs SET days_worked = 0,')) {
+          resetParams = params
+          return [{ affectedRows: 0 }]
         }
 
         if (normalizedSql.startsWith('SELECT e.id AS employee_id, u.id AS user_id')) {
@@ -92,6 +106,7 @@ test('syncAttendanceToInputs writes attendance summaries into payroll inputs', a
   const result = await syncAttendanceToInputs(7, 88)
 
   assert.equal(result.synced, 1)
+  assert.deepEqual(resetParams, [88, 7])
   assert.equal(result.employees.length, 1)
   assert.deepEqual(result.employees[0], {
     employee_id: 12,
@@ -105,6 +120,7 @@ test('syncAttendanceToInputs writes attendance summaries into payroll inputs', a
     10,
     80,
     2.5,
+    0,
     15,
     5,
     1,
@@ -115,4 +131,144 @@ test('syncAttendanceToInputs writes attendance summaries into payroll inputs', a
     0,
     88
   ])
+})
+
+test('syncAttendanceToInputs normalizes payroll period dates before querying attendance', async (t) => {
+  const restorers = []
+  let summaryQueryParams = null
+  let resetParams = null
+
+  restorers.push(mockModule('../src/services/payroll/computePayrollRun', {
+    async ensureProfilesForPeriod() {
+      return { auto_created_count: 0, skipped_count: 0, skipped_employees: [] }
+    }
+  }))
+
+  restorers.push(mockModule('../src/database', {
+    pool: {
+      async query(sql, params = []) {
+        const normalizedSql = String(sql).replace(/\s+/g, ' ').trim()
+
+        if (normalizedSql === 'SELECT * FROM payroll_periods WHERE id = ?') {
+          return [[{
+            id: 8,
+            start_date: new Date(2026, 3, 15),
+            end_date: new Date(2026, 3, 29),
+            status: 'draft'
+          }]]
+        }
+
+        if (normalizedSql.includes('FROM information_schema.COLUMNS')) {
+          const [tableName, columnName] = params
+          if (tableName === 'attendance' && columnName === 'night_differential_minutes') return [[]]
+          if (tableName === 'users' && columnName === 'employee_id') return [[]]
+          if (tableName === 'employees' && columnName === 'user_id') return [[{ found: 1 }]]
+        }
+
+        if (normalizedSql.includes('FROM attendance a') && normalizedSql.includes('GROUP BY a.employee_id, e.name')) {
+          summaryQueryParams = params
+          return [[]]
+        }
+
+        if (normalizedSql.startsWith('UPDATE payroll_inputs SET days_worked = 0,')) {
+          resetParams = params
+          return [{ affectedRows: 0 }]
+        }
+
+        throw new Error(`Unexpected query: ${normalizedSql}`)
+      }
+    }
+  }))
+
+  const servicePath = require.resolve('../src/services/payroll/syncAttendanceToInputs')
+  delete require.cache[servicePath]
+  const { syncAttendanceToInputs } = require('../src/services/payroll/syncAttendanceToInputs')
+
+  t.after(() => {
+    delete require.cache[servicePath]
+    restorers.reverse().forEach((restore) => restore())
+  })
+
+  const result = await syncAttendanceToInputs(8, 88)
+
+  assert.equal(result.synced, 0)
+  assert.deepEqual(result.range, { from: '2026-04-15', to: '2026-04-29' })
+  assert.equal(result.skipped_count, 0)
+  assert.deepEqual(result.employees, [])
+  assert.deepEqual(result.skipped, [])
+  assert.deepEqual(summaryQueryParams, ['2026-04-15', '2026-04-29'])
+  assert.deepEqual(resetParams, [88, 8])
+})
+
+test('syncAttendanceToInputs reports profile bootstrap results when attendance cannot be prepared for payroll', async (t) => {
+  const restorers = []
+
+  restorers.push(mockModule('../src/services/payroll/computePayrollRun', {
+    async ensureProfilesForPeriod() {
+      return {
+        auto_created_count: 1,
+        skipped_count: 1,
+        skipped_employees: [{
+          employee_id: 55,
+          name: 'No Rate Employee',
+          reason: 'missing pay rate'
+        }]
+      }
+    }
+  }))
+
+  restorers.push(mockModule('../src/database', {
+    pool: {
+      async query(sql, params = []) {
+        const normalizedSql = String(sql).replace(/\s+/g, ' ').trim()
+
+        if (normalizedSql === 'SELECT * FROM payroll_periods WHERE id = ?') {
+          return [[{
+            id: 9,
+            start_date: '2026-04-20',
+            end_date: '2026-04-25',
+            status: 'draft'
+          }]]
+        }
+
+        if (normalizedSql.includes('FROM information_schema.COLUMNS')) {
+          const [tableName, columnName] = params
+          if (tableName === 'attendance' && columnName === 'night_differential_minutes') return [[]]
+          if (tableName === 'users' && columnName === 'employee_id') return [[]]
+          if (tableName === 'employees' && columnName === 'user_id') return [[{ found: 1 }]]
+        }
+
+        if (normalizedSql.includes('FROM attendance a') && normalizedSql.includes('GROUP BY a.employee_id, e.name')) {
+          return [[]]
+        }
+
+        if (normalizedSql.startsWith('UPDATE payroll_inputs SET days_worked = 0,')) {
+          return [{ affectedRows: 0 }]
+        }
+
+        throw new Error(`Unexpected query: ${normalizedSql}`)
+      }
+    }
+  }))
+
+  const servicePath = require.resolve('../src/services/payroll/syncAttendanceToInputs')
+  delete require.cache[servicePath]
+  const { syncAttendanceToInputs } = require('../src/services/payroll/syncAttendanceToInputs')
+
+  t.after(() => {
+    delete require.cache[servicePath]
+    restorers.reverse().forEach((restore) => restore())
+  })
+
+  const result = await syncAttendanceToInputs(9, 88)
+
+  assert.equal(result.auto_created_count, 1)
+  assert.equal(result.profile_skipped_count, 1)
+  assert.deepEqual(result.profile_skipped, [{
+    employee_id: 55,
+    name: 'No Rate Employee',
+    reason: 'missing pay rate'
+  }])
+  assert.match(result.message, /Created 1 payroll profile/i)
+  assert.match(result.message, /Could not prepare 1 employee/i)
 })

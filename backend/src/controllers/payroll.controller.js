@@ -8,8 +8,7 @@ const {
   validateProfilePayload,
   validateSettingsPayload
 } = require('../validators/payroll.validators')
-const {
-  computePayrollRun,
+const { computePayrollRun,
   finalizeRun,
   getActivePayrollSettings,
   getEmployeeHistory,
@@ -22,6 +21,7 @@ const {
   releaseRun,
   voidRun
 } = require('../services/payroll/computePayrollRun')
+const { buildPayslipView } = require('../services/payroll/computeEmployeePayroll')
 
 function parseJson(value, fallback = null) {
   if (value === null || value === undefined || value === '') return fallback
@@ -370,6 +370,7 @@ async function updateInput(req, res) {
       'days_worked',
       'hours_worked',
       'overtime_hours',
+      'night_differential_minutes',
       'late_minutes',
       'undertime_minutes',
       'absent_days',
@@ -381,6 +382,7 @@ async function updateInput(req, res) {
       'manual_bonus',
       'manual_commission',
       'manual_allowance',
+      'loan_deduction',
       'manual_deduction',
       'remarks'
     ]
@@ -600,6 +602,7 @@ async function getPayslip(req, res) {
          periods.start_date,
          periods.end_date,
          periods.payout_date,
+         periods.frequency AS period_frequency,
          users.username,
          users.full_name,
          users.email
@@ -628,15 +631,32 @@ async function getPayslip(req, res) {
        ORDER BY sort_order, id`,
       [item.id]
     )
+    const normalizedLines = lines.map((entry) => ({
+      ...entry,
+      metadata_json: parseJson(entry.metadata_json, null)
+    }))
+    const payrollProfileSnapshot = parseJson(item.payroll_profile_snapshot_json, {})
+    const inputSnapshot = parseJson(item.input_snapshot_json, {})
+    const settingsSnapshot = parseJson(item.settings_snapshot_json, {})
     res.json({
       ...item,
-      payroll_profile_snapshot_json: parseJson(item.payroll_profile_snapshot_json, {}),
-      input_snapshot_json: parseJson(item.input_snapshot_json, {}),
-      settings_snapshot_json: parseJson(item.settings_snapshot_json, {}),
-      lines: lines.map((line) => ({
-        ...line,
-        metadata_json: parseJson(line.metadata_json, null)
-      }))
+      payroll_profile_snapshot_json: payrollProfileSnapshot,
+      input_snapshot_json: inputSnapshot,
+      settings_snapshot_json: settingsSnapshot,
+      payslip_view: buildPayslipView({
+        item,
+        profile: payrollProfileSnapshot,
+        input: inputSnapshot,
+        settings: settingsSnapshot,
+        lines: normalizedLines,
+        employee: {
+          full_name: item.full_name,
+          username: item.username,
+          email: item.email,
+          user_id: item.user_id
+        }
+      }),
+      lines: normalizedLines
     })
   } catch (err) {
     handleControllerError(res, err, 'failed to fetch payslip')

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/api.js'
 import { ConfirmModal } from '../components/Modal.js'
 
@@ -60,6 +60,7 @@ function FieldLine({ label, value, primary = false }) {
 }
 
 export default function Users() {
+  const location = useLocation()
   const navigate = useNavigate()
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(false)
@@ -67,12 +68,23 @@ export default function Users() {
   const [showDetails, setShowDetails] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const [success, setSuccess] = useState(null)
+  const [error, setError] = useState(location.state?.flashError || null)
+  const [success, setSuccess] = useState(location.state?.flashSuccess || null)
 
   useEffect(() => {
     fetchUsers()
   }, [])
+
+  useEffect(() => {
+    const flashSuccess = location.state?.flashSuccess || null
+    const flashError = location.state?.flashError || null
+
+    if (!flashSuccess && !flashError) return
+
+    setSuccess(flashSuccess)
+    setError(flashError)
+    navigate(location.pathname, { replace: true, state: null })
+  }, [location.pathname, location.state, navigate])
 
   const fetchUsers = async () => {
     setLoading(true)

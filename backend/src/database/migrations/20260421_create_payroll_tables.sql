@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS payroll_inputs (
   days_worked DECIMAL(8,2) NOT NULL DEFAULT 0,
   hours_worked DECIMAL(8,2) NOT NULL DEFAULT 0,
   overtime_hours DECIMAL(8,2) NOT NULL DEFAULT 0,
+  night_differential_minutes INT NOT NULL DEFAULT 0,
   late_minutes INT NOT NULL DEFAULT 0,
   undertime_minutes INT NOT NULL DEFAULT 0,
   absent_days DECIMAL(8,2) NOT NULL DEFAULT 0,
@@ -70,6 +71,7 @@ CREATE TABLE IF NOT EXISTS payroll_inputs (
   manual_bonus DECIMAL(12,2) NOT NULL DEFAULT 0,
   manual_commission DECIMAL(12,2) NOT NULL DEFAULT 0,
   manual_allowance DECIMAL(12,2) NOT NULL DEFAULT 0,
+  loan_deduction DECIMAL(12,2) NOT NULL DEFAULT 0,
   manual_deduction DECIMAL(12,2) NOT NULL DEFAULT 0,
   remarks TEXT NULL,
   created_by BIGINT UNSIGNED NULL,
@@ -186,6 +188,7 @@ SELECT
   1,
   '{
     "overtime_multiplier": 1.25,
+    "night_differential_multiplier": 0.1,
     "regular_holiday_multiplier": 2,
     "special_holiday_multiplier": 1.3,
     "rest_day_multiplier": 1.3,
