@@ -240,9 +240,9 @@ export default function PayrollPayslip() {
 
             <div className="payroll-slip-section payroll-slip-calculation">
               <div className="payroll-slip-section-title">Calculation</div>
-              <div className="payroll-slip-calculation-main">Net Pay = Gross Earnings - Total Deductions</div>
+              <div className="payroll-slip-calculation-main">Pay = Gross Earnings - Total Deductions</div>
               <div className="payroll-slip-calculation-sub">
-                Net Pay = {formatPeso(payslipView.calculation.gross_earnings)} - {formatPeso(payslipView.calculation.total_deductions)} ={' '}
+                Pay = {formatPeso(payslipView.calculation.gross_earnings)} - {formatPeso(payslipView.calculation.total_deductions)} ={' '}
                 <strong className={payslipView.calculation.net_pay < 0 ? 'payroll-slip-negative' : 'payroll-slip-positive'}>
                   {formatPeso(payslipView.calculation.net_pay)}
                 </strong>

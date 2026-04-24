@@ -145,9 +145,10 @@ export default function PayrollReports() {
         <>
           <div className="reports-summary-grid payroll-summary-grid">
             {[
-              ['Gross Pay', registerTotals.gross_pay],
+              // Gross Pay intentionally hidden per request
+              // ['Gross Pay', registerTotals.gross_pay],
               ['Deductions', registerTotals.total_deductions],
-              ['Net Pay', registerTotals.net_pay],
+              ['Pay', registerTotals.net_pay],
               ['Withholding Tax', registerTotals.withholding_tax]
             ].map(([label, value]) => (
               <div className="card reports-summary-card" key={label}>
@@ -163,9 +164,11 @@ export default function PayrollReports() {
                   <tr>
                     <th>Employee</th>
                     <th>Period</th>
+                    {/* Gross column hidden per request
                     <th className="text-right">Gross</th>
+                    */}
                     <th className="text-right">Deductions</th>
-                    <th className="text-right">Net</th>
+                    <th className="text-right">Pay</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -190,13 +193,15 @@ export default function PayrollReports() {
                             </div>
                           </td>
                           <td>{row.period_code}</td>
+                          {/* Gross cell hidden per request
                           <td className="text-right">{formatCurrency(row.gross_pay)}</td>
+                          */}
                           <td className="text-right">{formatCurrency(row.total_deductions)}</td>
                           <td className="text-right">{formatCurrency(row.net_pay)}</td>
                         </tr>
                         {isExpanded ? (
                           <tr>
-                            <td colSpan={5} style={{ background: 'var(--cream-white)', padding: 16 }}>
+                            <td colSpan={4} style={{ background: 'var(--cream-white)', padding: 16 }}>
                               {basis.gross_zero_reason ? (
                                 <div className="warning-msg" style={{ marginBottom: 12 }}>{basis.gross_zero_reason}</div>
                               ) : null}
@@ -233,7 +238,7 @@ export default function PayrollReports() {
                                   <DetailLine label="PHIC" value={formatCurrency(basis.employee_philhealth)} />
                                   <DetailLine label="Pag-IBIG" value={formatCurrency(basis.employee_pagibig)} />
                                   <DetailLine label="Stored Total Deductions" value={formatCurrency(basis.total_deductions)} />
-                                  <DetailLine label="Stored Net Pay" value={formatCurrency(basis.net_pay)} />
+                                  <DetailLine label="Stored Pay" value={formatCurrency(basis.net_pay)} />
                                 </DetailCard>
 
                                 <DetailCard title="Withholding Tax">
@@ -254,7 +259,7 @@ export default function PayrollReports() {
                         ) : null}
                       </React.Fragment>
                     )
-                  }) : <tr><td colSpan={5} className="text-center text-muted">No finalized payroll rows found.</td></tr>}
+                  }) : <tr><td colSpan={4} className="text-center text-muted">No finalized payroll rows found.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -305,13 +310,13 @@ export default function PayrollReports() {
         <div className="table-wrap responsive">
           <table>
             <thead>
-              <tr>
+                <tr>
                 <th>Employee</th>
                 <th>Period</th>
                 <th>Payout</th>
                 <th className="text-right">Gross</th>
                 <th className="text-right">Deductions</th>
-                <th className="text-right">Net</th>
+                <th className="text-right">Pay</th>
               </tr>
             </thead>
             <tbody>

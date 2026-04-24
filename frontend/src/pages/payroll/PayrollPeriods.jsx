@@ -181,7 +181,7 @@ export default function PayrollPeriods() {
             <thead><tr>
               <th>Period Code</th><th>Dates</th><th>Frequency</th><th>Status</th>
               <th style={{ textAlign: 'right' }}>Employees</th>
-              <th style={{ textAlign: 'right' }}>Net Pay</th>
+              <th style={{ textAlign: 'right' }}>Pay</th>
               <th>Actions</th>
             </tr></thead>
             <tbody>

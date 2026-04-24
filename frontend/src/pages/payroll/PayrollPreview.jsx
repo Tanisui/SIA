@@ -50,7 +50,7 @@ export default function PayrollPreview() {
     ['Gross Pay', formatCurrency(run?.total_gross_pay)],
     ['Employee Deductions', formatCurrency(run?.total_employee_deductions)],
     ['Employer Contributions', formatCurrency(run?.total_employer_contributions)],
-    ['Net Pay', formatCurrency(run?.total_net_pay)]
+    ['Pay', formatCurrency(run?.total_net_pay)]
   ]), [run])
 
   async function runAction(action) {
@@ -135,7 +135,7 @@ export default function PayrollPreview() {
                     <th className="text-right">Basic</th>
                     <th className="text-right">Gross</th>
                     <th className="text-right">Deductions</th>
-                    <th className="text-right">Net</th>
+                    <th className="text-right">Pay</th>
                     <th>Status</th>
                     <th className="text-right">Payslip</th>
                   </tr>

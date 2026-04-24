@@ -178,7 +178,7 @@ export default function PayrollInputSheet() {
           )}
           {period.total_net_pay > 0 && (
             <span style={{ fontWeight: 700, color: 'var(--gold-dark)', fontSize: 14 }}>
-              Net Pay: {formatCurrency(period.total_net_pay)}
+              Pay: {formatCurrency(period.total_net_pay)}
             </span>
           )}
         </div>
