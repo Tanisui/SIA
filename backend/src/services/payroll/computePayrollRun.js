@@ -1,7 +1,21 @@
 const db = require('../../database')
-const { computeEmployeePayroll, roundMoney } = require('./computeEmployeePayroll')
+const { computeEmployeePayroll, getDailyRate, getHourlyRate, roundMoney } = require('./computeEmployeePayroll')
 
 const schemaCapabilityCache = new Map()
+const PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS = Object.freeze({
+  pay_basis: 'monthly',
+  payroll_method: 'cash',
+  standard_work_days_per_month: 22,
+  standard_hours_per_day: 8,
+  overtime_eligible: 1,
+  late_deduction_enabled: 1,
+  undertime_deduction_enabled: 1,
+  tax_enabled: 1,
+  sss_enabled: 1,
+  philhealth_enabled: 1,
+  pagibig_enabled: 1,
+  status: 'active'
+})
 
 function serviceError(statusCode, message) {
   const err = new Error(message)
@@ -16,6 +30,85 @@ function safeJson(value, fallback = null) {
     return JSON.parse(String(value))
   } catch {
     return fallback
+  }
+}
+
+function normalizeBootstrapPayBasis(value, period = null) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (['daily', 'monthly', 'hourly'].includes(normalized)) return normalized
+  if (normalized === 'day') return 'daily'
+  if (normalized === 'month') return 'monthly'
+  if (period?.frequency === 'weekly') return 'daily'
+  return PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.pay_basis
+}
+
+function normalizeBootstrapPayrollMethod(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'cash') return 'cash'
+  if (normalized === 'bank_transfer' || normalized === 'bank transfer') return 'bank_transfer'
+  if (normalized === 'e_wallet' || normalized === 'e-wallet' || normalized === 'ewallet') return 'ewallet'
+  return PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.payroll_method
+}
+
+function normalizeBootstrapEmploymentType(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized || null
+}
+
+function normalizePayrollFrequency(value, period = null) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (['weekly', 'semi_monthly', 'monthly'].includes(normalized)) return normalized
+  if (normalized === 'semi-monthly' || normalized === 'semimonthly') return 'semi_monthly'
+  return period?.frequency || 'semi_monthly'
+}
+
+function extractBootstrapBankFields(value) {
+  const bankDetails = safeJson(value, {})
+  if (!bankDetails || typeof bankDetails !== 'object' || Array.isArray(bankDetails)) {
+    return {
+      bank_name: null,
+      bank_account_name: null,
+      bank_account_number: null
+    }
+  }
+
+  return {
+    bank_name: bankDetails.provider_name || bankDetails.bank_name || null,
+    bank_account_name: bankDetails.account_name || null,
+    bank_account_number: bankDetails.account_number || null
+  }
+}
+
+function buildBootstrapProfileSeed(candidate, period = null) {
+  const payRate = Number(candidate?.pay_rate || 0)
+  if (!hasPositiveRate(payRate)) {
+    return { profile: null, reason: 'missing pay rate' }
+  }
+
+  const bankFields = extractBootstrapBankFields(candidate?.bank_details)
+  return {
+    profile: {
+      user_id: Number(candidate.user_id),
+      employment_type: normalizeBootstrapEmploymentType(candidate.employment_type),
+      pay_basis: normalizeBootstrapPayBasis(candidate.pay_basis, period),
+      pay_rate: payRate,
+      payroll_frequency: period?.frequency || 'semi_monthly',
+      standard_work_days_per_month: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.standard_work_days_per_month,
+      standard_hours_per_day: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.standard_hours_per_day,
+      overtime_eligible: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.overtime_eligible,
+      late_deduction_enabled: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.late_deduction_enabled,
+      undertime_deduction_enabled: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.undertime_deduction_enabled,
+      tax_enabled: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.tax_enabled,
+      sss_enabled: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.sss_enabled,
+      philhealth_enabled: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.philhealth_enabled,
+      pagibig_enabled: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.pagibig_enabled,
+      payroll_method: normalizeBootstrapPayrollMethod(candidate.payroll_method),
+      bank_name: bankFields.bank_name,
+      bank_account_name: bankFields.bank_account_name,
+      bank_account_number: bankFields.bank_account_number,
+      status: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.status
+    },
+    reason: null
   }
 }
 
@@ -39,6 +132,39 @@ function getProfileMissingFields(profile = {}) {
     if (!hasConfiguredFlag(profile[key])) missingFields.push(key)
   }
   return missingFields
+}
+
+function normalizeProfileForCompute(profile = {}, period = null) {
+  const normalized = {
+    ...profile,
+    pay_basis: normalizeBootstrapPayBasis(profile.pay_basis, period),
+    payroll_frequency: normalizePayrollFrequency(profile.payroll_frequency, period),
+    payroll_method: normalizeBootstrapPayrollMethod(profile.payroll_method)
+  }
+
+  for (const [key, fallback] of Object.entries({
+    overtime_eligible: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.overtime_eligible,
+    late_deduction_enabled: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.late_deduction_enabled,
+    undertime_deduction_enabled: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.undertime_deduction_enabled,
+    tax_enabled: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.tax_enabled,
+    sss_enabled: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.sss_enabled,
+    philhealth_enabled: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.philhealth_enabled,
+    pagibig_enabled: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.pagibig_enabled
+  })) {
+    if (!hasConfiguredFlag(normalized[key])) normalized[key] = fallback
+  }
+
+  if (!hasPositiveRate(normalized.standard_work_days_per_month)) {
+    normalized.standard_work_days_per_month = PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.standard_work_days_per_month
+  }
+  if (!hasPositiveRate(normalized.standard_hours_per_day)) {
+    normalized.standard_hours_per_day = PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.standard_hours_per_day
+  }
+  if (!String(normalized.status || '').trim()) {
+    normalized.status = PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.status
+  }
+
+  return normalized
 }
 
 function getProfileDisplayName(profile = {}) {
@@ -124,6 +250,9 @@ async function getPayrollReportCapabilities(conn = db.pool) {
 
   const itemColumns = [
     'status',
+    'payroll_profile_snapshot_json',
+    'input_snapshot_json',
+    'settings_snapshot_json',
     'gross_basic_pay',
     'gross_overtime_pay',
     'gross_holiday_pay',
@@ -189,6 +318,10 @@ function selectNumericColumn(columns, columnName, alias = columnName) {
   return columns[columnName] ? `items.${columnName}` : `0 AS ${alias}`
 }
 
+function selectJsonColumn(columns, columnName, alias = columnName) {
+  return columns[columnName] ? `items.${columnName}` : `NULL AS ${alias}`
+}
+
 function selectItemStatusFilter(columns, where) {
   if (columns.status) where.push("items.status IN ('finalized', 'released')")
 }
@@ -215,6 +348,209 @@ function payoutDateGroupBy(columns) {
 
 function payoutDateOrderBy(columns, fallback = 'runs.id DESC') {
   return columns.payout_date ? `periods.payout_date DESC, ${fallback}` : fallback
+}
+
+function num(value, fallback = 0) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function hasOwn(object, key) {
+  return Boolean(object) && Object.prototype.hasOwnProperty.call(object, key)
+}
+
+function boolFlag(value) {
+  return value === true || Number(value) === 1
+}
+
+function normalizeReportSettingsSnapshot(settingsSnapshot = {}) {
+  const parsed = safeJson(settingsSnapshot, {})
+  if (parsed && typeof parsed === 'object' && parsed.settings && typeof parsed.settings === 'object') {
+    return parsed.settings
+  }
+  return parsed || {}
+}
+
+function getWithholdingTaxBrackets(settings = {}, periodFrequency = 'semi_monthly') {
+  const configured = settings?.withholding_tax?.brackets
+  if (Array.isArray(configured)) return configured
+  if (configured && typeof configured === 'object') {
+    return configured[periodFrequency] || configured.monthly || []
+  }
+  return []
+}
+
+function getWithholdingTaxBracket(brackets = [], taxableIncome = 0) {
+  const income = Math.max(num(taxableIncome), 0)
+  return brackets
+    .filter((row) => income >= num(row.from) && (row.to === null || row.to === undefined || income <= num(row.to, Number.MAX_SAFE_INTEGER)))
+    .sort((a, b) => num(b.from) - num(a.from))[0] || null
+}
+
+function formatBracketAmount(value) {
+  return `PHP ${roundMoney(num(value)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function formatPercentage(value) {
+  return `${(num(value) * 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
+}
+
+function buildWithholdingTaxExplanation({ taxableIncome, withholdingTax, periodFrequency, profile, settings }) {
+  const income = Math.max(roundMoney(num(taxableIncome)), 0)
+  const taxEnabled = boolFlag(profile?.tax_enabled) && boolFlag(settings?.withholding_tax?.enabled)
+  if (!taxEnabled) {
+    return {
+      withholding_tax_bracket: null,
+      withholding_tax_formula: {
+        text: 'Withholding tax is disabled for this payroll profile or settings version.',
+        taxable_income: income,
+        base_tax: 0,
+        excess_over: 0,
+        rate: 0,
+        computed_amount: 0,
+        stored_amount: roundMoney(num(withholdingTax))
+      }
+    }
+  }
+
+  const brackets = getWithholdingTaxBrackets(settings, periodFrequency)
+  const bracket = getWithholdingTaxBracket(brackets, income)
+  if (!bracket) {
+    return {
+      withholding_tax_bracket: null,
+      withholding_tax_formula: {
+        text: `No withholding tax bracket matched taxable income ${formatBracketAmount(income)}.`,
+        taxable_income: income,
+        base_tax: 0,
+        excess_over: 0,
+        rate: 0,
+        computed_amount: 0,
+        stored_amount: roundMoney(num(withholdingTax))
+      }
+    }
+  }
+
+  const normalizedBracket = {
+    from: roundMoney(num(bracket.from)),
+    to: bracket.to === null || bracket.to === undefined ? null : roundMoney(num(bracket.to)),
+    base_tax: roundMoney(num(bracket.base_tax)),
+    excess_over: roundMoney(num(bracket.excess_over, bracket.from)),
+    rate: num(bracket.rate)
+  }
+  const computedAmount = roundMoney(
+    normalizedBracket.base_tax + Math.max(income - normalizedBracket.excess_over, 0) * normalizedBracket.rate
+  )
+
+  return {
+    withholding_tax_bracket: normalizedBracket,
+    withholding_tax_formula: {
+      text: `${formatBracketAmount(normalizedBracket.base_tax)} + max(${formatBracketAmount(income)} - ${formatBracketAmount(normalizedBracket.excess_over)}, 0) x ${formatPercentage(normalizedBracket.rate)} = ${formatBracketAmount(computedAmount)}`,
+      taxable_income: income,
+      base_tax: normalizedBracket.base_tax,
+      excess_over: normalizedBracket.excess_over,
+      rate: normalizedBracket.rate,
+      computed_amount: computedAmount,
+      stored_amount: roundMoney(num(withholdingTax))
+    }
+  }
+}
+
+function buildRegisterBasisDetails(row = {}) {
+  const rawProfile = safeJson(row.payroll_profile_snapshot_json, {})
+  const inputSnapshot = safeJson(row.input_snapshot_json, {})
+  const settings = normalizeReportSettingsSnapshot(row.settings_snapshot_json)
+  const periodFrequency = normalizePayrollFrequency(row.period_frequency || rawProfile?.payroll_frequency)
+  const profile = normalizeProfileForCompute(rawProfile, { frequency: periodFrequency })
+  const dailyRate = getDailyRate(profile)
+  const hourlyRate = getHourlyRate(profile)
+  const overtimeMultiplier = num(settings.overtime_multiplier, 1.25)
+  const nightDifferentialMultiplier = num(settings.night_differential_multiplier, 0.1)
+  const regularHolidayMultiplier = num(settings.regular_holiday_multiplier, 2)
+  const specialHolidayMultiplier = num(settings.special_holiday_multiplier, 1.3)
+  const restDayMultiplier = num(settings.rest_day_multiplier, 1.3)
+
+  const daysWorked = roundMoney(num(inputSnapshot.days_worked))
+  const hoursWorked = roundMoney(num(inputSnapshot.hours_worked))
+  const overtimeHours = roundMoney(num(inputSnapshot.overtime_hours))
+  const lateMinutes = Math.round(num(inputSnapshot.late_minutes))
+  const undertimeMinutes = Math.round(num(inputSnapshot.undertime_minutes))
+  const nightDifferentialMinutes = Math.round(num(inputSnapshot.night_differential_minutes))
+
+  const grossNightDifferentialPay = roundMoney((nightDifferentialMinutes / 60) * hourlyRate * nightDifferentialMultiplier)
+  const regularHolidayPay = roundMoney(num(inputSnapshot.regular_holiday_days) * dailyRate * regularHolidayMultiplier)
+  const specialHolidayPay = roundMoney(num(inputSnapshot.special_holiday_days) * dailyRate * specialHolidayMultiplier)
+  const holidayPay = roundMoney(regularHolidayPay + specialHolidayPay)
+  const restDayPay = roundMoney(num(inputSnapshot.rest_day_days) * dailyRate * restDayMultiplier)
+  const absenceDeduction = roundMoney((num(inputSnapshot.absent_days) + num(inputSnapshot.unpaid_leave_days)) * dailyRate)
+  const lateDeduction = boolFlag(profile.late_deduction_enabled)
+    ? roundMoney((lateMinutes / 60) * hourlyRate)
+    : 0
+  const undertimeDeduction = boolFlag(profile.undertime_deduction_enabled)
+    ? roundMoney((undertimeMinutes / 60) * hourlyRate)
+    : 0
+  const loanDeduction = roundMoney(num(inputSnapshot.loan_deduction))
+  const manualDeduction = roundMoney(num(inputSnapshot.manual_deduction))
+  const contributionBase = Math.max(
+    roundMoney(num(row.gross_pay) - absenceDeduction - lateDeduction - undertimeDeduction),
+    0
+  )
+  const taxExplanation = buildWithholdingTaxExplanation({
+    taxableIncome: row.taxable_income,
+    withholdingTax: row.withholding_tax,
+    periodFrequency,
+    profile,
+    settings
+  })
+
+  let grossZeroReason = null
+  if (roundMoney(num(row.gross_pay)) === 0) {
+    if (String(profile.pay_basis || '').toLowerCase() === 'daily' && daysWorked === 0) {
+      grossZeroReason = 'Stored payroll input had 0 days worked for this daily-rate employee.'
+    } else if (String(profile.pay_basis || '').toLowerCase() === 'hourly' && hoursWorked === 0) {
+      grossZeroReason = 'Stored payroll input had 0 hours worked for this hourly-rate employee.'
+    }
+  }
+
+  return {
+    pay_basis: profile.pay_basis || null,
+    pay_rate: roundMoney(num(profile.pay_rate)),
+    period_frequency: periodFrequency,
+    days_worked: daysWorked,
+    hours_worked: hoursWorked,
+    overtime_hours: overtimeHours,
+    late_minutes: lateMinutes,
+    undertime_minutes: undertimeMinutes,
+    gross_basic_pay: roundMoney(num(row.gross_basic_pay)),
+    gross_overtime_pay: roundMoney(num(row.gross_overtime_pay)),
+    gross_night_differential_pay: grossNightDifferentialPay,
+    gross_holiday_pay: hasOwn(row, 'gross_holiday_pay')
+      ? roundMoney(num(row.gross_holiday_pay))
+      : holidayPay,
+    gross_rest_day_pay: hasOwn(row, 'gross_rest_day_pay')
+      ? roundMoney(num(row.gross_rest_day_pay))
+      : restDayPay,
+    gross_bonus: roundMoney(num(row.gross_bonus)),
+    gross_commission: roundMoney(num(row.gross_commission)),
+    gross_allowances: roundMoney(num(row.gross_allowances)),
+    gross_pay: roundMoney(num(row.gross_pay)),
+    contribution_base: contributionBase,
+    taxable_income: roundMoney(num(row.taxable_income)),
+    employee_sss: roundMoney(num(row.employee_sss)),
+    employee_philhealth: roundMoney(num(row.employee_philhealth)),
+    employee_pagibig: roundMoney(num(row.employee_pagibig)),
+    withholding_tax: roundMoney(num(row.withholding_tax)),
+    total_deductions: roundMoney(num(row.total_deductions)),
+    net_pay: roundMoney(num(row.net_pay)),
+    other_deductions: roundMoney(num(row.other_deductions)),
+    absence_deduction: absenceDeduction,
+    late_deduction: lateDeduction,
+    undertime_deduction: undertimeDeduction,
+    loan_deduction: loanDeduction,
+    manual_deduction: manualDeduction,
+    withholding_tax_bracket: taxExplanation.withholding_tax_bracket,
+    withholding_tax_formula: taxExplanation.withholding_tax_formula,
+    gross_zero_reason: grossZeroReason
+  }
 }
 
 async function getActivePayrollSettings(conn, effectiveDate = null) {
@@ -296,14 +632,90 @@ async function getRunDetails(conn, runId) {
   return { ...run, items: normalizedItems }
 }
 
+async function listProfileBootstrapCandidates(conn) {
+  const hasEmployeesTable = await tableExists('employees', conn)
+  if (!hasEmployeesTable) return []
+
+  const joinConditions = []
+  if (await columnExists('employees', 'user_id', conn)) joinConditions.push('e.user_id = u.id')
+  if (await columnExists('users', 'employee_id', conn)) joinConditions.push('u.employee_id = e.id')
+  if (!joinConditions.length) return []
+
+  const [rows] = await conn.query(
+    `SELECT DISTINCT
+       u.id AS user_id,
+       u.username,
+       u.full_name,
+       u.email,
+       e.id AS employee_id,
+       e.name AS employee_name,
+       e.employment_type,
+       e.pay_basis,
+       e.pay_rate,
+       e.payroll_method,
+       e.bank_details
+     FROM users u
+     JOIN employees e ON (${joinConditions.join(' OR ')})
+     LEFT JOIN payroll_profiles pp ON pp.user_id = u.id
+     WHERE pp.id IS NULL
+       AND COALESCE(u.is_active, 1) = 1
+       AND COALESCE(e.employment_status, 'ACTIVE') = 'ACTIVE'
+     ORDER BY COALESCE(u.full_name, u.username), u.id`
+  )
+
+  return rows
+}
+
+async function ensureProfilesForPeriod(conn, period = null) {
+  const candidates = await listProfileBootstrapCandidates(conn)
+  if (!candidates.length) {
+    return {
+      auto_created_count: 0,
+      skipped_count: 0,
+      skipped_employees: []
+    }
+  }
+
+  const skippedEmployees = []
+  let autoCreatedCount = 0
+
+  for (const candidate of candidates) {
+    const { profile, reason } = buildBootstrapProfileSeed(candidate, period)
+    if (!profile) {
+      skippedEmployees.push({
+        user_id: Number(candidate.user_id),
+        employee_id: Number(candidate.employee_id),
+        name: candidate.full_name || candidate.username || candidate.employee_name || `user #${candidate.user_id}`,
+        reason
+      })
+      continue
+    }
+
+    const columns = Object.keys(profile)
+    await conn.query(
+      `INSERT INTO payroll_profiles (${columns.join(', ')})
+       VALUES (${columns.map(() => '?').join(', ')})
+       ON DUPLICATE KEY UPDATE updated_at = updated_at`,
+      columns.map((column) => profile[column])
+    )
+    autoCreatedCount += 1
+  }
+
+  return {
+    auto_created_count: autoCreatedCount,
+    skipped_count: skippedEmployees.length,
+    skipped_employees: skippedEmployees
+  }
+}
+
 async function loadProfilesForCompute(conn, period = null) {
   const where = [
-    "pp.status = 'active'",
+    "(pp.status = 'active' OR pp.status IS NULL OR pp.status = '')",
     'COALESCE(u.is_active, 1) = 1'
   ]
   const params = []
   if (period?.frequency) {
-    where.push('pp.payroll_frequency = ?')
+    where.push("(pp.payroll_frequency = ? OR pp.payroll_frequency IS NULL OR pp.payroll_frequency = '')")
     params.push(period.frequency)
   }
   if (period?.branch_id) {
@@ -323,8 +735,9 @@ async function loadProfilesForCompute(conn, period = null) {
      ORDER BY COALESCE(u.full_name, u.username), pp.id`,
     params
   )
-  assertProfilesReadyForPayroll(rows)
-  return rows
+  const normalizedRows = rows.map((row) => normalizeProfileForCompute(row, period))
+  assertProfilesReadyForPayroll(normalizedRows)
+  return normalizedRows
 }
 
 async function loadInputsMap(conn, periodId) {
@@ -426,6 +839,7 @@ async function loadInputsForPeriod(periodId, actorId) {
       throw serviceError(400, 'payroll inputs cannot be loaded for finalized, released, or void periods')
     }
 
+    const bootstrap = await ensureProfilesForPeriod(conn, period)
     const profiles = await loadProfilesForCompute(conn, period)
     for (const profile of profiles) {
       await conn.query(
@@ -436,7 +850,7 @@ async function loadInputsForPeriod(periodId, actorId) {
     }
 
     await conn.commit()
-    return { period, loaded_count: profiles.length }
+    return { period, loaded_count: profiles.length, ...bootstrap }
   } catch (err) {
     await conn.rollback().catch(() => {})
     throw err
@@ -463,6 +877,8 @@ async function computePayrollRun(periodId, actorId) {
       throw serviceError(400, 'this payroll period already has a finalized or released run')
     }
 
+    const { syncAttendanceToInputs } = require('./syncAttendanceToInputs')
+    const syncSummary = await syncAttendanceToInputs(period.id, actorId, { conn })
     const settingsVersion = await getActivePayrollSettings(conn, period.payout_date || period.end_date)
     const profiles = await loadProfilesForCompute(conn, period)
     if (!profiles.length) {
@@ -526,7 +942,11 @@ async function computePayrollRun(periodId, actorId) {
     await conn.query("UPDATE payroll_periods SET status = 'computed' WHERE id = ?", [period.id])
 
     await conn.commit()
-    return getRunDetails(db.pool, draftRun.id)
+    const runDetails = await getRunDetails(db.pool, draftRun.id)
+    return {
+      ...runDetails,
+      sync_summary: syncSummary
+    }
   } catch (err) {
     await conn.rollback().catch(() => {})
     throw err
@@ -730,11 +1150,15 @@ async function getPayrollRegister(query = {}) {
        periods.code AS period_code,
        periods.start_date,
        periods.end_date,
+       periods.frequency AS period_frequency,
        ${payoutDateSelect(capabilities.columns.payroll_periods)},
        users.id AS user_id,
        users.username,
        ${selectUserFullName(capabilities.columns.users)},
        items.id AS payroll_run_item_id,
+       ${selectJsonColumn(capabilities.columns.payroll_run_items, 'payroll_profile_snapshot_json')},
+       ${selectJsonColumn(capabilities.columns.payroll_run_items, 'input_snapshot_json')},
+       ${selectJsonColumn(capabilities.columns.payroll_run_items, 'settings_snapshot_json')},
        ${selectNumericColumn(capabilities.columns.payroll_run_items, 'gross_basic_pay')},
        ${selectNumericColumn(capabilities.columns.payroll_run_items, 'gross_overtime_pay')},
        ${selectNumericColumn(capabilities.columns.payroll_run_items, 'gross_holiday_pay')},
@@ -759,12 +1183,16 @@ async function getPayrollRegister(query = {}) {
      ORDER BY ${payoutDateOrderBy(capabilities.columns.payroll_periods, userOrderBy(capabilities.columns.users))}`,
     params
   )
+  const rowsWithBasis = rows.map((row) => ({
+    ...row,
+    basis_details: buildRegisterBasisDetails(row)
+  }))
 
   return {
     ...reportEmptyResult(query),
-    totals: summarizeRegisterRows(rows),
-    rows,
-    notice: rows.length ? null : reportNoDataNotice()
+    totals: summarizeRegisterRows(rowsWithBasis),
+    rows: rowsWithBasis,
+    notice: rowsWithBasis.length ? null : reportNoDataNotice()
   }
 }
 
@@ -910,6 +1338,7 @@ async function getEmployeeHistory(query = {}) {
 
 module.exports = {
   computePayrollRun,
+  ensureProfilesForPeriod,
   finalizeRun,
   getActivePayrollSettings,
   getEmployeeHistory,

@@ -60,8 +60,16 @@ if ($dbPass -ne '') {
   Get-Content -Raw $sqlFile | & $mysqlCmd.Source --host=$dbHost --port=$dbPort --user=$dbUser $dbName
 }
 
+Write-Host '[3/3] Applying SQL migrations and payroll seeders'
+Push-Location (Join-Path $PSScriptRoot '..')
+try {
+  npm run migrate:sql
+} finally {
+  Pop-Location
+}
+
 if ($Seed) {
-  Write-Host '[3/3] Running seed script'
+  Write-Host '[4/4] Running seed script'
   Push-Location (Join-Path $PSScriptRoot '..')
   try {
     npm run seed
@@ -69,7 +77,7 @@ if ($Seed) {
     Pop-Location
   }
 } else {
-  Write-Host '[3/3] Seed step skipped (use -Seed to include it)'
+  Write-Host '[4/4] Seed step skipped (use -Seed to include it)'
 }
 
 Write-Host 'Database sync complete.'

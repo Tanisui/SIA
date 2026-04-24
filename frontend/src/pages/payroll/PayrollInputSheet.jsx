@@ -1,12 +1,22 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import api from '../../api/api.js'
-import { formatCurrency, formatDate, getErrorMessage, statusBadgeClass, toInputNumber } from './payrollUtils.js'
+import {
+  buildAttendanceSyncFeedback,
+  buildComputeSyncFeedback,
+  buildLoadInputsMessage,
+  formatCurrency,
+  formatDate,
+  getErrorMessage,
+  statusBadgeClass,
+  toInputNumber
+} from './payrollUtils.js'
 
 const inputFields = [
   ['days_worked',           'Days Worked'],
   ['hours_worked',          'Hours Worked'],
   ['overtime_hours',        'OT Hours'],
+  ['night_differential_minutes', 'Night Diff (min)'],
   ['late_minutes',          'Late (min)'],
   ['undertime_minutes',     'UT (min)'],
   ['absent_days',           'Absent'],
@@ -18,7 +28,8 @@ const inputFields = [
   ['manual_bonus',          'Bonus'],
   ['manual_commission',     'Commission'],
   ['manual_allowance',      'Allowance'],
-  ['manual_deduction',      'Deduction']
+  ['loan_deduction',        'Loan'],
+  ['manual_deduction',      'Other Deduction']
 ]
 
 function rowToDraft(row) {
@@ -70,7 +81,13 @@ export default function PayrollInputSheet() {
 
   async function loadInputs() {
     setActionLoading(true); setError(null)
-    try { await api.post(`/api/payroll/periods/${periodId}/load-inputs`); showMsg('Payroll inputs loaded.'); await loadPeriod() }
+    try {
+      const r = await api.post(`/api/payroll/periods/${periodId}/load-inputs`)
+      const message = buildLoadInputsMessage(r.data || {})
+      await loadPeriod()
+      if (Number(r.data?.period?.inputs?.length || 0) > 0) showMsg(message)
+      else setError(message)
+    }
     catch (err) { setError(getErrorMessage(err, 'Failed to load payroll inputs')) }
     finally { setActionLoading(false) }
   }
@@ -79,7 +96,9 @@ export default function PayrollInputSheet() {
     setSyncing(true); setError(null)
     try {
       const r = await api.post(`/api/payroll/periods/${periodId}/inputs/sync-attendance`)
-      showMsg(r.data?.message || 'Attendance synced to inputs.')
+      const feedback = buildAttendanceSyncFeedback(r.data || {})
+      if (feedback.isError) setError(feedback.message)
+      else showMsg(feedback.message)
       await loadPeriod()
     } catch (err) { setError(getErrorMessage(err, 'Attendance sync failed')) }
     finally { setSyncing(false) }
@@ -97,14 +116,22 @@ export default function PayrollInputSheet() {
 
   async function compute() {
     setActionLoading(true); setError(null)
-    try { await api.post(`/api/payroll/periods/${periodId}/compute`); navigate(`/payroll/periods/${periodId}/preview`) }
+    try {
+      const r = await api.post(`/api/payroll/periods/${periodId}/compute`)
+      const feedback = buildComputeSyncFeedback(r.data?.sync_summary || {})
+      navigate(`/payroll/periods/${periodId}/preview`, {
+        state: feedback.isWarning
+          ? { flashWarning: feedback.message }
+          : { flashSuccess: feedback.message }
+      })
+    }
     catch (err) { setError(getErrorMessage(err, 'Failed to compute payroll')) }
     finally { setActionLoading(false) }
   }
 
   const inputs = period?.inputs || []
-  const DEDUCTION_FIELDS  = ['late_minutes', 'undertime_minutes', 'absent_days', 'unpaid_leave_days', 'manual_deduction']
-  const EARNING_FIELDS    = ['overtime_hours', 'regular_holiday_days', 'special_holiday_days', 'rest_day_days', 'paid_leave_days', 'manual_bonus', 'manual_commission', 'manual_allowance']
+  const DEDUCTION_FIELDS  = ['late_minutes', 'undertime_minutes', 'absent_days', 'unpaid_leave_days', 'loan_deduction', 'manual_deduction']
+  const EARNING_FIELDS    = ['overtime_hours', 'night_differential_minutes', 'regular_holiday_days', 'special_holiday_days', 'rest_day_days', 'paid_leave_days', 'manual_bonus', 'manual_commission', 'manual_allowance']
 
   return (
     <div className="page">
@@ -116,6 +143,9 @@ export default function PayrollInputSheet() {
               ? `${period.code} · ${formatDate(period.start_date)} – ${formatDate(period.end_date)}`
               : 'Loading…'}
           </p>
+          <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 4 }}>
+            Compute refreshes attendance-derived fields first. Bonuses, loans, deductions, and remarks stay as entered.
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn-secondary" onClick={() => navigate('/payroll/periods')}>← Back</button>
@@ -167,7 +197,7 @@ export default function PayrollInputSheet() {
           <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>Loading inputs…</div>
         ) : inputs.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 40 }}>
-            <div style={{ color: 'var(--text-light)', marginBottom: 14 }}>No input rows loaded for this period.</div>
+            <div style={{ color: 'var(--text-light)', marginBottom: 14 }}>No input rows loaded for this period yet.</div>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
               <button className="btn btn-outline" onClick={syncAttendance} disabled={syncing}>⟳ Sync from Attendance</button>
               <button className="btn btn-primary"  onClick={loadInputs} disabled={actionLoading}>Load Employee Profiles</button>

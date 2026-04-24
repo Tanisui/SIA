@@ -21,6 +21,9 @@ function computePhilHealth({ taxableIncome, monthlyBasicSalary, payPeriodsPerMon
   const floor = num(ph.monthly_salary_floor, 0)
   const cap = num(ph.monthly_salary_cap, Number.MAX_SAFE_INTEGER)
   const baseInput = Math.max(num(monthlyBasicSalary, taxableIncome), 0)
+  if (baseInput <= 0) {
+    return { employee_philhealth: 0, employer_philhealth: 0 }
+  }
   const base = Math.min(Math.max(baseInput, floor), cap)
   const monthlyPremium = roundMoney(base * num(ph.premium_rate))
 

@@ -149,11 +149,12 @@ function validateInputPayload(payload = {}) {
     'manual_bonus',
     'manual_commission',
     'manual_allowance',
+    'loan_deduction',
     'manual_deduction'
   ]) {
     if (hasOwn(body, key)) result[key] = asNumber(body[key], key, { min: 0 })
   }
-  for (const key of ['late_minutes', 'undertime_minutes']) {
+  for (const key of ['late_minutes', 'undertime_minutes', 'night_differential_minutes']) {
     if (hasOwn(body, key)) result[key] = asNumber(body[key], key, { min: 0, integer: true })
   }
   if (hasOwn(body, 'remarks')) result.remarks = asText(body.remarks, 'remarks', { defaultValue: null })

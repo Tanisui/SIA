@@ -24,6 +24,7 @@ import Layout from './components/Layout.js'
 import ProtectedRoute from './components/ProtectedRoute.js'
 import ChangePassword from './pages/ChangePassword';
 import BalePurchaseOrder from './pages/BalePurchaseOrder.jsx';
+import Attendance from './pages/Attendance.jsx'
 import PayrollProfiles from './pages/payroll/PayrollProfiles.jsx'
 import PayrollPeriods from './pages/payroll/PayrollPeriods.jsx'
 import PayrollInputSheet from './pages/payroll/PayrollInputSheet.jsx'
@@ -55,6 +56,7 @@ export default function App() {
           React.createElement(Route, { path: 'customers/new', element: React.createElement(CustomerFormPage, { mode: 'create' }) }),
           React.createElement(Route, { path: 'customers/:id/edit', element: React.createElement(CustomerFormPage, { mode: 'edit' }) }),
           React.createElement(Route, { path: 'purchasing', element: React.createElement(Purchasing, null) }),
+          React.createElement(Route, { path: 'attendance', element: React.createElement(Attendance, null) }),
           React.createElement(Route, { path: 'expenses', element: React.createElement(Expenses, null) }),
           React.createElement(Route, { path: 'audit', element: React.createElement(Audit, null) }),
           React.createElement(Route, { path: 'files', element: React.createElement(Files, null) }),
@@ -68,7 +70,8 @@ export default function App() {
           React.createElement(Route, { path: 'payroll/runs/:runId/items/:itemId/payslip', element: React.createElement(PayrollPayslip, null) }),
           React.createElement(Route, { path: 'payroll/reports', element: React.createElement(PayrollReports, null) }),
           React.createElement(Route, { path: 'payroll', element: React.createElement(Navigate, { to: '/payroll/periods', replace: true }) }),
-          React.createElement(Route, { path: 'change-password', element: React.createElement(ChangePassword, null) }),
+          React.createElement(Route, { path: 'account-security', element: React.createElement(ChangePassword, null) }),
+          React.createElement(Route, { path: 'change-password', element: React.createElement(Navigate, { to: '/account-security', replace: true }) }),
           React.createElement(Route, { path: 'bale-purchase-order', element: React.createElement(BalePurchaseOrder, null) })
         )
       }),

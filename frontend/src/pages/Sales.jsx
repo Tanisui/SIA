@@ -3,6 +3,8 @@ import { useSelector } from 'react-redux'
 import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/api.js'
 
+const SALES_API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3000'
+
 const formatMoney = (currency, value) => {
   const normalizedCurrency = String(currency || 'PHP').trim() || 'PHP'
   try {
@@ -137,6 +139,17 @@ const CUSTOMER_CAPTURE_DEFAULT_FORM = {
 }
 const CUSTOMER_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i
 const PH_MOBILE_PATTERN = /^\+639\d{9}$/
+
+function isBackendUnavailableError(err) {
+  if (err?.response) return false
+  const code = String(err?.code || '').trim().toUpperCase()
+  const message = String(err?.message || '').trim()
+  return code === 'ERR_NETWORK' || /network error|failed to fetch|load failed/i.test(message)
+}
+
+function backendUnavailableMessage() {
+  return `Backend is unreachable at ${SALES_API_BASE}. Start the backend server and refresh this page.`
+}
 
 function readStoredPosDraftId() {
   const storedDraftId = Number(localStorage.getItem(POS_DRAFT_ID_STORAGE_KEY))
@@ -701,6 +714,7 @@ export default function Sales() {
   const routeScanRef = useRef('')
   const routeReceiptRef = useRef('')
   const draftSaleIdRef = useRef(null)
+  const hasAttemptedDraftRestoreRef = useRef(false)
   const hasInitializedDraftPersistenceRef = useRef(false)
   const cartMutationQueueRef = useRef(Promise.resolve())
   const cartItemsRef = useRef([])
@@ -709,7 +723,10 @@ export default function Sales() {
   const location = useLocation()
   const navigate = useNavigate()
 
-  const [tab, setTab] = useState('pos')
+  const [tab, setTab] = useState(() => {
+    const params = new URLSearchParams(location.search)
+    return String(params.get('tab') || 'pos').trim() || 'pos'
+  })
   const [products, setProducts] = useState([])
   const [sales, setSales] = useState([])
   const [transactions, setTransactions] = useState([])
@@ -791,6 +808,7 @@ export default function Sales() {
     ['returns', 'Returns', 'sales.refund'],
     ['report', 'Sales Report', 'sales.view']
   ].filter(([, , perm]) => can(permissions, perm))
+  const isPosWorkflowTab = tab === 'pos' || tab === 'payment'
 
   const allowDiscount = Boolean(config.allow_discount)
   const allowPriceOverride = Boolean(config.allow_price_override)
@@ -893,6 +911,10 @@ export default function Sales() {
   }, [draftSaleId])
 
   useEffect(() => {
+    if (!isPosWorkflowTab) return undefined
+    if (hasAttemptedDraftRestoreRef.current) return undefined
+    hasAttemptedDraftRestoreRef.current = true
+
     const storedSnapshot = readStoredPosDraftSnapshot()
     if (storedSnapshot) {
       if (storedSnapshot.draftSaleId) {
@@ -938,12 +960,12 @@ export default function Sales() {
           setSelectedCustomer(null)
           return
         }
-        setError(draftErr?.response?.data?.error || 'Saved draft could not be restored.')
+        setError(salesErrorMessage(draftErr, 'Saved draft could not be restored.'))
       }
     })()
 
     return () => { active = false }
-  }, [])
+  }, [isPosWorkflowTab])
 
   useEffect(() => {
     const normalizedDraftSaleId = Number(draftSaleId)
@@ -1032,6 +1054,8 @@ export default function Sales() {
   }, [])
 
   useEffect(() => {
+    if (!isPosWorkflowTab) return undefined
+
     let active = true
     ;(async () => {
       try {
@@ -1041,6 +1065,13 @@ export default function Sales() {
           loadPosProducts()
         ])
         if (!active) return
+        const backendUnavailable = [configRes, productsRes].some((result) => (
+          result.status === 'rejected' && isBackendUnavailableError(result.reason)
+        ))
+        if (backendUnavailable) {
+          setError(backendUnavailableMessage())
+          return
+        }
         const issues = []
         if (configRes.status === 'fulfilled') setConfig({ ...DEFAULT_SALES_CONFIG, ...(configRes.value?.data || {}) })
         else issues.push('Sales settings could not be loaded.')
@@ -1048,13 +1079,13 @@ export default function Sales() {
         else issues.push('Products could not be loaded for POS.')
         if (issues.length) setError(issues.join(' '))
       } catch (err) {
-        if (active) setError(err?.response?.data?.error || 'Failed to load sales data')
+        if (active) setError(salesErrorMessage(err, 'Failed to load sales data'))
       } finally {
         if (active) setLoading(false)
       }
     })()
     return () => { active = false }
-  }, [])
+  }, [isPosWorkflowTab])
 
   useEffect(() => {
     if (tab === 'history') fetchSales()
@@ -1368,7 +1399,7 @@ export default function Sales() {
   }
 
   async function refreshProducts() { setProducts(await loadPosProducts()) }
-  async function fetchSales() { try { setLoading(true); setSales((await api.get('/sales')).data || []) } catch (err) { setError(err?.response?.data?.error || 'Failed to load sales') } finally { setLoading(false) } }
+  async function fetchSales() { try { setLoading(true); setSales((await api.get('/sales')).data || []) } catch (err) { setError(salesErrorMessage(err, 'Failed to load sales')) } finally { setLoading(false) } }
 
   function focusScanInput() {
     if (tab !== 'pos') return
@@ -1508,6 +1539,7 @@ export default function Sales() {
   }
 
   function salesErrorMessage(err, fallbackMessage) {
+    if (isBackendUnavailableError(err)) return backendUnavailableMessage()
     const apiMessage = String(err?.response?.data?.error || '').trim()
     if (apiMessage === 'unknown product') return 'Code not registered'
     if (apiMessage === 'invalid code') return 'Invalid scan code'
@@ -1708,11 +1740,11 @@ export default function Sales() {
           }))
           return
         } catch (fallbackErr) {
-          setError(fallbackErr?.response?.data?.error || 'Failed to load transactions')
+          setError(salesErrorMessage(fallbackErr, 'Failed to load transactions'))
           return
         }
       }
-      setError(message)
+      setError(salesErrorMessage(err, message || 'Failed to load transactions'))
     } finally { setLoading(false) }
   }
 
@@ -1724,7 +1756,7 @@ export default function Sales() {
       if (reportTo) q.push(`to=${encodeURIComponent(reportTo)}`)
       setReport((await api.get(q.length ? `/sales/reports/summary?${q.join('&')}` : '/sales/reports/summary')).data || null)
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to load report')
+      setError(salesErrorMessage(err, 'Failed to load report'))
     } finally { setLoading(false) }
   }
 

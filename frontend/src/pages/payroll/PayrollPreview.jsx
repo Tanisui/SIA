@@ -1,16 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import api from '../../api/api.js'
 import { formatCurrency, getErrorMessage, statusBadgeClass } from './payrollUtils.js'
 
 export default function PayrollPreview() {
   const { periodId } = useParams()
+  const location = useLocation()
   const navigate = useNavigate()
   const [run, setRun] = useState(null)
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(null)
-  const [error, setError] = useState(null)
-  const [success, setSuccess] = useState(null)
+  const [error, setError] = useState(location.state?.flashError || null)
+  const [success, setSuccess] = useState(location.state?.flashSuccess || null)
+  const [warning, setWarning] = useState(location.state?.flashWarning || null)
 
   async function loadPreview() {
     try {
@@ -30,6 +32,19 @@ export default function PayrollPreview() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [periodId])
 
+  useEffect(() => {
+    const flashSuccess = location.state?.flashSuccess || null
+    const flashWarning = location.state?.flashWarning || null
+    const flashError = location.state?.flashError || null
+
+    if (!flashSuccess && !flashWarning && !flashError) return
+
+    setSuccess(flashSuccess)
+    setWarning(flashWarning)
+    setError(flashError)
+    navigate(location.pathname, { replace: true, state: null })
+  }, [location.pathname, location.state, navigate])
+
   const totals = useMemo(() => ([
     ['Employees', run?.employee_count || 0],
     ['Gross Pay', formatCurrency(run?.total_gross_pay)],
@@ -43,6 +58,7 @@ export default function PayrollPreview() {
     setActionLoading(action)
     setError(null)
     setSuccess(null)
+    setWarning(null)
     try {
       await api.post(`/api/payroll/runs/${run.id}/${action}`)
       setSuccess(`Payroll run ${action === 'release' ? 'released' : action === 'finalize' ? 'finalized' : 'voided'}.`)
@@ -68,7 +84,8 @@ export default function PayrollPreview() {
       </div>
 
       {error ? <div className="error-msg" style={{ marginBottom: 16 }}>{error}</div> : null}
-      {success ? <div className="form-success" style={{ marginBottom: 16 }}>{success}</div> : null}
+      {warning ? <div className="warning-msg" style={{ marginBottom: 16 }}>{warning}</div> : null}
+      {success ? <div className="success-msg" style={{ marginBottom: 16 }}>{success}</div> : null}
 
       {loading ? <div className="card">Loading preview...</div> : null}
 

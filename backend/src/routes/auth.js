@@ -78,6 +78,23 @@ async function getUserPermissions(userId) {
   }
 }
 
+async function buildAuthSession(user) {
+  const permInfo = await getUserPermissions(user.id)
+  const token = jwt.sign({ id: user.id, username: user.username }, getJwtSecret(), { expiresIn: '8h' })
+
+  return {
+    token,
+    user: {
+      id: user.id,
+      username: user.username,
+      full_name: user.full_name,
+      email: user.email,
+      roles: permInfo.roles,
+      permissions: permInfo.permissions
+    }
+  }
+}
+
 router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body || {}
@@ -142,9 +159,7 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'invalid credentials' })
     }
 
-    const permInfo = await getUserPermissions(user.id)
-    const payload = { id: user.id, username: user.username }
-    const token = jwt.sign(payload, getJwtSecret(), { expiresIn: '8h' })
+    const session = await buildAuthSession(user)
 
     await logAuditEventSafe(db.pool, {
       userId: user.id,
@@ -156,21 +171,11 @@ router.post('/login', async (req, res) => {
         severity: 'low',
         target_label: user.username,
         summary: 'User logged in successfully',
-        metadata: { username: user.username, roles: permInfo.roles }
+        metadata: { username: user.username, roles: session.user.roles }
       }
     })
 
-    res.json({
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        full_name: user.full_name,
-        email: user.email,
-        roles: permInfo.roles,
-        permissions: permInfo.permissions
-      }
-    })
+    res.json(session)
   } catch (err) {
     console.error('Login error:', err)
     res.status(500).json({ error: 'login failed' })
@@ -243,7 +248,7 @@ router.post('/logout', async (req, res) => {
   }
 })
 
-router.post('/change-password', async (req, res) => {
+async function handleAccountSecurityUpdate(req, res) {
   try {
     const auth = req.headers.authorization || ''
     const parts = auth.split(' ')
@@ -257,40 +262,130 @@ router.post('/change-password', async (req, res) => {
       return res.status(401).json({ error: 'Session expired. Please log in again.' })
     }
 
-    const { oldPassword, newPassword } = req.body || {}
-    if (!oldPassword || !newPassword) {
-      return res.status(400).json({ error: 'Both old and new passwords are required' })
-    }
+    const body = req.body || {}
+    const currentPassword = typeof body.currentPassword === 'string'
+      ? body.currentPassword
+      : (typeof body.oldPassword === 'string' ? body.oldPassword : '')
+    const nextPassword = typeof body.newPassword === 'string' ? body.newPassword : ''
+    const wantsPasswordChange = Boolean(nextPassword)
+    const wantsUsernameChange = Object.prototype.hasOwnProperty.call(body, 'username')
+    const nextUsername = wantsUsernameChange ? String(body.username || '').trim().toLowerCase() : null
 
     const userId = payload.id
-    const [rows] = await db.pool.query('SELECT password_hash FROM users WHERE id = ?', [userId])
+    const [rows] = await db.pool.query(
+      'SELECT id, username, email, full_name, password_hash FROM users WHERE id = ? LIMIT 1',
+      [userId]
+    )
     if (!rows.length) return res.status(404).json({ error: 'User not found' })
 
-    const isValid = await verifyPassword(rows[0].password_hash, oldPassword)
+    const user = rows[0]
+    const usernameChanged = Boolean(wantsUsernameChange && nextUsername && nextUsername !== String(user.username || '').trim().toLowerCase())
+
+    if (!usernameChanged && !wantsPasswordChange) {
+      return res.status(400).json({ error: 'No account changes were submitted' })
+    }
+
+    if (wantsUsernameChange && !nextUsername) {
+      return res.status(400).json({ error: 'Username is required' })
+    }
+
+    if (!currentPassword) {
+      return res.status(400).json({ error: 'Current password is required' })
+    }
+
+    const isValid = await verifyPassword(user.password_hash, currentPassword)
     if (!isValid) return res.status(401).json({ error: 'Incorrect current password' })
 
-    const hashedNew = await bcrypt.hash(newPassword, 10)
-    await db.pool.query('UPDATE users SET password_hash = ? WHERE id = ?', [hashedNew, userId])
+    if (usernameChanged) {
+      const [existingRows] = await db.pool.query(
+        'SELECT id FROM users WHERE username = ? AND id <> ? LIMIT 1',
+        [nextUsername, userId]
+      )
+      if (existingRows.length) {
+        return res.status(400).json({ error: 'Username already exists' })
+      }
+    }
+
+    const updates = []
+    const params = []
+
+    if (usernameChanged) {
+      updates.push('username = ?')
+      params.push(nextUsername)
+    }
+
+    if (wantsPasswordChange) {
+      const hashedNew = await bcrypt.hash(nextPassword, 10)
+      updates.push('password_hash = ?')
+      params.push(hashedNew)
+    }
+
+    if (updates.length) {
+      params.push(userId)
+      await db.pool.query(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params)
+    }
+
+    const [updatedRows] = await db.pool.query(
+      'SELECT id, username, email, full_name FROM users WHERE id = ? LIMIT 1',
+      [userId]
+    )
+    const updatedUser = updatedRows[0] || {
+      id: userId,
+      username: usernameChanged ? nextUsername : user.username,
+      email: user.email,
+      full_name: user.full_name
+    }
+    const session = await buildAuthSession(updatedUser)
+
+    const action = usernameChanged && wantsPasswordChange
+      ? 'AUTH_ACCOUNT_UPDATED'
+      : usernameChanged
+        ? 'AUTH_USERNAME_CHANGED'
+        : 'AUTH_PASSWORD_CHANGED'
+    const summary = usernameChanged && wantsPasswordChange
+      ? 'User changed their username and password'
+      : usernameChanged
+        ? 'User changed their username'
+        : 'User changed their password'
 
     await logAuditEventSafe(db.pool, {
       userId,
-      action: 'AUTH_PASSWORD_CHANGED',
+      action,
       resourceType: 'User',
       resourceId: userId,
       details: {
         module: 'access',
         severity: 'high',
-        target_label: payload.username,
-        summary: 'User changed their password'
+        target_label: updatedUser.username,
+        summary,
+        metadata: {
+          previous_username: user.username,
+          next_username: updatedUser.username,
+          username_changed: usernameChanged,
+          password_changed: wantsPasswordChange
+        }
       }
     })
 
-    res.json({ message: 'Password updated successfully' })
+    res.json({
+      message: usernameChanged && wantsPasswordChange
+        ? 'Username and password updated successfully'
+        : usernameChanged
+          ? 'Username updated successfully'
+          : 'Password updated successfully',
+      ...session
+    })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ error: 'Failed to change password' })
+    if (err?.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'Username already exists' })
+    }
+    res.status(500).json({ error: 'Failed to update account security' })
   }
-})
+}
+
+router.post('/account-security', handleAccountSecurityUpdate)
+router.post('/change-password', handleAccountSecurityUpdate)
 
 router.post('/forgot-password', async (req, res) => {
   try {

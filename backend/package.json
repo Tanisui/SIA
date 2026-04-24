@@ -4,8 +4,9 @@
   "description": "Node.JS",
   "main": "server.js",
   "scripts": {
-    "dev": "node server.js",
-    "migrate": "node migrate_inventory.js && node src/migrations/migrate_scanner.js",
+    "dev": "node --watch server.js",
+    "migrate": "node migrate_inventory.js && node src/migrations/runSqlMigrations.js && node src/migrations/migrate_scanner.js",
+    "migrate:sql": "node src/migrations/runSqlMigrations.js",
     "migrate:scanner": "node src/migrations/migrate_scanner.js",
     "start": "node server.js",
     "seed": "node src/migrations/seed.js",

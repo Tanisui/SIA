@@ -19,6 +19,9 @@ function computePagibig({ taxableIncome, monthlyCompensation, payPeriodsPerMonth
 
   const pagibig = settings.pagibig || {}
   const baseInput = Math.max(num(monthlyCompensation, taxableIncome), 0)
+  if (baseInput <= 0) {
+    return { employee_pagibig: 0, employer_pagibig: 0 }
+  }
   const base = Math.min(
     baseInput,
     num(pagibig.monthly_compensation_cap, Number.MAX_SAFE_INTEGER)
