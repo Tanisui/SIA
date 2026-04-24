@@ -62,6 +62,7 @@ function getMonthlyBasicEquivalent(profile) {
 }
 
 function getPayPeriodsPerMonth(frequency) {
+  if (frequency === 'daily') return 26
   if (frequency === 'weekly') return 52 / 12
   if (frequency === 'monthly') return 1
   return 2
@@ -91,7 +92,7 @@ function getBasicPay(profile, input, period) {
     if (period?.frequency === 'monthly') return roundMoney(payRate)
     return roundMoney(payRate / 2)
   }
-  if (profile.pay_basis === 'daily') return roundMoney(num(input.days_worked) * payRate)
+  if (profile.pay_basis === 'daily') return roundMoney((num(input.days_worked) + num(input.paid_leave_days)) * payRate)
   return roundMoney(num(input.hours_worked) * payRate)
 }
 

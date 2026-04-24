@@ -11,6 +11,7 @@ const {
 const { computePayrollRun,
   finalizeRun,
   getActivePayrollSettings,
+  getBusinessSummary,
   getEmployeeHistory,
   getPayrollPreview,
   getPayrollRegister,
@@ -691,6 +692,50 @@ async function getEmployeeHistoryReport(req, res) {
   }
 }
 
+async function getMyPayslips(req, res) {
+  try {
+    const [rows] = await db.pool.query(
+      `SELECT
+         items.id,
+         items.payroll_run_id,
+         items.net_pay,
+         items.gross_pay,
+         items.total_deductions,
+         items.status AS item_status,
+         runs.run_number,
+         runs.status AS run_status,
+         periods.id AS period_id,
+         periods.code AS period_code,
+         periods.start_date,
+         periods.end_date,
+         periods.payout_date,
+         periods.frequency AS period_frequency
+       FROM payroll_run_items items
+       JOIN payroll_runs runs ON runs.id = items.payroll_run_id
+       JOIN payroll_periods periods ON periods.id = runs.payroll_period_id
+       WHERE items.user_id = ? AND runs.status IN ('finalized', 'released')
+       ORDER BY periods.start_date DESC`,
+      [req.auth.id]
+    )
+    res.json(rows)
+  } catch (err) {
+    handleControllerError(res, err, 'failed to load payslips')
+  }
+}
+
+async function getBusinessSummaryReport(req, res) {
+  try {
+    const q = req.query || {}
+    const query = {
+      from: q.from || null,
+      to: q.to || null
+    }
+    res.json(await getBusinessSummary(query))
+  } catch (err) {
+    handleControllerError(res, err, 'failed to generate business payroll summary')
+  }
+}
+
 async function getSettings(req, res) {
   try {
     const active = await getActivePayrollSettings(db.pool)
@@ -798,7 +843,9 @@ module.exports = {
   createPeriod,
   createProfile,
   finalize,
+  getBusinessSummaryReport,
   getEmployeeHistoryReport,
+  getMyPayslips,
   getPayslip,
   getPeriod,
   getPreview,

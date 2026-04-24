@@ -53,12 +53,46 @@ router.get('/stats', verifyToken, async (req, res) => {
       )
       results.employees_count = empCount[0].count || 0
 
-      // Pending payroll count
-      const [pendingPayroll] = await db.pool.query(
-        `SELECT COUNT(*) AS count, COALESCE(SUM(net_pay), 0) AS total FROM payrolls WHERE status = 'PENDING'`
-      )
-      results.pending_payroll_count = pendingPayroll[0].count || 0
-      results.pending_payroll_total = parseFloat(pendingPayroll[0].total) || 0
+      // Payroll this month (from finalized/released runs)
+      results.payroll_month_total = 0
+      results.payroll_month_employees = 0
+      results.payroll_period_count = 0
+      try {
+        const [payrollMonth] = await db.pool.query(
+          `SELECT
+             COALESCE(SUM(items.net_pay), 0) AS net_total,
+             COALESCE(SUM(items.gross_pay), 0) AS gross_total,
+             COUNT(DISTINCT items.user_id) AS employee_count,
+             COUNT(DISTINCT periods.id) AS period_count
+           FROM payroll_run_items items
+           JOIN payroll_runs runs ON runs.id = items.payroll_run_id
+           JOIN payroll_periods periods ON periods.id = runs.payroll_period_id
+           WHERE runs.status IN ('finalized', 'released')
+             AND periods.start_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+             AND periods.start_date < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)`
+        )
+        results.payroll_month_total = parseFloat(payrollMonth[0]?.net_total) || 0
+        results.payroll_month_gross = parseFloat(payrollMonth[0]?.gross_total) || 0
+        results.payroll_month_employees = Number(payrollMonth[0]?.employee_count) || 0
+        results.payroll_period_count = Number(payrollMonth[0]?.period_count) || 0
+      } catch (err) {
+        if (err?.code !== 'ER_NO_SUCH_TABLE') {
+          console.error('dashboard payroll month query error:', err)
+        }
+      }
+
+      // Draft/computed periods (pending payroll action)
+      results.pending_payroll_count = 0
+      try {
+        const [pendingPeriods] = await db.pool.query(
+          `SELECT COUNT(*) AS count FROM payroll_periods WHERE status IN ('draft', 'computed')`
+        )
+        results.pending_payroll_count = pendingPeriods[0].count || 0
+      } catch (err) {
+        if (err?.code !== 'ER_NO_SUCH_TABLE') {
+          console.error('dashboard pending payroll query error:', err)
+        }
+      }
 
       // Lean bale snapshot (current calendar month)
       results.bales_month_count = 0

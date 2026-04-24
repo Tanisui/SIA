@@ -8,6 +8,9 @@ export default function Header({ onMenuToggle }) {
   const [open, setOpen] = useState(false)
   const popRef = useRef()
 
+  const roles = Array.isArray(user?.roles) ? user.roles : []
+  const roleLabel = roles.length > 0 ? roles[0] : null
+
   useEffect(() => {
     function onDocumentClick(event) {
       if (!popRef.current) return
@@ -24,11 +27,14 @@ export default function Header({ onMenuToggle }) {
         className: 'topbar-toggle',
         'aria-label': 'Toggle sidebar',
         onClick: onMenuToggle
-      }, 'Menu')
+      }, '☰')
     ),
     React.createElement('div', { className: 'header-right topbar-right' },
-      user && React.createElement('span', { className: 'header-user topbar-user' },
-        user.full_name || user.username
+      user && React.createElement('div', { className: 'header-user-block' },
+        React.createElement('span', { className: 'header-user topbar-user' },
+          user.full_name || user.username
+        ),
+        roleLabel && React.createElement('span', { className: 'header-user-role' }, roleLabel)
       ),
       user && React.createElement('div', { className: 'notif-wrap' },
         React.createElement('button', {
@@ -40,7 +46,7 @@ export default function Header({ onMenuToggle }) {
           },
           title: 'Notifications',
           'aria-label': 'Notifications'
-        }, 'Alerts'),
+        }, '🔔'),
         open && React.createElement('div', { ref: popRef, className: 'notif-popover' },
           React.createElement('div', { className: 'notif-header' }, 'Notifications'),
           React.createElement('div', { className: 'notif-item text-muted' }, 'No new notifications'),
@@ -51,7 +57,7 @@ export default function Header({ onMenuToggle }) {
         type: 'button',
         className: 'btn-signout',
         onClick: () => dispatch(logoutUser())
-      }, 'Sign out')
+      }, 'Sign Out')
     )
   )
 }

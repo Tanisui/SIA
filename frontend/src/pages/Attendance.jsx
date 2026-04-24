@@ -90,8 +90,10 @@ export default function Attendance() {
     if (permissions.includes('admin.*')) return true
     return perms.some((p) => permissions.includes(p))
   }
-  const canView   = can(['attendance.view', 'payroll.view', 'payroll.period.view', 'attendance.manage', 'payroll.input.update'])
-  const canManage = can(['attendance.manage', 'payroll.input.update'])
+  const canViewAll = can(['attendance.view', 'payroll.view', 'payroll.period.view', 'attendance.record'])
+  const canViewOwn = can(['attendance.view_own'])
+  const canView    = canViewAll || canViewOwn
+  const canManage  = can(['attendance.record', 'attendance.view'])
 
   const [employees,   setEmployees]   = useState([])
   const [records,     setRecords]     = useState([])
@@ -124,11 +126,17 @@ export default function Attendance() {
     try {
       setLoading(true)
       const params = new URLSearchParams({ limit: 200, page: f.page || 1 })
-      if (f.employee_id) params.set('employee_id', f.employee_id)
-      if (f.from)        params.set('from', f.from)
-      if (f.to)          params.set('to', f.to)
-      if (f.status)      params.set('status', f.status)
-      const res = await api.get(`/attendance?${params}`)
+      if (f.from)   params.set('from', f.from)
+      if (f.to)     params.set('to', f.to)
+      if (f.status) params.set('status', f.status)
+
+      let res
+      if (canViewAll) {
+        if (f.employee_id) params.set('employee_id', f.employee_id)
+        res = await api.get(`/attendance?${params}`)
+      } else {
+        res = await api.get(`/attendance/me?${params}`)
+      }
       setRecords(Array.isArray(res.data?.data) ? res.data.data : (Array.isArray(res.data) ? res.data : []))
       setTotal(res.data?.total || 0)
     } catch (err) {
@@ -136,7 +144,7 @@ export default function Attendance() {
     } finally {
       setLoading(false)
     }
-  }, [canView, filters])
+  }, [canView, canViewAll, filters])
 
   useEffect(() => { loadEmployees() }, [loadEmployees])
   useEffect(() => { loadRecords() }, [loadRecords])
@@ -239,7 +247,7 @@ export default function Attendance() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Attendance</h1>
-          <p className="page-subtitle">Track employee time-in / time-out and sync to payroll.</p>
+          <p className="page-subtitle">{canViewAll ? 'Track employee time-in / time-out and sync to payroll.' : 'View your personal attendance records and DTR.'}</p>
         </div>
         {canManage && (
           <button
@@ -284,14 +292,16 @@ export default function Attendance() {
           </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">Employee</label>
-            <select className="form-input" value={filters.employee_id}
-              onChange={(e) => setFilters((p) => ({ ...p, employee_id: e.target.value }))}>
-              <option value="">All Employees</option>
-              {employees.map((emp) => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
-            </select>
-          </div>
+          {canViewAll && (
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Employee</label>
+              <select className="form-input" value={filters.employee_id}
+                onChange={(e) => setFilters((p) => ({ ...p, employee_id: e.target.value }))}>
+                <option value="">All Employees</option>
+                {employees.map((emp) => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
+              </select>
+            </div>
+          )}
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label className="form-label">From</label>
             <input className="form-input" type="date" value={filters.from}

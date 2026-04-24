@@ -57,7 +57,7 @@ function normalizeBootstrapEmploymentType(value) {
 
 function normalizePayrollFrequency(value, period = null) {
   const normalized = String(value || '').trim().toLowerCase()
-  if (['weekly', 'semi_monthly', 'monthly'].includes(normalized)) return normalized
+  if (['daily', 'weekly', 'semi_monthly', 'monthly'].includes(normalized)) return normalized
   if (normalized === 'semi-monthly' || normalized === 'semimonthly') return 'semi_monthly'
   return period?.frequency || 'semi_monthly'
 }
@@ -1336,11 +1336,168 @@ async function getEmployeeHistory(query = {}) {
   }
 }
 
+async function getBusinessSummary(query = {}) {
+  const capabilities = await getPayrollReportCapabilities()
+  const emptyTotals = {
+    gross_pay: 0,
+    total_deductions: 0,
+    net_pay: 0,
+    withholding_tax: 0,
+    employee_sss: 0,
+    employer_sss: 0,
+    ec_contribution: 0,
+    employee_philhealth: 0,
+    employer_philhealth: 0,
+    employee_pagibig: 0,
+    employer_pagibig: 0,
+    employee_count: 0,
+    period_count: 0,
+    run_count: 0
+  }
+
+  if (!capabilities.ready) {
+    return {
+      ...reportEmptyResult(query),
+      totals: emptyTotals,
+      by_month: [],
+      by_period: [],
+      notice: reportSetupNotice(capabilities.missingTables)
+    }
+  }
+
+  const where = ["runs.status IN ('finalized', 'released')"]
+  selectItemStatusFilter(capabilities.columns.payroll_run_items, where)
+  const params = []
+
+  if (query.from) {
+    where.push('periods.start_date >= ?')
+    params.push(query.from)
+  }
+  if (query.to) {
+    where.push('periods.end_date <= ?')
+    params.push(query.to)
+  }
+
+  const hasGross = capabilities.columns.payroll_run_items.gross_pay
+  const hasSss = capabilities.columns.payroll_run_items.employee_sss
+  const hasPhilhealth = capabilities.columns.payroll_run_items.employee_philhealth
+  const hasPagibig = capabilities.columns.payroll_run_items.employee_pagibig
+  const hasTax = capabilities.columns.payroll_run_items.withholding_tax
+  const hasDed = capabilities.columns.payroll_run_items.total_deductions
+  const hasNet = capabilities.columns.payroll_run_items.net_pay
+  const hasErSss = capabilities.columns.payroll_run_items.employer_sss
+  const hasErPh = capabilities.columns.payroll_run_items.employer_philhealth
+  const hasErPi = capabilities.columns.payroll_run_items.employer_pagibig
+  const hasEc = capabilities.columns.payroll_run_items.ec_contribution
+
+  const colSel = (col, alias) =>
+    `COALESCE(SUM(${col ? `items.${alias}` : '0'}), 0) AS ${alias}`
+
+  const aggregateCols = [
+    colSel(hasGross, 'gross_pay'),
+    colSel(hasDed, 'total_deductions'),
+    colSel(hasNet, 'net_pay'),
+    colSel(hasTax, 'withholding_tax'),
+    colSel(hasSss, 'employee_sss'),
+    colSel(hasErSss, 'employer_sss'),
+    colSel(hasEc, 'ec_contribution'),
+    colSel(hasPhilhealth, 'employee_philhealth'),
+    colSel(hasErPh, 'employer_philhealth'),
+    colSel(hasPagibig, 'employee_pagibig'),
+    colSel(hasErPi, 'employer_pagibig')
+  ].join(',\n       ')
+
+  const whereClause = `WHERE ${where.join(' AND ')}`
+
+  const [[overall]] = await db.pool.query(
+    `SELECT
+       ${aggregateCols},
+       COUNT(DISTINCT items.user_id) AS employee_count,
+       COUNT(DISTINCT periods.id) AS period_count,
+       COUNT(DISTINCT runs.id) AS run_count
+     FROM payroll_run_items items
+     JOIN payroll_runs runs ON runs.id = items.payroll_run_id
+     JOIN payroll_periods periods ON periods.id = runs.payroll_period_id
+     ${whereClause}`,
+    params
+  )
+
+  const [byMonth] = await db.pool.query(
+    `SELECT
+       DATE_FORMAT(periods.start_date, '%Y-%m') AS month_key,
+       DATE_FORMAT(periods.start_date, '%b %Y') AS month_label,
+       ${aggregateCols},
+       COUNT(DISTINCT items.user_id) AS employee_count,
+       COUNT(DISTINCT periods.id) AS period_count
+     FROM payroll_run_items items
+     JOIN payroll_runs runs ON runs.id = items.payroll_run_id
+     JOIN payroll_periods periods ON periods.id = runs.payroll_period_id
+     ${whereClause}
+     GROUP BY DATE_FORMAT(periods.start_date, '%Y-%m'), DATE_FORMAT(periods.start_date, '%b %Y')
+     ORDER BY month_key ASC`,
+    params
+  )
+
+  const [byPeriod] = await db.pool.query(
+    `SELECT
+       periods.id AS payroll_period_id,
+       periods.code AS period_code,
+       periods.start_date,
+       periods.end_date,
+       periods.frequency AS period_frequency,
+       ${payoutDateSelect(capabilities.columns.payroll_periods)},
+       runs.id AS payroll_run_id,
+       runs.run_number,
+       runs.status AS run_status,
+       ${aggregateCols},
+       COUNT(DISTINCT items.user_id) AS employee_count
+     FROM payroll_run_items items
+     JOIN payroll_runs runs ON runs.id = items.payroll_run_id
+     JOIN payroll_periods periods ON periods.id = runs.payroll_period_id
+     ${whereClause}
+     GROUP BY periods.id, periods.code, periods.start_date, periods.end_date, periods.frequency${payoutDateGroupBy(capabilities.columns.payroll_periods)}, runs.id, runs.run_number, runs.status
+     ORDER BY ${payoutDateOrderBy(capabilities.columns.payroll_periods, 'runs.id DESC')}`,
+    params
+  )
+
+  const numFields = [
+    'gross_pay', 'total_deductions', 'net_pay', 'withholding_tax',
+    'employee_sss', 'employer_sss', 'ec_contribution',
+    'employee_philhealth', 'employer_philhealth',
+    'employee_pagibig', 'employer_pagibig'
+  ]
+  const totals = { ...emptyTotals }
+  for (const f of numFields) totals[f] = roundMoney(Number(overall?.[f] || 0))
+  totals.employee_count = Number(overall?.employee_count || 0)
+  totals.period_count = Number(overall?.period_count || 0)
+  totals.run_count = Number(overall?.run_count || 0)
+
+  return {
+    ...reportEmptyResult(query),
+    totals,
+    by_month: byMonth.map((r) => {
+      const m = { ...r }
+      for (const f of numFields) m[f] = roundMoney(Number(m[f] || 0))
+      m.employee_count = Number(m.employee_count || 0)
+      m.period_count = Number(m.period_count || 0)
+      return m
+    }),
+    by_period: byPeriod.map((r) => {
+      const p = { ...r }
+      for (const f of numFields) p[f] = roundMoney(Number(p[f] || 0))
+      p.employee_count = Number(p.employee_count || 0)
+      return p
+    }),
+    notice: totals.run_count ? null : reportNoDataNotice()
+  }
+}
+
 module.exports = {
   computePayrollRun,
   ensureProfilesForPeriod,
   finalizeRun,
   getActivePayrollSettings,
+  getBusinessSummary,
   getEmployeeHistory,
   getPayrollRegister,
   getPayrollPreview,

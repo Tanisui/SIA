@@ -881,12 +881,7 @@ router.put('/:id', express.json(), verifyToken, authorize('products.edit'), asyn
     if (price !== undefined) { updates.push('price = ?'); params.push(price) }
     if (cost !== undefined) { updates.push('cost = ?'); params.push(cost) }
     if (stock_quantity !== undefined) {
-      const parsedStockQuantity = Number(stock_quantity)
-      if (!Number.isFinite(parsedStockQuantity) || parsedStockQuantity < 0) {
-        throw createHttpError(400, 'stock_quantity must be zero or greater')
-      }
-      updates.push('stock_quantity = ?')
-      params.push(Math.floor(parsedStockQuantity))
+      throw createHttpError(400, 'Stock quantity cannot be edited here. Use Inventory > Stock In for manual products.')
     }
     if (low_stock_threshold !== undefined) { updates.push('low_stock_threshold = ?'); params.push(low_stock_threshold) }
     if (size !== undefined) { updates.push('size = ?'); params.push(size) }

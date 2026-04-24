@@ -154,6 +154,48 @@ router.get('/summary', verifyToken, authorize(ATTENDANCE_VIEW_PERMS), async (req
   }
 })
 
+// ── GET /attendance/me  (employee views their own attendance records) ─────
+router.get('/me', verifyToken, authorize(['attendance.view_own', 'attendance.view', 'admin.*']), async (req, res) => {
+  try {
+    const userId = req.auth?.id
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' })
+
+    const [[employee]] = await db.pool.query(
+      'SELECT id FROM employees WHERE user_id = ? LIMIT 1',
+      [userId]
+    )
+    if (!employee) return res.status(404).json({ error: 'No employee record linked to your account' })
+
+    const { from, to, status, page = 1, limit = 100 } = req.query
+    const params = [employee.id]
+    const conditions = ['a.employee_id = ?']
+
+    if (from)   { conditions.push('a.date >= ?'); params.push(from) }
+    if (to)     { conditions.push('a.date <= ?'); params.push(to) }
+    if (status) { conditions.push('a.status = ?'); params.push(status.toUpperCase()) }
+
+    const where = `WHERE ${conditions.join(' AND ')}`
+    const offset = (Math.max(Number(page), 1) - 1) * Number(limit)
+
+    const [rows] = await db.pool.query(
+      `SELECT a.*, e.name AS employee_name, e.pay_basis, e.position_title
+       FROM attendance a
+       LEFT JOIN employees e ON e.id = a.employee_id
+       ${where}
+       ORDER BY a.date DESC
+       LIMIT ? OFFSET ?`,
+      [...params, Number(limit), offset]
+    )
+    const [[{ total }]] = await db.pool.query(
+      `SELECT COUNT(*) AS total FROM attendance a ${where}`,
+      params
+    )
+    res.json({ data: rows.map(serializeAttendanceRow), total, page: Number(page), limit: Number(limit) })
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message })
+  }
+})
+
 // ── GET /attendance/:id ───────────────────────────────────────────────────
 router.get('/:id', verifyToken, authorize(ATTENDANCE_VIEW_PERMS), async (req, res) => {
   try {

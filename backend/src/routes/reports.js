@@ -240,6 +240,90 @@ router.get('/automated', verifyToken, authorize(['reports.view', 'finance.report
   }
 })
 
+router.get('/direct-purchases', verifyToken, authorize(['reports.view', 'finance.reports.view']), async (req, res) => {
+  try {
+    const from = req.query?.from || null
+    const to = req.query?.to || null
+    const statusFilter = req.query?.status || null
+
+    const where = ['1=1']
+    const params = []
+
+    if (from) {
+      where.push('po.created_at >= ?')
+      params.push(`${from} 00:00:00`)
+    }
+    if (to) {
+      where.push('po.created_at <= ?')
+      params.push(`${to} 23:59:59`)
+    }
+    if (statusFilter && ['OPEN', 'RECEIVED', 'CANCELLED'].includes(statusFilter.toUpperCase())) {
+      where.push('po.status = ?')
+      params.push(statusFilter.toUpperCase())
+    }
+
+    const [orders] = await db.pool.query(
+      `SELECT
+         po.id,
+         po.po_number,
+         po.status,
+         po.expected_date,
+         po.total,
+         po.created_at,
+         s.name AS supplier_name,
+         COUNT(pi.id) AS item_count,
+         COALESCE(SUM(pi.quantity * pi.unit_cost), 0) AS items_total
+       FROM purchase_orders po
+       LEFT JOIN suppliers s ON s.id = po.supplier_id
+       LEFT JOIN purchase_items pi ON pi.purchase_order_id = po.id
+       WHERE ${where.join(' AND ')}
+       GROUP BY po.id, po.po_number, po.status, po.expected_date, po.total, po.created_at, s.name
+       ORDER BY po.created_at DESC`,
+      params
+    )
+
+    const [items] = await db.pool.query(
+      `SELECT
+         pi.purchase_order_id,
+         pi.quantity,
+         pi.unit_cost,
+         pi.quantity * pi.unit_cost AS line_total,
+         p.name AS product_name,
+         p.sku AS product_sku,
+         po.po_number,
+         po.status AS po_status
+       FROM purchase_items pi
+       JOIN purchase_orders po ON po.id = pi.purchase_order_id
+       LEFT JOIN products p ON p.id = pi.product_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY po.created_at DESC, pi.id ASC`,
+      params
+    )
+
+    const totalAmount = orders.reduce((sum, o) => sum + (Number(o.total) || 0), 0)
+    const receivedAmount = orders
+      .filter((o) => o.status === 'RECEIVED')
+      .reduce((sum, o) => sum + (Number(o.total) || 0), 0)
+
+    res.json({
+      filters: { from, to, status: statusFilter },
+      summary: {
+        total_orders: orders.length,
+        received_orders: orders.filter((o) => o.status === 'RECEIVED').length,
+        open_orders: orders.filter((o) => o.status === 'OPEN').length,
+        cancelled_orders: orders.filter((o) => o.status === 'CANCELLED').length,
+        total_amount: Number(totalAmount.toFixed(2)),
+        received_amount: Number(receivedAmount.toFixed(2))
+      },
+      orders,
+      items
+    })
+  } catch (err) {
+    console.error('direct purchases report error:', err)
+    res.status(500).json({ error: 'failed to generate direct purchases report' })
+  }
+})
+
 router.get('/automated/export', verifyToken, authorize(['reports.export', 'finance.reports.view', 'reports.view']), async (req, res) => {
   try {
     const format = String(req.query?.format || 'csv').trim().toLowerCase()

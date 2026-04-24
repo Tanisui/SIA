@@ -1,5 +1,5 @@
 const PAY_BASIS_VALUES = ['monthly', 'daily', 'hourly']
-const PAYROLL_FREQUENCIES = ['weekly', 'semi_monthly', 'monthly']
+const PAYROLL_FREQUENCIES = ['daily', 'weekly', 'semi_monthly', 'monthly']
 const PAYROLL_METHODS = ['cash', 'bank_transfer', 'ewallet']
 const PROFILE_STATUSES = ['active', 'inactive']
 const PERIOD_STATUSES = ['draft', 'computed', 'finalized', 'released', 'void']
@@ -128,7 +128,7 @@ function validatePeriodPayload(payload = {}) {
     start_date: startDate,
     end_date: endDate,
     payout_date: asDateOnly(body.payout_date, 'payout_date', { required: true }),
-    frequency: asEnum(body.frequency, 'frequency', PAYROLL_FREQUENCIES, { defaultValue: 'semi_monthly' }),
+    frequency: asEnum(body.frequency, 'frequency', ['weekly', 'semi_monthly', 'monthly'], { defaultValue: 'semi_monthly' }),
     notes: asText(body.notes, 'notes', { defaultValue: null })
   }
 }

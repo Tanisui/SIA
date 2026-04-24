@@ -21,6 +21,11 @@ import {
 const PAGE_SIZE = 12
 const REPORT_TABS = [
   {
+    key: 'directPurchases',
+    label: 'Direct Purchases',
+    description: 'Purchase orders for directly-sourced products (non-bale). Shows order status, supplier, items, and totals.'
+  },
+  {
     key: 'balePurchases',
     label: 'Bale Purchases',
     description: 'All bale purchases for the selected period, including supplier, category, and total cost.'
@@ -66,6 +71,27 @@ function defaultDateRange() {
     from: toDateOnly(from),
     to: toDateOnly(today)
   }
+}
+
+function thisMonthRange() {
+  const now = new Date()
+  return {
+    from: toDateOnly(new Date(now.getFullYear(), now.getMonth(), 1)),
+    to: toDateOnly(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+  }
+}
+
+function lastMonthRange() {
+  const now = new Date()
+  return {
+    from: toDateOnly(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
+    to: toDateOnly(new Date(now.getFullYear(), now.getMonth(), 0))
+  }
+}
+
+function thisYearRange() {
+  const y = new Date().getFullYear()
+  return { from: `${y}-01-01`, to: `${y}-12-31` }
 }
 
 function withQuery(from, to) {
@@ -140,6 +166,7 @@ export default function Reports() {
   const [from, setFrom] = useState(initialRange.from)
   const [to, setTo] = useState(initialRange.to)
   const [report, setReport] = useState(null)
+  const [directReport, setDirectReport] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [pages, setPages] = useState({
@@ -150,19 +177,39 @@ export default function Reports() {
     supplierPerformance: 1
   })
 
+  async function loadDirectPurchases(fromValue = from, toValue = to) {
+    try {
+      const query = withQuery(fromValue, toValue)
+      const res = await api.get(`/reports/direct-purchases${query}`)
+      setDirectReport(res.data || null)
+    } catch (err) {
+      console.error('direct purchases report error', err)
+      setDirectReport(null)
+    }
+  }
+
   async function loadReport({ keepData = true, fromValue = from, toValue = to } = {}) {
     try {
       setLoading(true)
       setError(null)
       if (!keepData) setReport(null)
       const query = withQuery(fromValue, toValue)
-      const res = await api.get(`/reports/automated${query}`)
-      setReport(res.data || null)
+      const [baleRes] = await Promise.all([
+        api.get(`/reports/automated${query}`),
+        loadDirectPurchases(fromValue, toValue)
+      ])
+      setReport(baleRes.data || null)
     } catch (err) {
       setError(getFriendlyReportError(err))
     } finally {
       setLoading(false)
     }
+  }
+
+  function applyRange(range) {
+    setFrom(range.from)
+    setTo(range.to)
+    loadReport({ fromValue: range.from, toValue: range.to })
   }
 
   useEffect(() => {
@@ -246,7 +293,84 @@ export default function Reports() {
   const supplierPerformancePage = paginateRows(supplierPerformanceRows, pages.supplierPerformance)
 
   function renderSection() {
-    if (!report) return null
+    if (!report && activeTab !== 'directPurchases') return null
+
+    if (activeTab === 'directPurchases') {
+      const dr = directReport || {}
+      const orders = dr.orders || []
+      const items = dr.items || []
+      const summary = dr.summary || {}
+      return (
+        <>
+          <div className="reports-summary-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
+            {[
+              { label: 'Total Orders', value: summary.total_orders ?? 0, money: false },
+              { label: 'Received Orders', value: summary.received_orders ?? 0, money: false },
+              { label: 'Open Orders', value: summary.open_orders ?? 0, money: false },
+              { label: 'Total Amount', value: summary.total_amount ?? 0, money: true },
+              { label: 'Received Amount', value: summary.received_amount ?? 0, money: true }
+            ].map(({ label, value, money }) => (
+              <div key={label} className="card reports-summary-card">
+                <div className="card-title">{label}</div>
+                <div className="card-value-sm">{money ? formatCurrency(value) : formatNumber(value)}</div>
+              </div>
+            ))}
+          </div>
+
+          <ReportTable
+            rows={orders}
+            emptyTitle="No purchase orders found for this date range."
+            emptyDescription="Try selecting a wider date range or check if purchase orders have been created."
+            columns={[
+              { key: 'po_number', label: 'PO Number' },
+              { key: 'created_at', label: 'Date', render: (v) => formatDate(v) },
+              { key: 'expected_date', label: 'Expected', render: (v) => formatDate(v) },
+              { key: 'supplier_name', label: 'Supplier', render: (v) => v || 'No supplier' },
+              { key: 'item_count', label: 'Items', align: 'right', render: (v) => formatNumber(v) },
+              { key: 'total', label: 'Total', align: 'right', render: (v) => formatCurrency(v) },
+              {
+                key: 'status',
+                label: 'Status',
+                render: (v) => (
+                  <span className={`badge badge-${v === 'RECEIVED' ? 'success' : v === 'CANCELLED' ? 'danger' : 'neutral'}`}>
+                    {v}
+                  </span>
+                )
+              }
+            ]}
+            footer={{
+              po_number: 'TOTAL',
+              total: formatCurrency(summary.total_amount)
+            }}
+          />
+
+          {items.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--gold-dark)' }}>
+                All Line Items
+              </div>
+              <ReportTable
+                rows={items}
+                emptyTitle="No line items found."
+                columns={[
+                  { key: 'po_number', label: 'PO Number' },
+                  { key: 'product_name', label: 'Product' },
+                  { key: 'product_sku', label: 'SKU' },
+                  { key: 'quantity', label: 'Qty', align: 'right', render: (v) => formatNumber(v) },
+                  { key: 'unit_cost', label: 'Unit Cost', align: 'right', render: (v) => formatCurrency(v) },
+                  { key: 'line_total', label: 'Line Total', align: 'right', render: (v) => formatCurrency(v) },
+                  { key: 'po_status', label: 'PO Status' }
+                ]}
+                footer={{
+                  po_number: 'TOTAL',
+                  line_total: formatCurrency(items.reduce((s, r) => s + Number(r.line_total || 0), 0))
+                }}
+              />
+            </div>
+          )}
+        </>
+      )
+    }
 
     if (activeTab === 'balePurchases') {
       return (
@@ -502,6 +626,12 @@ export default function Reports() {
       </div>
 
       <div className="card reports-filter-card">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => applyRange(thisMonthRange())}>This Month</button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => applyRange(lastMonthRange())}>Last Month</button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => applyRange(thisYearRange())}>This Year</button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => applyRange(defaultDateRange())}>Last 30 Days</button>
+        </div>
         <div className="reports-filter-grid">
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label className="form-label">From Date</label>
@@ -509,7 +639,11 @@ export default function Reports() {
               className="form-input"
               type="date"
               value={from}
-              onChange={(event) => setFrom(event.target.value)}
+              onChange={(event) => {
+                const v = event.target.value
+                setFrom(v)
+                if (v && to) loadReport({ fromValue: v, toValue: to })
+              }}
               max={to || undefined}
             />
           </div>
@@ -519,11 +653,15 @@ export default function Reports() {
               className="form-input"
               type="date"
               value={to}
-              onChange={(event) => setTo(event.target.value)}
+              onChange={(event) => {
+                const v = event.target.value
+                setTo(v)
+                if (from && v) loadReport({ fromValue: from, toValue: v })
+              }}
               min={from || undefined}
             />
           </div>
-          <button className="btn btn-primary reports-refresh-btn" onClick={() => loadReport()} disabled={loading}>
+          <button className="btn btn-primary reports-refresh-btn" onClick={() => loadReport({ fromValue: from, toValue: to })} disabled={loading}>
             {loading ? 'Refreshing...' : 'Refresh'}
           </button>
         </div>
@@ -539,7 +677,12 @@ export default function Reports() {
         />
       ) : null}
 
-      {report ? (
+      {activeTab === 'directPurchases' ? (
+        <div className="card reports-section-card">
+          <SectionHeader title={activeTabMeta.label} description={activeTabMeta.description} />
+          {renderSection()}
+        </div>
+      ) : report ? (
         <>
           <ReportSummaryCards cards={summaryCards} loading={loading} />
 

@@ -117,6 +117,19 @@ router.get(
 )
 
 router.get(
+  '/my-payslips',
+  verifyToken,
+  authorize(['payroll.payslip.view_own', 'payroll.payslip.view']),
+  payroll.getMyPayslips
+)
+
+router.get(
+  '/reports/business-summary',
+  verifyToken,
+  authorize(['payroll.report.view']),
+  payroll.getBusinessSummaryReport
+)
+router.get(
   '/reports/register',
   verifyToken,
   authorize(['payroll.report.view']),

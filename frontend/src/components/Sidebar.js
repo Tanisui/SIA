@@ -29,6 +29,7 @@ const NAV_ITEMS = [
   },
   { to: '/sales', label: 'Sales', icon: 'SL', perm: ['sales.view', 'sales.create'] },
   { to: '/customers', label: 'Customers', icon: 'CU', perm: 'customers.view' },
+  { to: '/attendance', label: 'Attendance', icon: 'AT', perm: null },
   {
     to: '/purchasing',
     label: 'Purchasing',
@@ -46,6 +47,7 @@ const NAV_ITEMS = [
     icon: 'RP',
     perm: ['reports.view', 'finance.reports.view'],
     children: [
+      { to: '/reports', tab: 'directPurchases', label: 'Direct Purchases' },
       { to: '/reports', tab: 'balePurchases', label: 'Bale Purchases' },
       { to: '/reports', tab: 'baleBreakdowns', label: 'Bale Breakdown' },
       { to: '/reports', tab: 'salesByBale', label: 'Sales by Bale' },
@@ -67,9 +69,9 @@ const NAV_ITEMS = [
       'payroll.payslip.view_own'
     ],
     children: [
+      { to: '/payroll/my-payslips', label: 'My Payslips' },
       { to: '/payroll/periods', label: 'Periods' },
       { to: '/payroll/profiles', label: 'Profiles' },
-      { to: '/attendance', label: 'Attendance' },
       { to: '/payroll/reports', label: 'Reports' }
     ]
   },

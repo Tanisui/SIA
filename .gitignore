@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Local caches
+.npm-cache/
+
+# Logs
+*.log
+backend/backend-dev.*.log
+
+# Local SQL dumps (keep migrations and schema SQL under backend/src/** tracked)
+cecilles_nstyle_db*.sql
+* (1).sql
+
+# Editor/agent folders
+.claude/
+.codex_pdf_tools/

@@ -108,21 +108,23 @@ async function syncAttendanceToInputs(periodId, userId, options = {}) {
     ? 'SUM(COALESCE(a.night_differential_minutes, 0))                             AS night_differential_minutes,'
     : '0                                                                           AS night_differential_minutes,'
 
+  const statusKey = 'UPPER(TRIM(a.status))'
+
   // pull attendance summary for all employees in this date range
   const [summaries] = await executor.query(
     `SELECT
        a.employee_id,
        e.name AS employee_name,
-       COUNT(CASE WHEN a.status IN ('PRESENT','LATE','HALF_DAY') THEN 1 END)    AS days_worked,
-       SUM(CASE WHEN a.status = 'ABSENT' THEN 1 ELSE 0 END)                     AS absent_days,
+       COUNT(CASE WHEN ${statusKey} IN ('PRESENT','LATE','HALF_DAY') THEN 1 END)    AS days_worked,
+       SUM(CASE WHEN ${statusKey} = 'ABSENT' THEN 1 ELSE 0 END)                     AS absent_days,
        ROUND(SUM(COALESCE(a.hours_worked, 0)), 2)                                AS hours_worked,
        ROUND(SUM(CASE WHEN a.overtime_minutes > 0 THEN a.overtime_minutes/60.0 ELSE 0 END), 2) AS overtime_hours,
        ${nightDifferentialSelect}
        SUM(COALESCE(a.late_minutes, 0))                                          AS late_minutes,
        SUM(COALESCE(a.undertime_minutes, 0))                                     AS undertime_minutes,
-       COUNT(CASE WHEN a.status = 'HOLIDAY' THEN 1 END)                          AS regular_holiday_days,
-       COUNT(CASE WHEN a.status = 'REST_DAY' THEN 1 END)                         AS rest_day_days,
-       COUNT(CASE WHEN a.status = 'ON_LEAVE' THEN 1 END)                         AS paid_leave_days
+       COUNT(CASE WHEN ${statusKey} = 'HOLIDAY' THEN 1 END)                          AS regular_holiday_days,
+       COUNT(CASE WHEN ${statusKey} = 'REST_DAY' THEN 1 END)                         AS rest_day_days,
+       COUNT(CASE WHEN ${statusKey} = 'ON_LEAVE' THEN 1 END)                         AS paid_leave_days
      FROM attendance a
      LEFT JOIN employees e ON e.id = a.employee_id
      WHERE a.date BETWEEN ? AND ?

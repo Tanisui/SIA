@@ -281,11 +281,12 @@ export default function PayrollProfiles() {
                     value={form.pay_rate} onChange={(e) => set('pay_rate', e.target.value)} required />
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Frequency *</label>
+                  <label className="form-label">Payment Frequency *</label>
                   <select className="form-input" value={form.payroll_frequency}
                     onChange={(e) => set('payroll_frequency', e.target.value)}>
+                    <option value="daily">Daily</option>
                     <option value="weekly">Weekly</option>
-                    <option value="semi_monthly">Semi-Monthly</option>
+                    <option value="semi_monthly">Bi-Monthly (Semi-Monthly)</option>
                     <option value="monthly">Monthly</option>
                   </select>
                 </div>

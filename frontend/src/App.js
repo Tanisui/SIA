@@ -31,6 +31,7 @@ import PayrollInputSheet from './pages/payroll/PayrollInputSheet.jsx'
 import PayrollPreview from './pages/payroll/PayrollPreview.jsx'
 import PayrollPayslip from './pages/payroll/PayrollPayslip.jsx'
 import PayrollReports from './pages/payroll/PayrollReports.jsx'
+import MyPayslips from './pages/payroll/MyPayslips.jsx'
 
 export default function App() {
   return (
@@ -69,7 +70,8 @@ export default function App() {
           React.createElement(Route, { path: 'payroll/periods/:periodId/preview', element: React.createElement(PayrollPreview, null) }),
           React.createElement(Route, { path: 'payroll/runs/:runId/items/:itemId/payslip', element: React.createElement(PayrollPayslip, null) }),
           React.createElement(Route, { path: 'payroll/reports', element: React.createElement(PayrollReports, null) }),
-          React.createElement(Route, { path: 'payroll', element: React.createElement(Navigate, { to: '/payroll/periods', replace: true }) }),
+          React.createElement(Route, { path: 'payroll/my-payslips', element: React.createElement(MyPayslips, null) }),
+          React.createElement(Route, { path: 'payroll', element: React.createElement(Navigate, { to: '/payroll/my-payslips', replace: true }) }),
           React.createElement(Route, { path: 'account-security', element: React.createElement(ChangePassword, null) }),
           React.createElement(Route, { path: 'change-password', element: React.createElement(Navigate, { to: '/account-security', replace: true }) }),
           React.createElement(Route, { path: 'bale-purchase-order', element: React.createElement(BalePurchaseOrder, null) })
