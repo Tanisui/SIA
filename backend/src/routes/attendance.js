@@ -4,8 +4,8 @@ const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 const { logAuditEventSafe } = require('../utils/auditLog')
 
-const ATTENDANCE_VIEW_PERMS   = ['attendance.view', 'payroll.view', 'payroll.period.view', 'admin.*']
-const ATTENDANCE_MANAGE_PERMS = ['attendance.manage', 'payroll.input.update', 'admin.*']
+const ATTENDANCE_VIEW_PERMS   = ['attendance.view', 'attendance.record', 'payroll.view', 'payroll.period.view', 'admin.*']
+const ATTENDANCE_MANAGE_PERMS = ['attendance.manage', 'attendance.record', 'attendance.create', 'payroll.input.update', 'admin.*']
 
 const VALID_STATUSES = ['PRESENT', 'LATE', 'HALF_DAY', 'ABSENT', 'ON_LEAVE', 'REST_DAY', 'HOLIDAY']
 const TIME_RE        = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/
@@ -151,6 +151,131 @@ router.get('/summary', verifyToken, authorize(ATTENDANCE_VIEW_PERMS), async (req
     res.json(rows)
   } catch (err) {
     res.status(500).json({ error: err.message })
+  }
+})
+
+const SELF_ATTENDANCE_PERMS = [
+  'attendance.view_own', 'attendance.view', 'attendance.record', 'attendance.manage', 'admin.*'
+]
+
+async function getLinkedEmployee(userId) {
+  if (!userId) return null
+  const [[employee]] = await db.pool.query(
+    `SELECT e.id, e.name, e.position_title, e.pay_basis
+     FROM employees e
+     WHERE e.user_id = ? LIMIT 1`,
+    [userId]
+  )
+  return employee || null
+}
+
+// ── GET /attendance/me/today  (today's row for the signed-in employee) ──
+router.get('/me/today', verifyToken, authorize(SELF_ATTENDANCE_PERMS), async (req, res) => {
+  try {
+    const employee = await getLinkedEmployee(req.auth?.id)
+    if (!employee) return res.status(404).json({ error: 'No employee record linked to your account' })
+    const today = todayDateOnly()
+    const [[row]] = await db.pool.query(
+      `SELECT a.*, e.name AS employee_name, e.position_title
+       FROM attendance a
+       LEFT JOIN employees e ON e.id = a.employee_id
+       WHERE a.employee_id = ? AND a.date = ?
+       LIMIT 1`,
+      [employee.id, today]
+    )
+    res.json({
+      employee: { id: employee.id, name: employee.name, position_title: employee.position_title },
+      date: today,
+      record: row ? serializeAttendanceRow(row) : null
+    })
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message })
+  }
+})
+
+// ── POST /attendance/me/clock-in  (signed-in employee clocks themselves in) ──
+router.post('/me/clock-in', verifyToken, authorize(SELF_ATTENDANCE_PERMS), async (req, res) => {
+  try {
+    const employee = await getLinkedEmployee(req.auth?.id)
+    if (!employee) return res.status(404).json({ error: 'No employee record linked to your account' })
+
+    const today = todayDateOnly()
+    const now   = new Date().toTimeString().slice(0, 5)
+    const exp_in  = asTime(req.body?.expected_clock_in,  'expected_clock_in')  || '08:00'
+    const exp_out = asTime(req.body?.expected_clock_out, 'expected_clock_out') || '17:00'
+    const { late } = deriveLateUndertime(now, null, exp_in, null)
+    const status = late > 0 ? 'LATE' : 'PRESENT'
+
+    const [[existing]] = await db.pool.query(
+      'SELECT id, clock_in FROM attendance WHERE employee_id = ? AND date = ? LIMIT 1',
+      [employee.id, today]
+    )
+
+    if (existing) {
+      if (existing.clock_in) {
+        return res.status(409).json({ error: 'You are already clocked in for today.' })
+      }
+      await db.pool.query(
+        `UPDATE attendance SET clock_in = ?, status = ?, late_minutes = ?,
+           expected_clock_in = ?, expected_clock_out = ?, updated_by = ?
+         WHERE id = ?`,
+        [now, status, late, exp_in, exp_out, req.auth?.id, existing.id]
+      )
+      const [[updated]] = await db.pool.query('SELECT * FROM attendance WHERE id = ?', [existing.id])
+      await logAuditEventSafe(req, 'attendance.clock_in_self', 'attendance', existing.id)
+      return res.json(serializeAttendanceRow(updated))
+    }
+
+    const [result] = await db.pool.query(
+      `INSERT INTO attendance (employee_id, date, clock_in, status, late_minutes,
+         expected_clock_in, expected_clock_out, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [employee.id, today, now, status, late, exp_in, exp_out, req.auth?.id]
+    )
+    const [[created]] = await db.pool.query('SELECT * FROM attendance WHERE id = ?', [result.insertId])
+    await logAuditEventSafe(req, 'attendance.clock_in_self', 'attendance', result.insertId)
+    res.status(201).json(serializeAttendanceRow(created))
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message })
+  }
+})
+
+// ── POST /attendance/me/clock-out  (signed-in employee clocks themselves out) ──
+router.post('/me/clock-out', verifyToken, authorize(SELF_ATTENDANCE_PERMS), async (req, res) => {
+  try {
+    const employee = await getLinkedEmployee(req.auth?.id)
+    if (!employee) return res.status(404).json({ error: 'No employee record linked to your account' })
+
+    const today = todayDateOnly()
+    const now   = new Date().toTimeString().slice(0, 5)
+
+    const [[existing]] = await db.pool.query(
+      'SELECT * FROM attendance WHERE employee_id = ? AND date = ? LIMIT 1',
+      [employee.id, today]
+    )
+    if (!existing || !existing.clock_in) {
+      return res.status(409).json({ error: 'No clock-in for today. Please clock in first.' })
+    }
+    if (existing.clock_out) {
+      return res.status(409).json({ error: 'You have already clocked out for today.' })
+    }
+
+    const { undertime, overtime } = deriveLateUndertime(
+      existing.clock_in, now, existing.expected_clock_in, existing.expected_clock_out
+    )
+    const hours_worked = deriveHoursWorked(existing.clock_in, now)
+
+    await db.pool.query(
+      `UPDATE attendance SET clock_out = ?, hours_worked = ?, undertime_minutes = ?,
+         overtime_minutes = ?, updated_by = ?
+       WHERE id = ?`,
+      [now, hours_worked, undertime, overtime, req.auth?.id, existing.id]
+    )
+    const [[updated]] = await db.pool.query('SELECT * FROM attendance WHERE id = ?', [existing.id])
+    await logAuditEventSafe(req, 'attendance.clock_out_self', 'attendance', existing.id)
+    res.json(serializeAttendanceRow(updated))
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message })
   }
 })
 

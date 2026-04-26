@@ -17,6 +17,7 @@ import {
   getFriendlyReportError,
   toNumber
 } from '../utils/reportFormatters.js'
+import BrandedChart, { ChartCard, BRAND_COLORS } from '../components/Chart.jsx'
 
 const PAGE_SIZE = 12
 const REPORT_TABS = [
@@ -300,6 +301,22 @@ export default function Reports() {
       const orders = dr.orders || []
       const items = dr.items || []
       const summary = dr.summary || {}
+
+      // Charts: status breakdown + top suppliers by total
+      const statusBuckets = orders.reduce((acc, o) => {
+        const k = String(o.status || 'PENDING').toUpperCase()
+        acc[k] = (acc[k] || 0) + 1
+        return acc
+      }, {})
+      const statusLabels = Object.keys(statusBuckets)
+      const statusValues = statusLabels.map((k) => statusBuckets[k])
+
+      const supplierTotals = orders.reduce((acc, o) => {
+        const k = String(o.supplier_name || 'No supplier')
+        acc[k] = (acc[k] || 0) + Number(o.total || 0)
+        return acc
+      }, {})
+      const topSuppliersDP = Object.entries(supplierTotals).sort((a, b) => b[1] - a[1]).slice(0, 8)
       return (
         <>
           <div className="reports-summary-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
@@ -316,6 +333,40 @@ export default function Reports() {
               </div>
             ))}
           </div>
+
+          {orders.length > 0 && (
+            <div className="chart-grid-2" style={{ marginBottom: 16 }}>
+              <ChartCard
+                title="Top Suppliers by PO Total"
+                subtitle="Suppliers ranked by the sum of their direct purchase orders in this date range."
+                kpi={{ label: 'Suppliers', value: topSuppliersDP.length }}
+                height={300}
+              >
+                <BrandedChart
+                  kind="bar"
+                  indexAxis="y"
+                  labels={topSuppliersDP.map(([k]) => k)}
+                  datasets={[{ label: 'PO Total', data: topSuppliersDP.map(([, v]) => v), color: BRAND_COLORS.gold }]}
+                  valueType="currency"
+                  hideLegend
+                  height={280}
+                />
+              </ChartCard>
+              <ChartCard
+                title="Order Status Mix"
+                subtitle="How POs split between received, pending, and cancelled."
+                kpi={{ label: 'Orders', value: orders.length }}
+                height={300}
+              >
+                <BrandedChart
+                  kind="doughnut"
+                  labels={statusLabels}
+                  values={statusValues}
+                  height={280}
+                />
+              </ChartCard>
+            </div>
+          )}
 
           <ReportTable
             rows={orders}
@@ -373,8 +424,51 @@ export default function Reports() {
     }
 
     if (activeTab === 'balePurchases') {
+      // Spend per supplier across the date range
+      const supplierSpend = (balePurchasesRows || []).reduce((acc, row) => {
+        const k = String(row.supplier_name || 'Unknown')
+        acc[k] = (acc[k] || 0) + Number(row.total_purchase_cost || 0)
+        return acc
+      }, {})
+      const topSuppliersBP = Object.entries(supplierSpend).sort((a, b) => b[1] - a[1]).slice(0, 8)
       return (
         <>
+          {balePurchasesRows.length > 0 && (
+            <div className="chart-grid-2" style={{ marginBottom: 16 }}>
+              <ChartCard
+                title="Bale Spend by Supplier"
+                subtitle="Total purchase cost per supplier (bale + freight + handling)."
+                kpi={{ label: 'Total', value: formatCurrency(report?.balePurchasesTotals?.totalPurchaseCost) }}
+                height={300}
+              >
+                <BrandedChart
+                  kind="bar"
+                  indexAxis="y"
+                  labels={topSuppliersBP.map(([k]) => k)}
+                  datasets={[{ label: 'Spend', data: topSuppliersBP.map(([, v]) => v), color: BRAND_COLORS.gold }]}
+                  valueType="currency"
+                  hideLegend
+                  height={280}
+                />
+              </ChartCard>
+              <ChartCard
+                title="Bale Cost vs Total Cost"
+                subtitle="How much of total purchase cost is the bale itself, batch by batch."
+                height={300}
+              >
+                <BrandedChart
+                  kind="bar"
+                  labels={(balePurchasesRows.slice(0, 12)).map((r) => r.bale_batch_no)}
+                  datasets={[
+                    { label: 'Bale Cost',  data: balePurchasesRows.slice(0, 12).map((r) => Number(r.bale_cost || 0)), color: BRAND_COLORS.tan },
+                    { label: 'Total Cost', data: balePurchasesRows.slice(0, 12).map((r) => Number(r.total_purchase_cost || 0)), color: BRAND_COLORS.goldDark }
+                  ]}
+                  valueType="currency"
+                  height={280}
+                />
+              </ChartCard>
+            </div>
+          )}
           <ReportTable
             rows={balePurchasesPage.rows}
             emptyTitle="No bale purchases found for this date range."
@@ -436,8 +530,58 @@ export default function Reports() {
     }
 
     if (activeTab === 'salesByBale') {
+      // Daily revenue trend from bale-linked sales
+      const byDate = (salesByBaleRows || []).reduce((acc, r) => {
+        const key = String(r.date_sold || '').slice(0, 10)
+        if (!key) return acc
+        acc[key] = (acc[key] || 0) + Number(r.sales_total || 0)
+        return acc
+      }, {})
+      const trend = Object.entries(byDate).sort(([a], [b]) => (a < b ? -1 : 1))
       return (
         <>
+          {salesByBaleRows.length > 0 && (
+            <div className="chart-grid-2" style={{ marginBottom: 16 }}>
+              <ChartCard
+                title="Daily Bale Sales Trend"
+                subtitle="Revenue from bale-linked items, day by day. Higher line = stronger day."
+                kpi={{ label: 'Total', value: formatCurrency(report?.salesByBaleTotals?.salesTotal) }}
+                height={300}
+              >
+                <BrandedChart
+                  kind="line"
+                  labels={trend.map(([d]) => new Date(d).toLocaleDateString('en-PH', { month: 'short', day: '2-digit' }))}
+                  datasets={[{ label: 'Sales', data: trend.map(([, v]) => Math.round(v)), color: BRAND_COLORS.gold, area: true }]}
+                  valueType="currency"
+                  hideLegend
+                  height={280}
+                />
+              </ChartCard>
+              <ChartCard
+                title="Top Bale Batches by Revenue"
+                subtitle="Which bale batches sold the most pesos worth of goods."
+                height={300}
+              >
+                <BrandedChart
+                  kind="bar"
+                  indexAxis="y"
+                  labels={Object.entries((salesByBaleRows || []).reduce((acc, r) => {
+                    const k = String(r.bale_batch_no || 'Unbatched'); acc[k] = (acc[k] || 0) + Number(r.sales_total || 0); return acc
+                  }, {})).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k]) => k)}
+                  datasets={[{
+                    label: 'Revenue',
+                    data: Object.entries((salesByBaleRows || []).reduce((acc, r) => {
+                      const k = String(r.bale_batch_no || 'Unbatched'); acc[k] = (acc[k] || 0) + Number(r.sales_total || 0); return acc
+                    }, {})).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([, v]) => v),
+                    color: BRAND_COLORS.tan
+                  }]}
+                  valueType="currency"
+                  hideLegend
+                  height={280}
+                />
+              </ChartCard>
+            </div>
+          )}
           <ReportTable
             rows={salesByBalePage.rows}
             emptyTitle="No sales linked to bale inventory were found."
@@ -506,6 +650,41 @@ export default function Reports() {
             </div>
           ) : null}
 
+          {baleProfitabilityRows.length > 0 && (
+            <div className="chart-grid-2" style={{ marginBottom: 16 }}>
+              <ChartCard
+                title="Cost vs Revenue per Bale"
+                subtitle="For each bale: how much you paid (gold) vs how much it has earned (green). Closer columns = thinner margin."
+                height={320}
+              >
+                <BrandedChart
+                  kind="bar"
+                  labels={baleProfitabilityRows.slice(0, 12).map((r) => r.bale_batch_no)}
+                  datasets={[
+                    { label: 'Total Cost', data: baleProfitabilityRows.slice(0, 12).map((r) => Number(r.total_purchase_cost || 0)), color: BRAND_COLORS.goldDark },
+                    { label: 'Revenue',    data: baleProfitabilityRows.slice(0, 12).map((r) => Number(r.revenue_generated || 0)), color: BRAND_COLORS.success }
+                  ]}
+                  valueType="currency"
+                  height={300}
+                />
+              </ChartCard>
+              <ChartCard
+                title="Sell-through Rate"
+                subtitle="What % of each bale has been sold. 100% = bale fully cleared."
+                height={320}
+              >
+                <BrandedChart
+                  kind="bar"
+                  indexAxis="y"
+                  labels={baleProfitabilityRows.slice(0, 12).map((r) => r.bale_batch_no)}
+                  datasets={[{ label: 'Sell-through %', data: baleProfitabilityRows.slice(0, 12).map((r) => Number(r.sell_through_rate || 0)), color: BRAND_COLORS.gold }]}
+                  hideLegend
+                  height={300}
+                />
+              </ChartCard>
+            </div>
+          )}
+
           <ReportTable
             rows={baleProfitabilityPage.rows}
             emptyTitle="No bale profitability rows found."
@@ -542,11 +721,46 @@ export default function Reports() {
     }
 
     if (activeTab === 'supplierPerformance') {
+      const sp = supplierPerformanceRows || []
       return (
         <>
           <div className="reports-inline-note">
             Supplier performance now uses only the bales purchased within the selected date range, so bale count, averages, revenue, and gross profit stay aligned.
           </div>
+          {sp.length > 0 && (
+            <div className="chart-grid-2" style={{ marginBottom: 16 }}>
+              <ChartCard
+                title="Revenue vs Gross Profit by Supplier"
+                subtitle="Bigger blue bar = more revenue. Bigger green/red = stronger profit margin."
+                height={320}
+              >
+                <BrandedChart
+                  kind="bar"
+                  labels={sp.slice(0, 10).map((r) => r.supplier_name)}
+                  datasets={[
+                    { label: 'Revenue',     data: sp.slice(0, 10).map((r) => Number(r.total_revenue_generated || 0)), color: BRAND_COLORS.gold },
+                    { label: 'Gross Profit', data: sp.slice(0, 10).map((r) => Number(r.estimated_gross_profit || 0)), color: BRAND_COLORS.success }
+                  ]}
+                  valueType="currency"
+                  height={300}
+                />
+              </ChartCard>
+              <ChartCard
+                title="Bales Purchased per Supplier"
+                subtitle="How many bales we bought from each supplier in this period."
+                height={320}
+              >
+                <BrandedChart
+                  kind="bar"
+                  indexAxis="y"
+                  labels={sp.slice(0, 10).map((r) => r.supplier_name)}
+                  datasets={[{ label: 'Bales', data: sp.slice(0, 10).map((r) => Number(r.number_of_bales_purchased || 0)), color: BRAND_COLORS.tan }]}
+                  hideLegend
+                  height={300}
+                />
+              </ChartCard>
+            </div>
+          )}
           <ReportTable
             rows={supplierPerformancePage.rows}
             emptyTitle="No supplier performance records found."
@@ -589,8 +803,51 @@ export default function Reports() {
     }
 
     const movement = report?.inventoryMovement || {}
+    const movementLabels = ['Opening', 'Added (Bales)', 'Sold', 'Damaged / Loss', 'Ending']
+    const movementValues = [
+      Number(movement.openingInventory || 0),
+      Number(movement.itemsAddedFromBales || 0),
+      Number(movement.itemsSold || 0),
+      Number(movement.damagedLoss || 0),
+      Number(movement.endingInventory || 0)
+    ]
     return (
       <div className="reports-movement-wrap">
+        <div className="chart-grid-2" style={{ marginBottom: 16 }}>
+          <ChartCard
+            title="Inventory Movement at a Glance"
+            subtitle="Opening + Added − Sold − Damaged = Ending. Hover any bar for the exact unit count."
+            height={300}
+          >
+            <BrandedChart
+              kind="bar"
+              labels={movementLabels}
+              datasets={[{
+                label: 'Units',
+                data: movementValues,
+                color: BRAND_COLORS.gold
+              }]}
+              hideLegend
+              height={280}
+            />
+          </ChartCard>
+          <ChartCard
+            title="Where Stock Went"
+            subtitle="Of the items added this period, how they split between sold, damaged/loss, and still on hand."
+            height={300}
+          >
+            <BrandedChart
+              kind="polarArea"
+              labels={['Sold', 'Damaged / Loss', 'Ending On Hand']}
+              values={[
+                Number(movement.itemsSold || 0),
+                Number(movement.damagedLoss || 0),
+                Number(movement.endingInventory || 0)
+              ]}
+              height={280}
+            />
+          </ChartCard>
+        </div>
         <ReportTable
           rows={[{
             opening_inventory: movement.openingInventory,
@@ -608,7 +865,7 @@ export default function Reports() {
           ]}
         />
         <div className="card reports-formula-card">
-          Ending Inventory = Opening + Added - Sold - Damaged/Loss
+          Ending Inventory = Opening + Added − Sold − Damaged/Loss
         </div>
       </div>
     )

@@ -1,3 +1,62 @@
+import React from 'react'
+import { useSelector } from 'react-redux'
+
+const PAYROLL_WRITE_PERMS = {
+  profileWrite: ['payroll.profile.create', 'payroll.profile.update'],
+  periodWrite:  ['payroll.period.create'],
+  compute:      ['payroll.period.compute', 'payroll.input.update'],
+  finalize:     ['payroll.period.finalize'],
+  release:      ['payroll.period.release'],
+  voidRun:      ['payroll.period.void'],
+  settings:     ['payroll.settings.update'],
+  reportExport: ['payroll.report.export']
+}
+
+function readStoredPermissions() {
+  try {
+    return JSON.parse(localStorage.getItem('permissions') || '[]')
+  } catch (e) {
+    return []
+  }
+}
+
+export function usePermissions() {
+  const reduxPermissions = useSelector((s) => s.auth?.permissions)
+  const list = Array.isArray(reduxPermissions) ? reduxPermissions : readStoredPermissions()
+  const isAdmin = list.includes('admin.*')
+  function can(perms) {
+    if (isAdmin) return true
+    if (!Array.isArray(perms)) perms = [perms]
+    return perms.some((p) => list.includes(p))
+  }
+  return {
+    permissions: list,
+    isAdmin,
+    can,
+    canPayrollWrite: {
+      profile:  isAdmin || can(PAYROLL_WRITE_PERMS.profileWrite),
+      period:   isAdmin || can(PAYROLL_WRITE_PERMS.periodWrite),
+      compute:  isAdmin || can(PAYROLL_WRITE_PERMS.compute),
+      finalize: isAdmin || can(PAYROLL_WRITE_PERMS.finalize),
+      release:  isAdmin || can(PAYROLL_WRITE_PERMS.release),
+      voidRun:  isAdmin || can(PAYROLL_WRITE_PERMS.voidRun),
+      settings: isAdmin || can(PAYROLL_WRITE_PERMS.settings),
+      export:   isAdmin || can(PAYROLL_WRITE_PERMS.reportExport)
+    }
+  }
+}
+
+export function ViewOnlyBadge({ label = 'View only' }) {
+  return React.createElement(
+    'span',
+    {
+      className: 'payroll-view-only-badge',
+      title: 'You have read-only access. Ask an admin to make changes.'
+    },
+    label
+  )
+}
+
 export function formatCurrency(value) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) return 'PHP 0.00'

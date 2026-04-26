@@ -38,6 +38,15 @@ function fmtDate(v) {
   return parsed.toLocaleDateString('en-PH', { month: 'short', day: '2-digit', year: 'numeric' })
 }
 function fmtTime(v) { return v ? String(v).slice(0, 5) : '-' }
+function fmtTime12(v) {
+  if (!v) return '—'
+  const text = String(v).slice(0, 5)
+  const [h, m] = text.split(':').map(Number)
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return text
+  const period = h >= 12 ? 'PM' : 'AM'
+  const display = h % 12 === 0 ? 12 : h % 12
+  return `${display}:${padDatePart(m)} ${period}`
+}
 function fmtHours(v) {
   const h = Number(v || 0)
   if (!h) return '-'
@@ -81,6 +90,30 @@ function StatusBadge({ status }) {
   )
 }
 
+function rangePresetToDates(preset) {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = now.getMonth()
+  const d = now.getDate()
+  const day = now.getDay() // 0 Sun .. 6 Sat
+  const mondayOffset = (day + 6) % 7 // distance back to Monday
+  const monday = new Date(y, m, d - mondayOffset)
+  const sunday = new Date(y, m, d - mondayOffset + 6)
+  if (preset === 'today')   return { from: todayStr(), to: todayStr() }
+  if (preset === 'week')    return { from: toDateInputValue(monday),       to: toDateInputValue(sunday) }
+  if (preset === 'month')   return { from: toDateInputValue(new Date(y, m, 1)),     to: toDateInputValue(new Date(y, m + 1, 0)) }
+  if (preset === 'year')    return { from: toDateInputValue(new Date(y, 0, 1)),     to: toDateInputValue(new Date(y, 11, 31)) }
+  return null
+}
+
+const PRESET_LABELS = [
+  { key: 'today', label: 'Today' },
+  { key: 'week',  label: 'This Week' },
+  { key: 'month', label: 'This Month' },
+  { key: 'year',  label: 'This Year' },
+  { key: 'custom', label: 'Custom Range' }
+]
+
 export default function Attendance() {
   const permissions = useSelector((s) =>
     s.auth?.permissions || JSON.parse(localStorage.getItem('permissions') || '[]')
@@ -90,10 +123,12 @@ export default function Attendance() {
     if (permissions.includes('admin.*')) return true
     return perms.some((p) => permissions.includes(p))
   }
-  const canViewAll = can(['attendance.view', 'payroll.view', 'payroll.period.view', 'attendance.record'])
-  const canViewOwn = can(['attendance.view_own'])
-  const canView    = canViewAll || canViewOwn
-  const canManage  = can(['attendance.record', 'attendance.view'])
+  // Only true admins (admin.*) see / manage every employee's attendance.
+  // Every other role gets self-service: clock in/out + view own records.
+  const isAdmin = Array.isArray(permissions) && permissions.includes('admin.*')
+  const canViewAll = isAdmin
+  const canManageOthers = isAdmin
+  const canSelfClock = isAdmin || can(['attendance.record', 'attendance.view_own', 'attendance.view'])
 
   const [employees,   setEmployees]   = useState([])
   const [records,     setRecords]     = useState([])
@@ -106,6 +141,13 @@ export default function Attendance() {
   const [form,        setForm]        = useState(defaultForm)
   const [syncing,     setSyncing]     = useState(false)
 
+  // Self-service state
+  const [todayStatus,   setTodayStatus]   = useState(null)
+  const [todayLoading,  setTodayLoading]  = useState(false)
+  const [clockBusy,     setClockBusy]     = useState(false)
+  const [clockNow,      setClockNow]      = useState(new Date())
+
+  const [preset, setPreset] = useState('today')
   const [filters, setFilters] = useState({
     employee_id: '', from: todayStr(), to: todayStr(), status: '', page: 1
   })
@@ -113,16 +155,22 @@ export default function Attendance() {
   const showMsg = (msg) => { setSuccess(msg); setTimeout(() => setSuccess(null), 4000) }
   const clearMsg = () => { setError(null); setSuccess(null) }
 
+  // Live clock for self-service hero card
+  useEffect(() => {
+    const id = setInterval(() => setClockNow(new Date()), 1000 * 30)
+    return () => clearInterval(id)
+  }, [])
+
   const loadEmployees = useCallback(async () => {
+    if (!canViewAll) return
     try {
       const res = await api.get('/employees')
       const data = Array.isArray(res.data) ? res.data : (res.data?.data || [])
       setEmployees(data.filter((e) => e.employment_status !== 'TERMINATED'))
     } catch { setEmployees([]) }
-  }, [])
+  }, [canViewAll])
 
   const loadRecords = useCallback(async (f = filters) => {
-    if (!canView) return
     try {
       setLoading(true)
       const params = new URLSearchParams({ limit: 200, page: f.page || 1 })
@@ -144,12 +192,37 @@ export default function Attendance() {
     } finally {
       setLoading(false)
     }
-  }, [canView, canViewAll, filters])
+  }, [canViewAll, filters])
+
+  const loadTodayStatus = useCallback(async () => {
+    if (canViewAll || !canSelfClock) return
+    try {
+      setTodayLoading(true)
+      const res = await api.get('/attendance/me/today')
+      setTodayStatus(res.data || null)
+    } catch (err) {
+      setTodayStatus(null)
+    } finally {
+      setTodayLoading(false)
+    }
+  }, [canViewAll, canSelfClock])
 
   useEffect(() => { loadEmployees() }, [loadEmployees])
   useEffect(() => { loadRecords() }, [loadRecords])
+  useEffect(() => { loadTodayStatus() }, [loadTodayStatus])
+
+  function applyPreset(key) {
+    setPreset(key)
+    if (key === 'custom') return
+    const range = rangePresetToDates(key)
+    if (!range) return
+    const next = { ...filters, ...range, page: 1 }
+    setFilters(next)
+    loadRecords(next)
+  }
 
   function startEdit(row) {
+    if (!canManageOthers) return
     clearMsg()
     setEditingId(row.id)
     setForm({
@@ -236,20 +309,66 @@ export default function Attendance() {
     }
   }
 
+  async function handleSelfClockIn() {
+    clearMsg()
+    try {
+      setClockBusy(true)
+      await api.post('/attendance/me/clock-in', {
+        expected_clock_in:  '08:00',
+        expected_clock_out: '17:00'
+      })
+      showMsg('Clocked in successfully.')
+      await Promise.all([loadTodayStatus(), loadRecords(filters)])
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Failed to clock in.')
+    } finally {
+      setClockBusy(false)
+    }
+  }
+
+  async function handleSelfClockOut() {
+    clearMsg()
+    try {
+      setClockBusy(true)
+      await api.post('/attendance/me/clock-out')
+      showMsg('Clocked out successfully.')
+      await Promise.all([loadTodayStatus(), loadRecords(filters)])
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Failed to clock out.')
+    } finally {
+      setClockBusy(false)
+    }
+  }
+
   const summaryStats = useMemo(() => {
     const stats = { PRESENT: 0, LATE: 0, ABSENT: 0, HALF_DAY: 0, ON_LEAVE: 0, REST_DAY: 0, HOLIDAY: 0 }
     records.forEach((r) => { if (stats[r.status] !== undefined) stats[r.status]++ })
     return stats
   }, [records])
 
+  const todayRecord = todayStatus?.record || null
+  const isClockedIn = Boolean(todayRecord?.clock_in)
+  const isClockedOut = Boolean(todayRecord?.clock_out)
+  const todayHeroStatus = !todayRecord
+    ? { label: 'Not Clocked In', color: '#64748B', bg: '#F1F5F9' }
+    : isClockedOut
+      ? { label: 'Day Complete', color: '#15803D', bg: '#DCFCE7' }
+      : isClockedIn
+        ? { label: 'Currently Working', color: '#1D4ED8', bg: '#DBEAFE' }
+        : { label: 'Not Clocked In', color: '#64748B', bg: '#F1F5F9' }
+
   return (
-    <div className="page">
+    <div className="page attendance-page">
       <div className="page-header">
         <div>
           <h1 className="page-title">Attendance</h1>
-          <p className="page-subtitle">{canViewAll ? 'Track employee time-in / time-out and sync to payroll.' : 'View your personal attendance records and DTR.'}</p>
+          <p className="page-subtitle">
+            {canViewAll
+              ? 'Track employee time-in / time-out, review records, and sync to payroll.'
+              : 'Clock yourself in and out, and review your daily attendance.'}
+          </p>
         </div>
-        {canManage && (
+        {canViewAll && (
           <button
             className="btn btn-secondary"
             type="button"
@@ -265,7 +384,94 @@ export default function Attendance() {
       {error   && <div className="error-msg"   style={{ marginBottom: 14 }}>{error}</div>}
       {success && <div className="success-msg" style={{ marginBottom: 14 }}>{success}</div>}
 
-      {/* Summary Stats */}
+      {/* ── Self-service Hero Card (employees only) ──────────────────── */}
+      {!canViewAll && canSelfClock && (
+        <div className="card attendance-hero">
+          <div className="attendance-hero-left">
+            <div className="attendance-hero-greeting">
+              {todayStatus?.employee?.name
+                ? `Hi, ${todayStatus.employee.name.split(' ')[0]}`
+                : 'Welcome'}
+            </div>
+            <div className="attendance-hero-date">
+              {clockNow.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+            </div>
+            <div className="attendance-hero-clock">
+              {clockNow.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })}
+            </div>
+            <div className="attendance-hero-status" style={{ background: todayHeroStatus.bg, color: todayHeroStatus.color }}>
+              {todayHeroStatus.label}
+            </div>
+          </div>
+          <div className="attendance-hero-times">
+            <div className="attendance-hero-time-block">
+              <div className="attendance-hero-time-label">Clock In</div>
+              <div className="attendance-hero-time-value">{fmtTime12(todayRecord?.clock_in)}</div>
+            </div>
+            <div className="attendance-hero-time-block">
+              <div className="attendance-hero-time-label">Clock Out</div>
+              <div className="attendance-hero-time-value">{fmtTime12(todayRecord?.clock_out)}</div>
+            </div>
+            <div className="attendance-hero-time-block">
+              <div className="attendance-hero-time-label">Hours</div>
+              <div className="attendance-hero-time-value">{todayRecord?.hours_worked ? fmtHours(todayRecord.hours_worked) : '—'}</div>
+            </div>
+          </div>
+          <div className="attendance-hero-actions">
+            <button
+              className="btn btn-primary attendance-hero-btn"
+              type="button"
+              onClick={handleSelfClockIn}
+              disabled={clockBusy || todayLoading || isClockedIn}
+            >
+              {isClockedIn ? '✓ Clocked In' : (clockBusy ? 'Clocking in…' : 'Clock In')}
+            </button>
+            <button
+              className="btn btn-success attendance-hero-btn"
+              type="button"
+              onClick={handleSelfClockOut}
+              disabled={clockBusy || todayLoading || !isClockedIn || isClockedOut}
+            >
+              {isClockedOut ? '✓ Clocked Out' : (clockBusy ? 'Clocking out…' : 'Clock Out')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Date Range Presets ─────────────────────────────────────── */}
+      <div className="card attendance-preset-card">
+        <div className="attendance-preset-row">
+          {PRESET_LABELS.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              className={`attendance-preset-pill ${preset === p.key ? 'is-active' : ''}`}
+              onClick={() => applyPreset(p.key)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        {preset === 'custom' && (
+          <div className="attendance-preset-custom">
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">From</label>
+              <input className="form-input" type="date" value={filters.from}
+                onChange={(e) => setFilters((p) => ({ ...p, from: e.target.value }))} />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">To</label>
+              <input className="form-input" type="date" value={filters.to}
+                onChange={(e) => setFilters((p) => ({ ...p, to: e.target.value }))} />
+            </div>
+            <button className="btn btn-primary btn-sm" type="button" onClick={() => loadRecords(filters)} disabled={loading}>
+              {loading ? 'Loading…' : 'Apply Range'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ── Stats strip ─────────────────────────────────────────────── */}
       {records.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
           {Object.entries(summaryStats).filter(([, v]) => v > 0).map(([status, count]) => {
@@ -283,16 +489,16 @@ export default function Attendance() {
         </div>
       )}
 
-      {/* Filters */}
-      <div className="card" style={{ marginBottom: 14 }}>
-        <div className="card-header"><h3>Filters</h3>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-secondary btn-sm" onClick={() => { const f = { employee_id: '', from: todayStr(), to: todayStr(), status: '', page: 1 }; setFilters(f); loadRecords(f) }}>Clear</button>
-            <button className="btn btn-primary btn-sm" onClick={() => loadRecords(filters)} disabled={loading}>{loading ? 'Loading…' : 'Search'}</button>
+      {/* ── Admin extra filters (employee + status) ─────────────────── */}
+      {canViewAll && (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div className="card-header"><h3>Filters</h3>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => { applyPreset('today'); setFilters((p) => ({ ...p, employee_id: '', status: '' })) }}>Clear</button>
+              <button className="btn btn-primary btn-sm" onClick={() => loadRecords(filters)} disabled={loading}>{loading ? 'Loading…' : 'Search'}</button>
+            </div>
           </div>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-          {canViewAll && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Employee</label>
               <select className="form-input" value={filters.employee_id}
@@ -301,30 +507,20 @@ export default function Attendance() {
                 {employees.map((emp) => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
               </select>
             </div>
-          )}
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">From</label>
-            <input className="form-input" type="date" value={filters.from}
-              onChange={(e) => setFilters((p) => ({ ...p, from: e.target.value }))} />
-          </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">To</label>
-            <input className="form-input" type="date" value={filters.to}
-              onChange={(e) => setFilters((p) => ({ ...p, to: e.target.value }))} />
-          </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">Status</label>
-            <select className="form-input" value={filters.status}
-              onChange={(e) => setFilters((p) => ({ ...p, status: e.target.value }))}>
-              <option value="">All Statuses</option>
-              {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{STATUS_COLORS[s]?.label || s}</option>)}
-            </select>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Status</label>
+              <select className="form-input" value={filters.status}
+                onChange={(e) => setFilters((p) => ({ ...p, status: e.target.value }))}>
+                <option value="">All Statuses</option>
+                {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{STATUS_COLORS[s]?.label || s}</option>)}
+              </select>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Entry Form */}
-      {canManage && (
+      {/* ── Manual Entry Form (admin / managers only) ───────────────── */}
+      {canManageOthers && (
         <div className="card" style={{ marginBottom: 14 }}>
           <div className="card-header">
             <h3>{editingId ? 'Edit Attendance Record' : 'Add Attendance Record'}</h3>
@@ -405,16 +601,19 @@ export default function Attendance() {
         </div>
       )}
 
-      {/* Records Table */}
+      {/* ── Records Table ───────────────────────────────────────────── */}
       <div className="card">
         <div className="card-header">
-          <h3>Records {total > 0 ? `(${total})` : ''}</h3>
+          <h3>{canViewAll ? `All Records ${total > 0 ? `(${total})` : ''}` : `My Attendance ${total > 0 ? `(${total})` : ''}`}</h3>
+          <button className="btn btn-secondary btn-sm" type="button" onClick={() => loadRecords(filters)} disabled={loading}>
+            {loading ? 'Refreshing…' : '↺ Refresh'}
+          </button>
         </div>
         <div className="table-wrap responsive">
           <table>
             <thead>
               <tr>
-                <th>Employee</th>
+                {canViewAll && <th>Employee</th>}
                 <th>Date</th>
                 <th>Status</th>
                 <th>Clock In</th>
@@ -423,17 +622,17 @@ export default function Attendance() {
                 <th>Late</th>
                 <th>Undertime</th>
                 <th>Overtime</th>
-                {canManage && <th>Actions</th>}
+                {canManageOthers && <th>Actions</th>}
               </tr>
             </thead>
             <tbody>
               {records.length === 0 ? (
-                <tr><td colSpan={canManage ? 10 : 9} style={{ textAlign: 'center', color: 'var(--text-light)', padding: 32 }}>
-                  {loading ? 'Loading…' : 'No records found. Adjust filters or add new records.'}
+                <tr><td colSpan={(canViewAll ? 9 : 8) + (canManageOthers ? 1 : 0)} style={{ textAlign: 'center', color: 'var(--text-light)', padding: 32 }}>
+                  {loading ? 'Loading…' : 'No records found for this range.'}
                 </td></tr>
               ) : records.map((row) => (
                 <tr key={row.id}>
-                  <td style={{ fontWeight: 600 }}>{row.employee_name || `Employee #${row.employee_id}`}</td>
+                  {canViewAll && <td style={{ fontWeight: 600 }}>{row.employee_name || `Employee #${row.employee_id}`}</td>}
                   <td>{fmtDate(row.date)}</td>
                   <td><StatusBadge status={row.status} /></td>
                   <td style={{ fontFamily: 'monospace', fontSize: 13 }}>{fmtTime(row.clock_in)}</td>
@@ -442,7 +641,7 @@ export default function Attendance() {
                   <td style={{ color: Number(row.late_minutes) > 0 ? 'var(--warning)' : undefined }}>{fmtMins(row.late_minutes)}</td>
                   <td style={{ color: Number(row.undertime_minutes) > 0 ? 'var(--warning)' : undefined }}>{fmtMins(row.undertime_minutes)}</td>
                   <td style={{ color: Number(row.overtime_minutes) > 0 ? 'var(--success)' : undefined }}>{fmtMins(row.overtime_minutes)}</td>
-                  {canManage && (
+                  {canManageOthers && (
                     <td>
                       <div className="table-actions">
                         <button className="btn btn-outline btn-sm" onClick={() => startEdit(row)}>Edit</button>

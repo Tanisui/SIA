@@ -36,8 +36,22 @@ async function hasUsersEmployeeIdColumn(conn) {
   return hasUsersEmployeeIdColumnCache
 }
 
+// Anyone who needs to pick an employee (attendance, payroll, employees module)
+// can list employees. Write operations remain gated below.
+const EMPLOYEE_PICKER_PERMS = [
+  'employees.view',
+  'attendance.view',
+  'attendance.view_own',
+  'attendance.record',
+  'attendance.manage',
+  'payroll.view',
+  'payroll.profile.view',
+  'payroll.period.view',
+  'admin.*'
+]
+
 // List all employees
-router.get('/', verifyToken, authorize('employees.view'), async (req, res) => {
+router.get('/', verifyToken, authorize(EMPLOYEE_PICKER_PERMS), async (req, res) => {
   try {
     const [rows] = await db.pool.query('SELECT * FROM employees ORDER BY id DESC')
     res.json(rows)
@@ -48,7 +62,7 @@ router.get('/', verifyToken, authorize('employees.view'), async (req, res) => {
 })
 
 // Get single employee
-router.get('/:id', verifyToken, authorize('employees.view'), async (req, res) => {
+router.get('/:id', verifyToken, authorize(EMPLOYEE_PICKER_PERMS), async (req, res) => {
   try {
     const [rows] = await db.pool.query('SELECT * FROM employees WHERE id = ? LIMIT 1', [req.params.id])
     if (!rows.length) return res.status(404).json({ error: 'employee not found' })

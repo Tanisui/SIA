@@ -729,6 +729,12 @@ export default function Sales() {
   })
   const [products, setProducts] = useState([])
   const [sales, setSales] = useState([])
+  const [salesTotal, setSalesTotal] = useState(0)
+  const [salesFilters, setSalesFilters] = useState({
+    search: '', from: '', to: '',
+    payment_method: '', return_status: '', page: 1
+  })
+  const SALES_PAGE_SIZE = 20
   const [transactions, setTransactions] = useState([])
   const [report, setReport] = useState(null)
   const [config, setConfig] = useState(DEFAULT_SALES_CONFIG)
@@ -1399,7 +1405,26 @@ export default function Sales() {
   }
 
   async function refreshProducts() { setProducts(await loadPosProducts()) }
-  async function fetchSales() { try { setLoading(true); setSales((await api.get('/sales')).data || []) } catch (err) { setError(salesErrorMessage(err, 'Failed to load sales')) } finally { setLoading(false) } }
+  async function fetchSales(filtersOverride) {
+    const f = filtersOverride || salesFilters
+    try {
+      setLoading(true)
+      const params = new URLSearchParams({ page: String(f.page || 1), limit: String(SALES_PAGE_SIZE) })
+      if (f.search) params.set('search', f.search.trim())
+      if (f.from)   params.set('from', f.from)
+      if (f.to)     params.set('to', f.to)
+      if (f.payment_method) params.set('payment_method', f.payment_method)
+      if (f.return_status)  params.set('return_status', f.return_status)
+      const res = await api.get(`/sales?${params}`)
+      const body = res.data || {}
+      const list = Array.isArray(body) ? body : (Array.isArray(body.data) ? body.data : [])
+      const total = Array.isArray(body) ? list.length : Number(body.total || 0)
+      setSales(list)
+      setSalesTotal(total)
+    } catch (err) {
+      setError(salesErrorMessage(err, 'Failed to load sales'))
+    } finally { setLoading(false) }
+  }
 
   function focusScanInput() {
     if (tab !== 'pos') return
@@ -2366,7 +2391,7 @@ export default function Sales() {
   }
 
   return (
-    <div className="page">
+    <div className="page sales-page">
       <div className="page-header">
         <div>
           <h1 className="page-title">Sales Management</h1>
@@ -2375,151 +2400,185 @@ export default function Sales() {
       </div>
 
       {error && <div className="error-msg" style={{ marginBottom: 16 }}>{error}</div>}
-      {success && <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d', padding: '10px 14px', borderRadius: 6, marginBottom: 16 }}>{success}</div>}
+      {success && <div className="success-msg" style={{ marginBottom: 16 }}>{success}</div>}
 
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '2px solid var(--border)', flexWrap: 'wrap' }}>
+      <div className="sales-tabs">
         {tabs.map(([key, label]) => (
-          <button key={key} onClick={() => { clearMsg(); setActiveTab(key) }} style={{ padding: '10px 18px', border: 'none', borderBottom: tab === key ? '2px solid var(--gold)' : '2px solid transparent', background: 'transparent', color: tab === key ? 'var(--gold-dark)' : 'var(--text-mid)', fontWeight: tab === key ? 600 : 400, cursor: 'pointer', marginBottom: -2 }}>
+          <button key={key} onClick={() => { clearMsg(); setActiveTab(key) }} className={tab === key ? 'is-active' : ''}>
             {label}
           </button>
         ))}
       </div>
 
       {tab === 'pos' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 340px', gap: 20 }}>
+        <div className="pos-twopane pos-cashier">
           <div>
-            <div className="card" style={{ marginBottom: 16 }}>
-              <h3 style={{ marginBottom: 12 }}>Build Order</h3>
-              <div className="form-group">
-                <label className="form-label">Scan Barcode / QR</label>
-                <input
-                  ref={scanInputRef}
-                  className="form-input"
-                  value={scanValue}
-                  onChange={(e) => {
-                    const nextValue = e.target.value
-                    setScanValue(nextValue)
-                    updateScannerDebug(nextValue, 'Scan input field', 'Receiving scanner input')
-                    scheduleBufferedScanSubmit(nextValue)
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key !== 'Enter' && e.key !== 'Tab') return
-                    e.preventDefault()
-                    e.stopPropagation()
-                    handleScanSubmit(e.currentTarget.value, 'Scan input field')
-                  }}
-                  placeholder="Scan barcode or QR, then press Enter"
-                />
-                <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-light)' }}>
-                  Every successful scan is saved to the current sale draft automatically.
-                </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.6fr) 140px 100px', gap: 12, alignItems: 'end' }}>
-                <div className="form-group" style={{ marginBottom: 0, position: 'relative' }}>
-                  <label className="form-label">Product Search</label>
+            {/* Compact scan + search bar */}
+            <div className="card pos-scanbar">
+              <div className="pos-scanbar-row">
+                <div className="form-group" style={{ marginBottom: 0, flex: '1 1 320px' }}>
+                  <label className="form-label">Scan Barcode / QR</label>
                   <input
-                    className="form-input sales-return-lookup-input"
-                    value={search}
-                    onChange={(e) => handleProductSearchChange(e.target.value)}
-                    onFocus={() => setIsProductPickerOpen(true)}
-                    onBlur={() => window.setTimeout(() => setIsProductPickerOpen(false), 120)}
+                    ref={scanInputRef}
+                    className="form-input pos-scan-input"
+                    value={scanValue}
+                    onChange={(e) => {
+                      const nextValue = e.target.value
+                      setScanValue(nextValue)
+                      updateScannerDebug(nextValue, 'Scan input field', 'Receiving scanner input')
+                      scheduleBufferedScanSubmit(nextValue)
+                    }}
                     onKeyDown={(e) => {
                       if (e.key !== 'Enter' && e.key !== 'Tab') return
                       e.preventDefault()
-                      clearMsg()
-                      const exactScanMatch = findProductByExactScanCode(products, e.currentTarget.value)
-                      if (exactScanMatch) {
-                        setSearch('')
-                        setSelectedProduct('')
-                        setPrice('')
-                        setIsProductPickerOpen(false)
-                        handleScanSubmit(e.currentTarget.value, 'Product search field')
-                        return
-                      }
-                      if (!selectedProduct && filteredProducts.length === 1) {
-                        selectProductOption(filteredProducts[0])
-                      }
+                      e.stopPropagation()
+                      handleScanSubmit(e.currentTarget.value, 'Scan input field')
                     }}
-                    placeholder="Search products, or scan exact barcode / SKU"
+                    placeholder="Scan barcode or QR, then press Enter"
                   />
-                  {isProductPickerOpen && (
-                    <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, zIndex: 30, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 12px 30px rgba(15, 23, 42, 0.08)', maxHeight: 260, overflowY: 'auto' }}>
-                      {filteredProducts.length === 0 ? (
-                        <div style={{ padding: '12px 14px', color: 'var(--text-light)', fontSize: 13 }}>No matching products found.</div>
-                      ) : filteredProducts.slice(0, 8).map((product) => (
-                        <button
-                          type="button"
-                          key={product.id}
-                          onMouseDown={(e) => {
-                            e.preventDefault()
-                            selectProductOption(product)
-                          }}
-                          style={{ width: '100%', padding: '12px 14px', border: 'none', borderBottom: '1px solid rgba(148, 163, 184, 0.16)', background: String(product.id) === String(selectedProduct) ? '#fff7ed' : '#fff', textAlign: 'left', cursor: 'pointer' }}
-                        >
-                          <div style={{ fontWeight: 600, color: 'var(--text-dark)' }}>{productLabel(product)}</div>
-                          <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-light)' }}>
-                            Barcode: {product.barcode || '-'} | Stock: {num(product.stock_quantity)} | {fmt(product.price)}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
                 </div>
-                <div className="form-group" style={{ marginBottom: 0 }}><label className="form-label">Price</label><input className="form-input" type="number" min="0" step="0.01" value={price} disabled={!allowPriceOverride} onChange={(e) => setPrice(e.target.value)} /></div>
-                <div className="form-group" style={{ marginBottom: 0 }}><label className="form-label">Qty</label><input className="form-input" type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} /></div>
+                <div className="form-group" style={{ marginBottom: 0, flex: '1 1 260px' }}>
+                  <label className="form-label">Search Products</label>
+                  <input
+                    className="form-input"
+                    value={search}
+                    onChange={(e) => handleProductSearchChange(e.target.value)}
+                    placeholder="Name, SKU, or barcode…"
+                  />
+                </div>
               </div>
-              {selectedProductData && <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 8 }}>Stock: {num(selectedProductData.stock_quantity)} | Barcode: {selectedProductData.barcode || '-'} | Price: {fmt(selectedProductData.price)}</div>}
-              <button className="btn btn-primary" onClick={handleManualAddToCart} disabled={!selectedProduct || !!qtyError(qty, selectedProduct) || loading} style={{ marginTop: 12 }}>Add To Cart</button>
+              <div className="pos-scanbar-hint">
+                Click any tile below to add 1 to cart. Use the inputs in the cart row to change quantity or price.
+              </div>
             </div>
 
-            <div className="card">
-              <h3 style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>Cart</span>
-                {cart.length > 0 && <button className="btn btn-danger" onClick={clearAllCart} disabled={loading} style={{ padding: '4px 10px', fontSize: 12 }}>Clear All</button>}
-              </h3>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>Product</th><th>Price</th><th>Qty</th><th>Subtotal</th><th /></tr></thead>
-                  <tbody>
-                    {cart.length === 0 ? <tr><td colSpan="5" style={{ textAlign: 'center', color: 'var(--text-light)', padding: 24 }}>No items in cart yet.</td></tr> : cart.map((item, index) => (
-                      <tr key={item.id || `${item.product_id}-${index}`}>
-                        <td><div style={{ fontWeight: 600 }}>{item.name}</div>{item.sku && <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{item.sku}</div>}</td>
-                        <td>{allowPriceOverride ? <input type="number" min="0" step="0.01" value={item.unit_price} onChange={(e) => updateCartPrice(item.id, e.target.value)} style={{ width: 90 }} /> : fmt(item.unit_price)}</td>
-                        <td><input type="number" min="1" value={item.quantity} onChange={(e) => updateCartQty(item.id, e.target.value)} style={{ width: 70 }} /></td>
-                        <td style={{ fontWeight: 600 }}>{fmt(num(item.unit_price) * num(item.quantity))}</td>
-                        <td><button className="btn btn-danger" onClick={() => removeCartItem(item.id)} style={{ padding: '4px 8px', fontSize: 12 }}>X</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            {/* Product tile picker */}
+            <div className="card pos-tilepicker">
+              <div className="card-header">
+                <h3>Products{search ? ` · ${filteredProducts.length} match${filteredProducts.length === 1 ? '' : 'es'}` : ''}</h3>
+                {search && (
+                  <button className="btn btn-secondary btn-sm" type="button" onClick={() => handleProductSearchChange('')}>
+                    Clear
+                  </button>
+                )}
               </div>
+              {filteredProducts.length === 0 ? (
+                <div className="pos-tile-empty">No matching products.</div>
+              ) : (
+                <div className="pos-tile-grid">
+                  {filteredProducts.slice(0, 60).map((product) => {
+                    const stock = num(product.stock_quantity)
+                    const threshold = num(product.low_stock_threshold) || 10
+                    const stockTone = stock <= 0 ? 'out' : stock <= threshold ? 'low' : 'ok'
+                    const initial = String(product.name || 'P').trim().charAt(0).toUpperCase() || 'P'
+                    return (
+                      <button
+                        type="button"
+                        key={product.id}
+                        className={`pos-tile stock-${stockTone}`}
+                        onClick={() => addToCart(product, 1).catch(() => {})}
+                        disabled={stock <= 0 || loading}
+                        title={stock <= 0 ? 'Out of stock' : `Add 1 to cart`}
+                      >
+                        <div className="pos-tile-thumb" aria-hidden="true">{initial}</div>
+                        <div className="pos-tile-name">{product.name || 'Unnamed product'}</div>
+                        <div className="pos-tile-sub">{product.sku || product.barcode || '—'}</div>
+                        <div className="pos-tile-foot">
+                          <span className="pos-tile-price">{fmt(product.price)}</span>
+                          <span className={`pos-tile-stock tone-${stockTone}`}>{stock <= 0 ? 'Out' : `${stock} left`}</span>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Cart card */}
+            <div className="card pos-cart-card">
+              <div className="card-header">
+                <h3>
+                  Cart {cart.length > 0 && <span className="pos-cart-count">{cart.length} item{cart.length === 1 ? '' : 's'}</span>}
+                </h3>
+                {cart.length > 0 && <button className="btn btn-danger btn-sm" onClick={clearAllCart} disabled={loading}>Clear All</button>}
+              </div>
+              {cart.length === 0 ? (
+                <div className="pos-cart-empty">
+                  <div className="pos-cart-empty-title">No items yet</div>
+                  <div className="pos-cart-empty-sub">Scan a code or click a product tile above.</div>
+                </div>
+              ) : (
+                <div className="pos-cart-list">
+                  {cart.map((item, index) => {
+                    const lineTotal = num(item.unit_price) * num(item.quantity)
+                    return (
+                      <div key={item.id || `${item.product_id}-${index}`} className="pos-cart-row">
+                        <div className="pos-cart-info">
+                          <div className="pos-cart-name">{item.name}</div>
+                          {item.sku && <div className="pos-cart-sub">{item.sku}</div>}
+                        </div>
+                        <div className="pos-cart-controls">
+                          <div className="pos-cart-qty">
+                            <button type="button" className="pos-cart-qty-btn" onClick={() => updateCartQty(item.id, Math.max(1, num(item.quantity) - 1))} aria-label="Decrease">−</button>
+                            <input type="number" min="1" value={item.quantity} onChange={(e) => updateCartQty(item.id, e.target.value)} />
+                            <button type="button" className="pos-cart-qty-btn" onClick={() => updateCartQty(item.id, num(item.quantity) + 1)} aria-label="Increase">+</button>
+                          </div>
+                          <div className="pos-cart-price">
+                            {allowPriceOverride
+                              ? <input type="number" min="0" step="0.01" value={item.unit_price} onChange={(e) => updateCartPrice(item.id, e.target.value)} className="pos-cart-price-input" />
+                              : <span>{fmt(item.unit_price)}</span>}
+                          </div>
+                          <div className="pos-cart-line-total">{fmt(lineTotal)}</div>
+                          <button className="pos-cart-remove" onClick={() => removeCartItem(item.id)} aria-label={`Remove ${item.name}`} title="Remove">✕</button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="card" style={{ position: 'sticky', top: 80, height: 'fit-content' }}>
-            <h3 style={{ marginBottom: 12 }}>POS Summary</h3>
-            <div className="form-group">
-              <label className="form-label">Payment Method</label>
-              <div className="form-input" style={{ display: 'flex', alignItems: 'center' }}>Cash</div>
+          {/* Sticky cashier summary */}
+          <div className="card pos-summary pos-summary-cashier">
+            <div className="pos-summary-head">
+              <span className="pos-summary-tag">Cashier Summary</span>
+              <span className="pos-summary-count">{cart.length} item{cart.length === 1 ? '' : 's'}</span>
             </div>
-            <div className="form-group"><label className="form-label">Discount (%)</label><input className="form-input" type="number" min="0" max="100" step="0.01" value={allowDiscount ? discountPercentage : '0'} disabled={!allowDiscount} onChange={(e) => setDiscountPercentage(e.target.value)} /></div>
-            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-              <TaxBreakdownSummary summary={liveTaxSummary} fmt={fmt} subtotal={subtotal} discountAmount={discountAmount} totalLabel="Total" />
+            <div className="pos-summary-payment">
+              <span className="pos-summary-label">Payment</span>
+              <span className="pos-summary-value">Cash</span>
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Discount (%)</label>
+              <input className="form-input" type="number" min="0" max="100" step="0.01" value={allowDiscount ? discountPercentage : '0'} disabled={!allowDiscount} onChange={(e) => setDiscountPercentage(e.target.value)} />
+            </div>
+            <div className="pos-summary-divider" />
+            <TaxBreakdownSummary summary={liveTaxSummary} fmt={fmt} subtotal={subtotal} discountAmount={discountAmount} totalLabel="Total" />
+            <div className="pos-summary-grand">
+              <span className="pos-summary-grand-label">Grand Total</span>
+              <span className="pos-summary-grand-value">{fmt((Number(subtotal) || 0) - (Number(discountAmount) || 0))}</span>
             </div>
             {!invoiceRequirementsComplete && (
-              <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, color: '#9a3412', fontSize: 12 }}>
+              <div className="warning-msg pos-summary-note">
                 BIR invoice seller details are incomplete. Fill in Settings before using printed invoices for compliance.
                 {invoiceMissingFieldsText ? ` Missing: ${invoiceMissingFieldsText}.` : ''}
               </div>
             )}
-            {cartHasLockedPriceOverride && <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, color: '#9a3412', fontSize: 12 }}>This cart includes manager-set price overrides. A cashier without price override permission cannot complete it.</div>}
-            <button className="btn btn-primary" onClick={startPayment} disabled={!cart.length || loading} style={{ width: '100%', marginTop: 16 }}>Proceed To Accept Payment</button>
+            {cartHasLockedPriceOverride && (
+              <div className="warning-msg pos-summary-note">
+                This cart includes manager-set price overrides. A cashier without price override permission cannot complete it.
+              </div>
+            )}
+            <button className="btn btn-primary pos-summary-checkout" onClick={startPayment} disabled={!cart.length || loading}>
+              {loading ? 'Working…' : 'Proceed To Payment →'}
+            </button>
           </div>
         </div>
       )}
 
       {tab === 'payment' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 340px', gap: 20 }}>
+        <div className="pos-twopane">
           <div>
             <div className="card" style={{ marginBottom: 16 }}>
               <h3 style={{ marginBottom: 12 }}>Accept Payment</h3>
@@ -2693,6 +2752,78 @@ export default function Sales() {
 
       {tab === 'history' && (
         <div>
+          {/* Filter bar */}
+          <div className="card sales-history-filters">
+            <div className="sales-history-filters-row">
+              <div className="form-group" style={{ marginBottom: 0, flex: '1 1 220px' }}>
+                <label className="form-label">Search</label>
+                <input
+                  className="form-input"
+                  type="text"
+                  placeholder="Sale # / receipt / customer / cashier…"
+                  value={salesFilters.search}
+                  onChange={(e) => setSalesFilters((f) => ({ ...f, search: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === 'Enter') fetchSales({ ...salesFilters, page: 1 }) }}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">From</label>
+                <input className="form-input" type="date" value={salesFilters.from}
+                  onChange={(e) => setSalesFilters((f) => ({ ...f, from: e.target.value }))} />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">To</label>
+                <input className="form-input" type="date" value={salesFilters.to}
+                  onChange={(e) => setSalesFilters((f) => ({ ...f, to: e.target.value }))} />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Payment</label>
+                <select className="form-input" value={salesFilters.payment_method}
+                  onChange={(e) => setSalesFilters((f) => ({ ...f, payment_method: e.target.value }))}>
+                  <option value="">All</option>
+                  <option value="CASH">Cash</option>
+                  <option value="CARD">Card</option>
+                  <option value="GCASH">GCash</option>
+                  <option value="BANK_TRANSFER">Bank Transfer</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Return Status</label>
+                <select className="form-input" value={salesFilters.return_status}
+                  onChange={(e) => setSalesFilters((f) => ({ ...f, return_status: e.target.value }))}>
+                  <option value="">All</option>
+                  <option value="NONE">No Returns</option>
+                  <option value="PARTIAL">Partial Returns</option>
+                  <option value="FULL">Fully Returned</option>
+                </select>
+              </div>
+              <div className="sales-history-filter-actions">
+                <button className="btn btn-secondary btn-sm" type="button"
+                  onClick={() => {
+                    const reset = { search: '', from: '', to: '', payment_method: '', return_status: '', page: 1 }
+                    setSalesFilters(reset)
+                    fetchSales(reset)
+                  }}>Clear</button>
+                <button className="btn btn-primary btn-sm" type="button"
+                  onClick={() => fetchSales({ ...salesFilters, page: 1 })}
+                  disabled={loading}>{loading ? 'Searching…' : 'Search'}</button>
+              </div>
+            </div>
+          </div>
+
+          {/* Result meta */}
+          <div className="sales-history-meta">
+            {loading
+              ? 'Loading…'
+              : (() => {
+                  const start = salesTotal === 0 ? 0 : (salesFilters.page - 1) * SALES_PAGE_SIZE + 1
+                  const end   = Math.min(salesTotal, salesFilters.page * SALES_PAGE_SIZE)
+                  return `Showing ${start}–${end} of ${salesTotal.toLocaleString()} sales`
+                })()
+            }
+          </div>
+
           {viewSale && <div className="card sales-history-detail-card">
             <div className="sales-history-detail-header">
               <h3>Transaction Details - {viewSale.sale_number}</h3>
@@ -2845,6 +2976,43 @@ export default function Sales() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination footer */}
+          {salesTotal > SALES_PAGE_SIZE && (() => {
+            const totalPages = Math.max(1, Math.ceil(salesTotal / SALES_PAGE_SIZE))
+            const cur = Math.min(Math.max(1, salesFilters.page || 1), totalPages)
+            const goTo = (next) => {
+              const target = Math.min(Math.max(1, next), totalPages)
+              if (target === cur) return
+              const nextFilters = { ...salesFilters, page: target }
+              setSalesFilters(nextFilters)
+              fetchSales(nextFilters)
+              window.scrollTo({ top: 0, behavior: 'smooth' })
+            }
+            const pages = []
+            const window_ = 2
+            const start = Math.max(1, cur - window_)
+            const end = Math.min(totalPages, cur + window_)
+            if (start > 1) { pages.push(1); if (start > 2) pages.push('…') }
+            for (let i = start; i <= end; i += 1) pages.push(i)
+            if (end < totalPages) { if (end < totalPages - 1) pages.push('…'); pages.push(totalPages) }
+            return (
+              <div className="sales-history-pagination">
+                <button className="btn btn-secondary btn-sm" type="button"
+                  onClick={() => goTo(cur - 1)} disabled={cur === 1 || loading}>← Prev</button>
+                <div className="sales-history-pagination-pages">
+                  {pages.map((p, i) => p === '…'
+                    ? <span key={`gap-${i}`} className="sales-history-pagination-gap">…</span>
+                    : <button key={p} type="button"
+                        className={`sales-history-pagination-page ${cur === p ? 'is-active' : ''}`}
+                        onClick={() => goTo(p)} disabled={loading}>{p}</button>
+                  )}
+                </div>
+                <button className="btn btn-secondary btn-sm" type="button"
+                  onClick={() => goTo(cur + 1)} disabled={cur === totalPages || loading}>Next →</button>
+              </div>
+            )
+          })()}
         </div>
       )}
 

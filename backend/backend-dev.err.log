@@ -1,0 +1,75 @@
+Error: Unknown column 'read_at' in 'where clause'
+    at PromisePool.query (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/mysql2/lib/promise/pool.js:36:22)
+    at /Users/ferdinandjohndobli/Documents/SIA/backend/src/routes/notifications.js:64:46
+    at Layer.handle [as handle_request] (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/express/lib/router/route.js:149:13)
+    at verifyToken (/Users/ferdinandjohndobli/Documents/SIA/backend/src/middleware/authMiddleware.js:69:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  code: 'ER_BAD_FIELD_ERROR',
+  errno: 1054,
+  sql: 'SELECT COUNT(*) AS unread\n' +
+    '       FROM notifications\n' +
+    '       WHERE recipient_user_id = 1 AND read_at IS NULL',
+  sqlState: '42S22',
+  sqlMessage: "Unknown column 'read_at' in 'where clause'"
+}
+Error: Unknown column 'read_at' in 'where clause'
+    at PromisePool.query (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/mysql2/lib/promise/pool.js:36:22)
+    at /Users/ferdinandjohndobli/Documents/SIA/backend/src/routes/notifications.js:64:46
+    at Layer.handle [as handle_request] (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/express/lib/router/route.js:149:13)
+    at verifyToken (/Users/ferdinandjohndobli/Documents/SIA/backend/src/middleware/authMiddleware.js:69:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  code: 'ER_BAD_FIELD_ERROR',
+  errno: 1054,
+  sql: 'SELECT COUNT(*) AS unread\n' +
+    '       FROM notifications\n' +
+    '       WHERE recipient_user_id = 1 AND read_at IS NULL',
+  sqlState: '42S22',
+  sqlMessage: "Unknown column 'read_at' in 'where clause'"
+}
+Error: Unknown column 'read_at' in 'where clause'
+    at PromisePool.query (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/mysql2/lib/promise/pool.js:36:22)
+    at /Users/ferdinandjohndobli/Documents/SIA/backend/src/routes/notifications.js:64:46
+    at Layer.handle [as handle_request] (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/express/lib/router/route.js:149:13)
+    at verifyToken (/Users/ferdinandjohndobli/Documents/SIA/backend/src/middleware/authMiddleware.js:69:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  code: 'ER_BAD_FIELD_ERROR',
+  errno: 1054,
+  sql: 'SELECT COUNT(*) AS unread\n' +
+    '       FROM notifications\n' +
+    '       WHERE recipient_user_id = 1 AND read_at IS NULL',
+  sqlState: '42S22',
+  sqlMessage: "Unknown column 'read_at' in 'where clause'"
+}
+Error: Unknown column 'read_at' in 'where clause'
+    at PromisePool.query (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/mysql2/lib/promise/pool.js:36:22)
+    at /Users/ferdinandjohndobli/Documents/SIA/backend/src/routes/notifications.js:64:46
+    at Layer.handle [as handle_request] (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/express/lib/router/route.js:149:13)
+    at verifyToken (/Users/ferdinandjohndobli/Documents/SIA/backend/src/middleware/authMiddleware.js:69:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  code: 'ER_BAD_FIELD_ERROR',
+  errno: 1054,
+  sql: 'SELECT COUNT(*) AS unread\n' +
+    '       FROM notifications\n' +
+    '       WHERE recipient_user_id = 1 AND read_at IS NULL',
+  sqlState: '42S22',
+  sqlMessage: "Unknown column 'read_at' in 'where clause'"
+}
+Error: Unknown column 'read_at' in 'where clause'
+    at PromisePool.query (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/mysql2/lib/promise/pool.js:36:22)
+    at /Users/ferdinandjohndobli/Documents/SIA/backend/src/routes/notifications.js:64:46
+    at Layer.handle [as handle_request] (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/ferdinandjohndobli/Documents/SIA/backend/node_modules/express/lib/router/route.js:149:13)
+    at verifyToken (/Users/ferdinandjohndobli/Documents/SIA/backend/src/middleware/authMiddleware.js:69:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  code: 'ER_BAD_FIELD_ERROR',
+  errno: 1054,
+  sql: 'SELECT COUNT(*) AS unread\n' +
+    '       FROM notifications\n' +
+    '       WHERE recipient_user_id = 1 AND read_at IS NULL',
+  sqlState: '42S22',
+  sqlMessage: "Unknown column 'read_at' in 'where clause'"
+}

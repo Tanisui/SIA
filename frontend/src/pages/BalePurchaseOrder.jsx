@@ -1115,62 +1115,127 @@ export default function BalePurchaseOrder() {
                 Refresh
               </button>
             </div>
-            <div className="table-wrap responsive">
-              <table>
-                <thead>
-                  <tr>
-                    <th>PO Reference</th>
-                    <th>Supplier</th>
-                    <th>Category</th>
-                    <th>Order Date</th>
-                    <th>Status</th>
-                    <th>Ordered</th>
-                    <th>Received</th>
-                    <th>Returned</th>
-                    <th>Available Return</th>
-                    <th>Total Cost</th>
-                    <th>Receive</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {orders.length === 0 ? (
-                    <tr>
-                      <td colSpan={12} style={{ textAlign: 'center', color: 'var(--text-light)' }}>
-                        {loading ? 'Loading purchase orders...' : 'No bale purchase orders found.'}
-                      </td>
-                    </tr>
-                  ) : orders.map((order) => (
-                    <tr key={order.id}>
-                      <td style={{ fontWeight: 700 }}>{order.bale_batch_no}</td>
-                      <td>{getSupplierNameFromOrder(order) || '-'}</td>
-                      <td>{order.bale_category || '-'}</td>
-                      <td>{fmtDate(order.purchase_date)}</td>
-                      <td>{order.po_status || 'PENDING'}</td>
-                      <td>{fmtNumber(order.quantity_ordered)}</td>
-                      <td>{fmtNumber(order.quantity_received)}</td>
-                      <td>{fmtNumber(order.returned_quantity)}</td>
-                      <td>{fmtNumber(getOrderReturnableQuantity(order))}</td>
-                      <td>{fmtCurrency(order.total_purchase_cost || order.bale_cost)}</td>
-                      <td>
-                        {canManageOrders ? (
-                          <div style={{ display: 'flex', gap: 6, minWidth: 150 }}>
-                            <input
-                              className="form-input"
-                              type="number"
-                              min={1}
-                              value={receiveQuantities[order.id] || ''}
-                              onChange={(event) => setReceiveQuantities((prev) => ({ ...prev, [order.id]: event.target.value }))}
-                              placeholder="Qty"
-                            />
-                            <button className="btn btn-primary btn-sm" type="button" onClick={() => receiveOrder(order)} disabled={submitting}>
-                              Receive
-                            </button>
+            {orders.length === 0 ? (
+              <div className="entity-empty" style={{ padding: '40px 24px' }}>
+                <div className="entity-empty-icon">
+                  <span style={{ fontSize: 22, fontWeight: 800 }}>PO</span>
+                </div>
+                <div className="entity-empty-title">{loading ? 'Loading purchase orders…' : 'No bale purchase orders yet'}</div>
+                <div className="entity-empty-sub">
+                  {loading ? 'One moment.' : 'Create a PO above to start tracking bales from order to receive.'}
+                </div>
+              </div>
+            ) : (
+              <div className="po-card-grid">
+                {orders.map((order) => {
+                  const ordered  = Number(order.quantity_ordered  || 0)
+                  const received = Number(order.quantity_received || 0)
+                  const returned = Number(order.returned_quantity || 0)
+                  const returnable = Number(getOrderReturnableQuantity(order)) || 0
+                  const status = String(order.po_status || 'ORDERED').toUpperCase()
+                  const supplierName = getSupplierNameFromOrder(order) || 'No supplier'
+                  const receivePct = ordered > 0 ? Math.min(100, Math.round((received / ordered) * 100)) : 0
+
+                  // Status timeline progression
+                  const isOrdered   = true
+                  const isReceived  = received > 0 || ['RECEIVED', 'PARTIAL', 'CLOSED'].includes(status)
+                  const isComplete  = received >= ordered && ordered > 0
+                  const isCancelled = status === 'CANCELLED' || status === 'VOID'
+                  const isReturned  = returned > 0
+                  const tone = isCancelled ? 'cancelled'
+                    : isComplete ? 'complete'
+                    : isReceived ? 'partial'
+                    : 'pending'
+
+                  return (
+                    <div key={order.id} className={`po-card tone-${tone}`}>
+                      <div className="po-card-head">
+                        <div className="po-card-id">
+                          <div className="po-card-ref">{order.bale_batch_no}</div>
+                          <div className="po-card-supplier">
+                            {supplierName}
+                            {order.bale_category && <span className="po-card-category"> · {order.bale_category}</span>}
                           </div>
-                        ) : '-'}
-                      </td>
-                      <td>
-                        <div className="table-actions">
+                          <div className="po-card-date">Ordered {fmtDate(order.purchase_date)}</div>
+                        </div>
+                        <span className={`po-card-status tone-${tone}`}>{status}</span>
+                      </div>
+
+                      {/* Status timeline */}
+                      <div className="po-card-timeline">
+                        <div className={`po-step is-${isOrdered ? 'done' : 'pending'}`}>
+                          <div className="po-step-dot" />
+                          <div className="po-step-label">Ordered</div>
+                        </div>
+                        <div className={`po-step-bar ${isReceived ? 'is-active' : ''}`} />
+                        <div className={`po-step is-${isReceived ? (isComplete ? 'done' : 'partial') : 'pending'}`}>
+                          <div className="po-step-dot" />
+                          <div className="po-step-label">Received</div>
+                        </div>
+                        <div className={`po-step-bar ${isComplete ? 'is-active' : ''}`} />
+                        <div className={`po-step is-${isComplete ? 'done' : (isCancelled ? 'cancelled' : 'pending')}`}>
+                          <div className="po-step-dot" />
+                          <div className="po-step-label">{isCancelled ? 'Cancelled' : 'Complete'}</div>
+                        </div>
+                      </div>
+
+                      {/* Receive progress */}
+                      <div className="po-card-progress">
+                        <div className="po-card-progress-line">
+                          <span><strong>{fmtNumber(received)}</strong> of <strong>{fmtNumber(ordered)}</strong> received</span>
+                          <span className="po-card-progress-pct">{receivePct}%</span>
+                        </div>
+                        <div className="po-card-progress-track">
+                          <div className={`po-card-progress-fill tone-${tone}`} style={{ width: `${receivePct}%` }} />
+                        </div>
+                      </div>
+
+                      {/* Stats */}
+                      <div className="po-card-stats">
+                        <div className="po-card-stat">
+                          <span className="po-card-stat-label">Ordered</span>
+                          <span className="po-card-stat-value">{fmtNumber(ordered)}</span>
+                        </div>
+                        <div className="po-card-stat">
+                          <span className="po-card-stat-label">Received</span>
+                          <span className="po-card-stat-value tone-success">{fmtNumber(received)}</span>
+                        </div>
+                        <div className="po-card-stat">
+                          <span className="po-card-stat-label">Returned</span>
+                          <span className="po-card-stat-value tone-error">{fmtNumber(returned)}</span>
+                        </div>
+                        <div className="po-card-stat tone-gold">
+                          <span className="po-card-stat-label">Total Cost</span>
+                          <span className="po-card-stat-value">{fmtCurrency(order.total_purchase_cost || order.bale_cost)}</span>
+                        </div>
+                      </div>
+
+                      {/* Receive controls (admin) */}
+                      {canManageOrders && !isComplete && !isCancelled && (
+                        <div className="po-card-receive">
+                          <input
+                            className="form-input po-card-receive-input"
+                            type="number"
+                            min={1}
+                            max={ordered - received || 1}
+                            value={receiveQuantities[order.id] || ''}
+                            onChange={(event) => setReceiveQuantities((prev) => ({ ...prev, [order.id]: event.target.value }))}
+                            placeholder="Qty"
+                          />
+                          <button className="btn btn-primary btn-sm" type="button" onClick={() => receiveOrder(order)} disabled={submitting}>
+                            Receive
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Footer actions */}
+                      <div className="po-card-foot">
+                        <span className="po-card-returnable">
+                          {returnable > 0
+                            ? `${fmtNumber(returnable)} unit${returnable === 1 ? '' : 's'} eligible for return`
+                            : (isReturned ? 'All returnables already returned' : 'Nothing returned')}
+                        </span>
+                        <div className="po-card-actions">
                           <button
                             className="btn btn-outline btn-sm"
                             type="button"
@@ -1184,27 +1249,27 @@ export default function BalePurchaseOrder() {
                               goToTab('returns')
                               clearMessages()
                             }}
-                            disabled={getOrderReturnableQuantity(order) <= 0}
+                            disabled={returnable <= 0}
                           >
                             Return
                           </button>
-                          {canManageOrders ? (
-                            <button className="btn btn-outline btn-sm" type="button" onClick={() => startEditOrder(order)}>
+                          {canManageOrders && (
+                            <button className="btn btn-secondary btn-sm" type="button" onClick={() => startEditOrder(order)}>
                               Edit
                             </button>
-                          ) : null}
-                          {canManageOrders ? (
+                          )}
+                          {canManageOrders && (
                             <button className="btn btn-danger btn-sm" type="button" onClick={() => deleteOrder(order)}>
                               Delete
                             </button>
-                          ) : null}
+                          )}
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </>
       ) : null}

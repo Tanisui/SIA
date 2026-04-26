@@ -88,6 +88,12 @@ export default function Purchasing() {
   const [success, setSuccess] = useState(null)
   const [breakdownForm, setBreakdownForm] = useState(createDefaultBreakdownForm)
 
+  // Bale Breakdown filters + pagination
+  const [breakdownSearch, setBreakdownSearch] = useState('')
+  const [breakdownSort, setBreakdownSort] = useState('date_desc')
+  const [breakdownPage, setBreakdownPage] = useState(1)
+  const BREAKDOWN_PAGE_SIZE = 10
+
   const activeTab = useMemo(() => {
     const params = new URLSearchParams(location.search)
     const searchTab = String(params.get('tab') || '').trim()
@@ -172,6 +178,45 @@ export default function Purchasing() {
     () => bales.find((row) => String(row.id) === String(breakdownForm.bale_purchase_id)),
     [bales, breakdownForm.bale_purchase_id]
   )
+
+  // Saleable count helper for sort/filter
+  const saleableOf = (row) =>
+    Number(row.premium_items || 0) + Number(row.standard_items || 0) + Number(row.low_grade_items || 0)
+
+  const filteredBreakdowns = useMemo(() => {
+    const q = breakdownSearch.trim().toLowerCase()
+    let list = breakdowns
+    if (q) {
+      list = list.filter((row) => {
+        const haystack = [row.bale_batch_no, row.supplier_name, row.bale_category]
+          .map((v) => String(v || '').toLowerCase()).join(' ')
+        return haystack.includes(q)
+      })
+    }
+    const sorters = {
+      date_desc:      (a, b) => new Date(b.breakdown_date || b.purchase_date || 0) - new Date(a.breakdown_date || a.purchase_date || 0),
+      date_asc:       (a, b) => new Date(a.breakdown_date || a.purchase_date || 0) - new Date(b.breakdown_date || b.purchase_date || 0),
+      pieces_desc:    (a, b) => Number(b.total_pieces || 0)  - Number(a.total_pieces || 0),
+      pieces_asc:     (a, b) => Number(a.total_pieces || 0)  - Number(b.total_pieces || 0),
+      premium_desc:   (a, b) => Number(b.premium_items || 0) - Number(a.premium_items || 0),
+      premium_asc:    (a, b) => Number(a.premium_items || 0) - Number(b.premium_items || 0),
+      saleable_desc:  (a, b) => saleableOf(b) - saleableOf(a),
+      saleable_asc:   (a, b) => saleableOf(a) - saleableOf(b),
+      damaged_desc:   (a, b) => Number(b.damaged_items || 0) - Number(a.damaged_items || 0),
+      damaged_asc:    (a, b) => Number(a.damaged_items || 0) - Number(b.damaged_items || 0)
+    }
+    return [...list].sort(sorters[breakdownSort] || sorters.date_desc)
+  }, [breakdowns, breakdownSearch, breakdownSort])
+
+  const breakdownTotalPages = Math.max(1, Math.ceil(filteredBreakdowns.length / BREAKDOWN_PAGE_SIZE))
+  const breakdownCurrentPage = Math.min(Math.max(1, breakdownPage), breakdownTotalPages)
+  const pagedBreakdowns = useMemo(() => {
+    const start = (breakdownCurrentPage - 1) * BREAKDOWN_PAGE_SIZE
+    return filteredBreakdowns.slice(start, start + BREAKDOWN_PAGE_SIZE)
+  }, [filteredBreakdowns, breakdownCurrentPage])
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setBreakdownPage(1) }, [breakdownSearch, breakdownSort])
   const selectedBreakdownCategory = selectedBreakdownBale
     ? String(selectedBreakdownBale.bale_category || '').trim()
     : String(breakdownForm.bale_category || '').trim()
@@ -403,11 +448,60 @@ export default function Purchasing() {
 
       <div className="card">
         <div className="card-header">
-          <h3>Bale Breakdown Records ({fmtNumber(breakdowns.length)})</h3>
+          <h3>Bale Breakdown Records ({fmtNumber(filteredBreakdowns.length)}{filteredBreakdowns.length !== breakdowns.length ? ` of ${fmtNumber(breakdowns.length)}` : ''})</h3>
           <button className="btn btn-secondary btn-sm" type="button" onClick={refreshAll} disabled={loading}>
             {loading ? 'Refreshing...' : 'Refresh'}
           </button>
         </div>
+
+        <div className="breakdown-filter-bar">
+          <div className="form-group" style={{ marginBottom: 0, flex: '1 1 240px' }}>
+            <label className="form-label">Search</label>
+            <input
+              className="form-input"
+              type="text"
+              placeholder="Batch no., supplier, or category…"
+              value={breakdownSearch}
+              onChange={(event) => setBreakdownSearch(event.target.value)}
+            />
+          </div>
+          <div className="form-group" style={{ marginBottom: 0, flex: '0 0 240px' }}>
+            <label className="form-label">Sort by</label>
+            <select className="form-input" value={breakdownSort} onChange={(event) => setBreakdownSort(event.target.value)}>
+              <optgroup label="Date">
+                <option value="date_desc">Newest first</option>
+                <option value="date_asc">Oldest first</option>
+              </optgroup>
+              <optgroup label="Total Pieces">
+                <option value="pieces_desc">Highest total pieces</option>
+                <option value="pieces_asc">Lowest total pieces</option>
+              </optgroup>
+              <optgroup label="Class A · Premium">
+                <option value="premium_desc">Highest premium count</option>
+                <option value="premium_asc">Lowest premium count</option>
+              </optgroup>
+              <optgroup label="Saleable">
+                <option value="saleable_desc">Highest saleable bale</option>
+                <option value="saleable_asc">Lowest saleable bale</option>
+              </optgroup>
+              <optgroup label="Damaged">
+                <option value="damaged_desc">Most damaged</option>
+                <option value="damaged_asc">Least damaged</option>
+              </optgroup>
+            </select>
+          </div>
+          <div style={{ alignSelf: 'flex-end', display: 'flex', gap: 6, marginLeft: 'auto' }}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => { setBreakdownSearch(''); setBreakdownSort('date_desc') }}
+              disabled={!breakdownSearch && breakdownSort === 'date_desc'}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+
         <div className="table-wrap responsive">
           <table>
             <thead>
@@ -426,41 +520,82 @@ export default function Purchasing() {
               </tr>
             </thead>
             <tbody>
-              {breakdowns.length === 0 ? (
+              {filteredBreakdowns.length === 0 ? (
                 <tr>
                   <td colSpan={11} style={{ textAlign: 'center', color: 'var(--text-light)' }}>
-                    {loading ? 'Loading bale records...' : 'No bale breakdown records found.'}
+                    {loading ? 'Loading bale records...' : (breakdowns.length === 0 ? 'No bale breakdown records found.' : 'No records match this filter.')}
                   </td>
                 </tr>
-              ) : breakdowns.map((row) => (
-                <tr key={row.id || row.bale_purchase_id}>
-                  <td style={{ fontWeight: 700 }}>{row.bale_batch_no}</td>
-                  <td>{row.supplier_name || '-'}</td>
-                  <td>{row.bale_category || '-'}</td>
-                  <td>{fmtDate(row.breakdown_date || row.purchase_date)}</td>
-                  <td>{fmtNumber(row.total_pieces)}</td>
-                  <td>{fmtNumber(row.premium_items)}</td>
-                  <td>{fmtNumber(Number(row.standard_items || 0) + Number(row.low_grade_items || 0))}</td>
-                  <td>{fmtNumber(row.damaged_items)}</td>
-                  <td>{fmtNumber(Number(row.premium_items || 0) + Number(row.standard_items || 0) + Number(row.low_grade_items || 0))}</td>
-                  <td>{fmtNumber(row.damaged_items)}</td>
-                  <td>
-                    <button
-                      className="btn btn-outline btn-sm"
-                      type="button"
-                      onClick={() => {
-                        setBreakdownForm(mapBreakdownToForm(row))
-                        clearMessages()
-                      }}
-                    >
-                      Edit
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              ) : pagedBreakdowns.map((row, idx) => {
+                const isHighlight =
+                  (breakdownSort.endsWith('_desc') && idx === 0 && breakdownCurrentPage === 1) ||
+                  (breakdownSort.endsWith('_asc')  && idx === 0 && breakdownCurrentPage === 1)
+                return (
+                  <tr key={row.id || row.bale_purchase_id} style={isHighlight ? { background: 'var(--gold-light)' } : undefined}>
+                    <td style={{ fontWeight: 700 }}>
+                      {row.bale_batch_no}
+                      {isHighlight && breakdownSort !== 'date_desc' && breakdownSort !== 'date_asc' && (
+                        <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 800, padding: '2px 6px', borderRadius: 999, background: 'var(--gold)', color: '#FFF7E4', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                          {breakdownSort.endsWith('_desc') ? 'Highest' : 'Lowest'}
+                        </span>
+                      )}
+                    </td>
+                    <td>{row.supplier_name || '-'}</td>
+                    <td>{row.bale_category || '-'}</td>
+                    <td>{fmtDate(row.breakdown_date || row.purchase_date)}</td>
+                    <td>{fmtNumber(row.total_pieces)}</td>
+                    <td>{fmtNumber(row.premium_items)}</td>
+                    <td>{fmtNumber(Number(row.standard_items || 0) + Number(row.low_grade_items || 0))}</td>
+                    <td>{fmtNumber(row.damaged_items)}</td>
+                    <td>{fmtNumber(saleableOf(row))}</td>
+                    <td>{fmtNumber(row.damaged_items)}</td>
+                    <td>
+                      <button
+                        className="btn btn-outline btn-sm"
+                        type="button"
+                        onClick={() => {
+                          setBreakdownForm(mapBreakdownToForm(row))
+                          clearMessages()
+                        }}
+                      >
+                        Edit
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
+
+        {filteredBreakdowns.length > BREAKDOWN_PAGE_SIZE && (() => {
+          const cur = breakdownCurrentPage
+          const total = breakdownTotalPages
+          const goTo = (next) => {
+            const target = Math.min(Math.max(1, next), total)
+            if (target !== cur) setBreakdownPage(target)
+          }
+          const pages = []
+          const start = Math.max(1, cur - 2)
+          const end = Math.min(total, cur + 2)
+          if (start > 1) { pages.push(1); if (start > 2) pages.push('…') }
+          for (let i = start; i <= end; i += 1) pages.push(i)
+          if (end < total) { if (end < total - 1) pages.push('…'); pages.push(total) }
+          return (
+            <div className="sales-history-pagination">
+              <button className="btn btn-secondary btn-sm" type="button" onClick={() => goTo(cur - 1)} disabled={cur === 1}>← Prev</button>
+              <div className="sales-history-pagination-pages">
+                {pages.map((p, i) => p === '…'
+                  ? <span key={`gap-${i}`} className="sales-history-pagination-gap">…</span>
+                  : <button key={p} type="button"
+                      className={`sales-history-pagination-page ${cur === p ? 'is-active' : ''}`}
+                      onClick={() => goTo(p)}>{p}</button>
+                )}
+              </div>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={() => goTo(cur + 1)} disabled={cur === total}>Next →</button>
+            </div>
+          )
+        })()}
       </div>
     </div>
   )

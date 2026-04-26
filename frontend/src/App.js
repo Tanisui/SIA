@@ -7,8 +7,8 @@ import Dashboard from './pages/Dashboard.js'
 import Users from './pages/Users.jsx'
 import UserFormPage from './pages/UserFormPage.jsx'
 import Roles from './pages/Roles.jsx'
-import Categories from './pages/Categories.js'
-import Suppliers from './pages/Suppliers.js'
+import Categories from './pages/Categories.jsx'
+import Suppliers from './pages/Suppliers.jsx'
 import Inventory from './pages/Inventory.js'
 import Sales from './pages/Sales.jsx'
 import Customers from './pages/Customers.jsx'
@@ -32,6 +32,7 @@ import PayrollPreview from './pages/payroll/PayrollPreview.jsx'
 import PayrollPayslip from './pages/payroll/PayrollPayslip.jsx'
 import PayrollReports from './pages/payroll/PayrollReports.jsx'
 import MyPayslips from './pages/payroll/MyPayslips.jsx'
+import PayrollDTR from './pages/payroll/PayrollDTR.jsx'
 
 export default function App() {
   return (
@@ -71,6 +72,7 @@ export default function App() {
           React.createElement(Route, { path: 'payroll/runs/:runId/items/:itemId/payslip', element: React.createElement(PayrollPayslip, null) }),
           React.createElement(Route, { path: 'payroll/reports', element: React.createElement(PayrollReports, null) }),
           React.createElement(Route, { path: 'payroll/my-payslips', element: React.createElement(MyPayslips, null) }),
+          React.createElement(Route, { path: 'payroll/dtr', element: React.createElement(PayrollDTR, null) }),
           React.createElement(Route, { path: 'payroll', element: React.createElement(Navigate, { to: '/payroll/my-payslips', replace: true }) }),
           React.createElement(Route, { path: 'account-security', element: React.createElement(ChangePassword, null) }),
           React.createElement(Route, { path: 'change-password', element: React.createElement(Navigate, { to: '/account-security', replace: true }) }),

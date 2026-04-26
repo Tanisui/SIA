@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import api from '../../api/api.js'
-import { formatCurrency, getErrorMessage, statusBadgeClass } from './payrollUtils.js'
+import { formatCurrency, getErrorMessage, statusBadgeClass, usePermissions, ViewOnlyBadge } from './payrollUtils.js'
 
 export default function PayrollPreview() {
   const { periodId } = useParams()
   const location = useLocation()
   const navigate = useNavigate()
+  const { canPayrollWrite } = usePermissions()
+  const canRunActions = canPayrollWrite.finalize || canPayrollWrite.release || canPayrollWrite.voidRun
   const [run, setRun] = useState(null)
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(null)
@@ -74,7 +76,10 @@ export default function PayrollPreview() {
     <div className="page payroll-page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Payroll Preview</h1>
+          <h1 className="page-title">
+            Payroll Preview
+            {!canRunActions && <span style={{ marginLeft: 10 }}><ViewOnlyBadge /></span>}
+          </h1>
           <p className="page-subtitle">{run ? run.run_number : 'Computed payroll run'}</p>
         </div>
         <div className="payroll-header-actions">
@@ -105,22 +110,34 @@ export default function PayrollPreview() {
             ))}
           </div>
 
+          {canRunActions ? (
           <div className="card payroll-action-card">
             <div className="card-header">
               <h3>Run Actions</h3>
             </div>
             <div className="payroll-row-actions">
-              <button className="btn btn-primary" type="button" onClick={() => runAction('finalize')} disabled={run.status !== 'draft' || Boolean(actionLoading)}>
-                {actionLoading === 'finalize' ? 'Finalizing...' : 'Finalize'}
-              </button>
-              <button className="btn btn-success" type="button" onClick={() => runAction('release')} disabled={run.status !== 'finalized' || Boolean(actionLoading)}>
-                {actionLoading === 'release' ? 'Releasing...' : 'Release'}
-              </button>
-              <button className="btn btn-danger" type="button" onClick={() => runAction('void')} disabled={run.status === 'void' || Boolean(actionLoading)}>
-                {actionLoading === 'void' ? 'Voiding...' : 'Void'}
-              </button>
+              {canPayrollWrite.finalize && (
+                <button className="btn btn-primary" type="button" onClick={() => runAction('finalize')} disabled={run.status !== 'draft' || Boolean(actionLoading)}>
+                  {actionLoading === 'finalize' ? 'Finalizing...' : 'Finalize'}
+                </button>
+              )}
+              {canPayrollWrite.release && (
+                <button className="btn btn-success" type="button" onClick={() => runAction('release')} disabled={run.status !== 'finalized' || Boolean(actionLoading)}>
+                  {actionLoading === 'release' ? 'Releasing...' : 'Release'}
+                </button>
+              )}
+              {canPayrollWrite.voidRun && (
+                <button className="btn btn-danger" type="button" onClick={() => runAction('void')} disabled={run.status === 'void' || Boolean(actionLoading)}>
+                  {actionLoading === 'void' ? 'Voiding...' : 'Void'}
+                </button>
+              )}
             </div>
           </div>
+          ) : (
+            <div className="payroll-view-only-banner">
+              This run is read-only. Finalize, Release, and Void actions are restricted to administrators.
+            </div>
+          )}
 
           <div className="card payroll-table-card">
             <div className="card-header">

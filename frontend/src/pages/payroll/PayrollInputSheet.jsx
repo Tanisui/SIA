@@ -9,7 +9,9 @@ import {
   formatDate,
   getErrorMessage,
   statusBadgeClass,
-  toInputNumber
+  toInputNumber,
+  usePermissions,
+  ViewOnlyBadge
 } from './payrollUtils.js'
 
 const inputFields = [
@@ -46,6 +48,8 @@ function draftToPayload(draft) {
 export default function PayrollInputSheet() {
   const { periodId } = useParams()
   const navigate     = useNavigate()
+  const { canPayrollWrite } = usePermissions()
+  const canWrite = canPayrollWrite.compute
   const [period,       setPeriod]       = useState(null)
   const [drafts,       setDrafts]       = useState({})
   const [loading,      setLoading]      = useState(false)
@@ -137,29 +141,34 @@ export default function PayrollInputSheet() {
     <div className="page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Payroll Input Sheet</h1>
+          <h1 className="page-title">
+            Payroll Input Sheet
+            {!canWrite && <span style={{ marginLeft: 10 }}><ViewOnlyBadge /></span>}
+          </h1>
           <p className="page-subtitle">
             {period
               ? `${period.code} · ${formatDate(period.start_date)} – ${formatDate(period.end_date)}`
               : 'Loading…'}
           </p>
           <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 4 }}>
-            Compute refreshes attendance-derived fields first. Bonuses, loans, deductions, and remarks stay as entered.
+            {canWrite
+              ? 'Compute refreshes attendance-derived fields first. Bonuses, loans, deductions, and remarks stay as entered.'
+              : 'You can review the input rows. Editing, syncing, and compute are restricted to administrators.'}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn-secondary" onClick={() => navigate('/payroll/periods')}>← Back</button>
-          {!locked && (
+          {!locked && canWrite && (
             <button className="btn btn-outline" onClick={syncAttendance} disabled={syncing || actionLoading}>
               {syncing ? '⟳ Syncing…' : '⟳ Sync Attendance'}
             </button>
           )}
-          {!locked && (
+          {!locked && canWrite && (
             <button className="btn btn-secondary" onClick={loadInputs} disabled={actionLoading}>
               {actionLoading ? 'Loading…' : 'Load Profiles'}
             </button>
           )}
-          {!locked && inputs.length > 0 && (
+          {!locked && canWrite && inputs.length > 0 && (
             <button className="btn btn-primary" onClick={compute} disabled={actionLoading}>
               {actionLoading ? 'Computing…' : 'Compute Payroll →'}
             </button>
@@ -198,10 +207,12 @@ export default function PayrollInputSheet() {
         ) : inputs.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 40 }}>
             <div style={{ color: 'var(--text-light)', marginBottom: 14 }}>No input rows loaded for this period yet.</div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-              <button className="btn btn-outline" onClick={syncAttendance} disabled={syncing}>⟳ Sync from Attendance</button>
-              <button className="btn btn-primary"  onClick={loadInputs} disabled={actionLoading}>Load Employee Profiles</button>
-            </div>
+            {canWrite && (
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+                <button className="btn btn-outline" onClick={syncAttendance} disabled={syncing}>⟳ Sync from Attendance</button>
+                <button className="btn btn-primary"  onClick={loadInputs} disabled={actionLoading}>Load Employee Profiles</button>
+              </div>
+            )}
           </div>
         ) : (
           <div>
@@ -229,7 +240,7 @@ export default function PayrollInputSheet() {
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      {!locked && (
+                      {!locked && canWrite && (
                         <button className="btn btn-primary btn-sm" type="button"
                           onClick={(e) => { e.stopPropagation(); saveRow(row) }}
                           disabled={savingUserId === row.user_id}>
@@ -259,7 +270,7 @@ export default function PayrollInputSheet() {
                               type="number" min="0"
                               step={key.includes('minutes') ? '1' : '0.01'}
                               value={draft[key]}
-                              disabled={locked}
+                              disabled={locked || !canWrite}
                               style={{ fontSize: 13, padding: '6px 10px' }}
                               onChange={(e) => updateDraft(row.user_id, key, e.target.value)}
                             />
@@ -268,11 +279,11 @@ export default function PayrollInputSheet() {
                       })}
                       <div className="form-group" style={{ marginBottom: 0, gridColumn: '1 / -1' }}>
                         <label className="form-label" style={{ fontSize: 11 }}>Remarks</label>
-                        <input className="form-input" value={draft.remarks || ''} disabled={locked}
+                        <input className="form-input" value={draft.remarks || ''} disabled={locked || !canWrite}
                           style={{ fontSize: 13 }}
                           onChange={(e) => updateDraft(row.user_id, 'remarks', e.target.value)} />
                       </div>
-                      {!locked && (
+                      {!locked && canWrite && (
                         <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
                           <button className="btn btn-primary btn-sm" onClick={() => saveRow(row)} disabled={savingUserId === row.user_id}>
                             {savingUserId === row.user_id ? 'Saving…' : 'Save Row'}

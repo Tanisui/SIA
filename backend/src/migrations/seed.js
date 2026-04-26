@@ -76,32 +76,51 @@ async function seed() {
 			'suppliers.view','suppliers.create','suppliers.update',
 			'sales.view','sales.create','sales.refund','sales.discount','sales.price_override',
 			'customers.view','customers.create','customers.update',
-			'payroll.view','payroll.profile.view','payroll.profile.create','payroll.profile.update',
-			'payroll.period.view','payroll.period.create','payroll.period.compute','payroll.period.finalize','payroll.period.release','payroll.period.void',
-			'payroll.settings.view','payroll.settings.update','payroll.report.view','payroll.report.export','payroll.payslip.view'
+			'attendance.record','attendance.view_own',
+			// Payroll: view-only. Write actions (compute/finalize/release/void) are admin-only.
+			'payroll.view','payroll.profile.view','payroll.period.view',
+			'payroll.settings.view','payroll.report.view','payroll.payslip.view','payroll.payslip.view_own'
 		],
 		'Sales Clerk': [
 			'sales.create','sales.view','sales.print_receipt','sales.refund',
 			'customers.create','customers.view','customers.update',
-			'products.view','inventory.view'
+			'products.view','inventory.view',
+			'attendance.record','attendance.view_own',
+			// Payroll: view-only.
+			'payroll.view','payroll.profile.view','payroll.period.view',
+			'payroll.settings.view','payroll.report.view','payroll.payslip.view','payroll.payslip.view_own'
 		],
 		'Inventory Clerk': [
 			'inventory.view','inventory.receive','inventory.dispatch','inventory.adjust',
 			'purchase.view','purchase.create','purchase.update','purchase.delete','purchase.receive',
 			'products.view','products.create','products.update',
-			'suppliers.view'
+			'suppliers.view',
+			'attendance.record','attendance.view_own',
+			// Payroll: view-only.
+			'payroll.view','payroll.profile.view','payroll.period.view',
+			'payroll.settings.view','payroll.report.view','payroll.payslip.view','payroll.payslip.view_own'
 		],
 		'Accountant': [
-			'payroll.view','payroll.process','payroll.export','finance.reports.view','reports.view',
-			'payroll.profile.view','payroll.profile.create','payroll.profile.update',
-			'payroll.period.view','payroll.period.create','payroll.period.compute','payroll.period.finalize','payroll.period.release','payroll.period.void',
-			'payroll.settings.view','payroll.settings.update','payroll.report.view','payroll.report.export','payroll.payslip.view'
+			'finance.reports.view','reports.view',
+			'attendance.record','attendance.view_own',
+			// Payroll: view-only.
+			'payroll.view','payroll.profile.view','payroll.period.view',
+			'payroll.settings.view','payroll.report.view','payroll.payslip.view','payroll.payslip.view_own'
 		],
 		'HR': [
-			'employees.view','employees.create','employees.update','attendance.record','attendance.view',
-			'payroll.view','payroll.profile.view','payroll.profile.create','payroll.profile.update','payroll.payslip.view_own'
+			'employees.view','employees.create','employees.update',
+			'attendance.record','attendance.view_own',
+			// Payroll: view-only.
+			'payroll.view','payroll.profile.view','payroll.period.view',
+			'payroll.settings.view','payroll.report.view','payroll.payslip.view','payroll.payslip.view_own'
 		],
-		'Auditor': ['reports.view','reports.export','system.audit.view'],
+		'Auditor': [
+			'reports.view','reports.export','system.audit.view',
+			'attendance.view_own',
+			// Payroll: view-only.
+			'payroll.view','payroll.profile.view','payroll.period.view',
+			'payroll.settings.view','payroll.report.view','payroll.payslip.view','payroll.payslip.view_own'
+		],
 		'Supplier': ['suppliers.view']
 	}
 

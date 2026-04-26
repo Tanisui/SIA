@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import api from '../../api/api.js'
-import { formatCurrency, getErrorMessage, toInputNumber } from './payrollUtils.js'
+import { formatCurrency, getErrorMessage, toInputNumber, usePermissions, ViewOnlyBadge } from './payrollUtils.js'
 
 const emptyForm = {
   user_id: '',
@@ -117,6 +117,8 @@ function Avatar({ name }) {
 }
 
 export default function PayrollProfiles() {
+  const { canPayrollWrite } = usePermissions()
+  const canWrite = canPayrollWrite.profile
   const [searchParams, setSearchParams] = useSearchParams()
   const [profiles,    setProfiles]    = useState([])
   const [users,       setUsers]       = useState([])
@@ -208,12 +210,19 @@ export default function PayrollProfiles() {
     <div className="page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Payroll Profiles</h1>
-          <p className="page-subtitle">Configure pay rates, deductions, and payroll settings per employee.</p>
+          <h1 className="page-title">
+            Payroll Profiles
+            {!canWrite && <span style={{ marginLeft: 10 }}><ViewOnlyBadge /></span>}
+          </h1>
+          <p className="page-subtitle">
+            {canWrite
+              ? 'Configure pay rates, deductions, and payroll settings per employee.'
+              : 'Browse pay rates, deductions, and payroll settings. Editing is restricted to administrators.'}
+          </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-secondary btn-sm" onClick={loadProfiles} disabled={loading}>↺ Refresh</button>
-          {!showForm && (
+          {canWrite && !showForm && (
             <button className="btn btn-primary" onClick={openNew}>+ New Profile</button>
           )}
         </div>
@@ -222,8 +231,14 @@ export default function PayrollProfiles() {
       {error   && <div className="error-msg"   style={{ marginBottom: 14 }}>{error}</div>}
       {success && <div className="success-msg" style={{ marginBottom: 14 }}>{success}</div>}
 
+      {!canWrite && (
+        <div className="payroll-view-only-banner">
+          You are viewing payroll profiles in read-only mode.
+        </div>
+      )}
+
       {/* ── Create / Edit Form ────────────────────────────────── */}
-      {showForm && (
+      {canWrite && showForm && (
         <form onSubmit={submitForm}>
           <div className="card" style={{ marginBottom: 20 }}>
             {/* Card header */}
@@ -411,7 +426,9 @@ export default function PayrollProfiles() {
         ) : profiles.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 40 }}>
             <div style={{ color: 'var(--text-light)', marginBottom: 12 }}>No payroll profiles yet.</div>
-            <button className="btn btn-primary" onClick={openNew}>+ Create First Profile</button>
+            {canWrite && (
+              <button className="btn btn-primary" onClick={openNew}>+ Create First Profile</button>
+            )}
           </div>
         ) : (
           <div>
@@ -478,7 +495,9 @@ export default function PayrollProfiles() {
                     </div>
                   </div>
                   <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
-                    <button className="btn btn-secondary btn-sm" onClick={() => startEdit(profile)}>Edit</button>
+                    {canWrite && (
+                      <button className="btn btn-secondary btn-sm" onClick={() => startEdit(profile)}>Edit</button>
+                    )}
                     <span style={{ fontSize: 11, color: 'var(--text-light)' }}>
                       {profile.payroll_method?.replace('_', ' ')}
                     </span>

@@ -8,7 +8,9 @@ import {
   formatCurrency,
   formatDate,
   getErrorMessage,
-  statusBadgeClass
+  statusBadgeClass,
+  usePermissions,
+  ViewOnlyBadge
 } from './payrollUtils.js'
 
 const FREQ_LABEL = { weekly: 'Weekly', semi_monthly: 'Semi-Monthly', monthly: 'Monthly' }
@@ -42,6 +44,8 @@ function defaultPeriodForm() {
 
 export default function PayrollPeriods() {
   const navigate = useNavigate()
+  const { canPayrollWrite } = usePermissions()
+  const canWriteAny = canPayrollWrite.period || canPayrollWrite.compute
   const [periods,   setPeriods]   = useState([])
   const [form,      setForm]      = useState(defaultPeriodForm)
   const [loading,   setLoading]   = useState(false)
@@ -122,8 +126,15 @@ export default function PayrollPeriods() {
     <div className="page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Payroll Periods</h1>
-          <p className="page-subtitle">Create payroll cutoffs, load profiles, and compute payroll. Compute refreshes attendance before deductions are applied.</p>
+          <h1 className="page-title">
+            Payroll Periods
+            {!canWriteAny && <span style={{ marginLeft: 10 }}><ViewOnlyBadge /></span>}
+          </h1>
+          <p className="page-subtitle">
+            {canWriteAny
+              ? 'Create payroll cutoffs, load profiles, and compute payroll. Compute refreshes attendance before deductions are applied.'
+              : 'Browse payroll cutoffs and computed runs. Only admins can create or compute periods.'}
+          </p>
         </div>
         <button className="btn btn-secondary btn-sm" onClick={loadPeriods} disabled={loading}>↺ Refresh</button>
       </div>
@@ -131,7 +142,14 @@ export default function PayrollPeriods() {
       {error   && <div className="error-msg"   style={{ marginBottom: 14 }}>{error}</div>}
       {success && <div className="success-msg" style={{ marginBottom: 14 }}>{success}</div>}
 
-      {/* Create Period Card */}
+      {!canWriteAny && (
+        <div className="payroll-view-only-banner">
+          You are viewing payroll in read-only mode. Period creation, attendance sync, and compute are restricted to administrators.
+        </div>
+      )}
+
+      {/* Create Period Card — admin only */}
+      {canPayrollWrite.period && (
       <div className="card" style={{ marginBottom: 20 }}>
         <div className="card-header">
           <h3>Create Payroll Period</h3>
@@ -172,67 +190,94 @@ export default function PayrollPeriods() {
           </div>
         </form>
       </div>
+      )}
 
-      {/* Periods table */}
-      <div className="card">
-        <div className="card-header"><h3>Payroll Cutoffs ({periods.length})</h3></div>
-        <div className="table-wrap responsive">
-          <table>
-            <thead><tr>
-              <th>Period Code</th><th>Dates</th><th>Frequency</th><th>Status</th>
-              <th style={{ textAlign: 'right' }}>Employees</th>
-              <th style={{ textAlign: 'right' }}>Pay</th>
-              <th>Actions</th>
-            </tr></thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32, color: 'var(--text-light)' }}>Loading…</td></tr>
-              ) : periods.length === 0 ? (
-                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32, color: 'var(--text-light)' }}>No payroll periods yet. Create one above.</td></tr>
-              ) : periods.map((period) => (
-                <tr key={period.id}>
-                  <td>
-                    <span style={{ fontWeight: 700 }}>{period.code}</span>
-                    <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 2 }}>Payout: {formatDate(period.payout_date)}</div>
-                  </td>
-                  <td style={{ fontSize: 13 }}>{formatDate(period.start_date)} — {formatDate(period.end_date)}</td>
-                  <td style={{ fontSize: 13 }}>{FREQ_LABEL[period.frequency] || period.frequency}</td>
-                  <td><PeriodBadge status={period.status} /></td>
-                  <td style={{ textAlign: 'right', fontWeight: 600 }}>{period.employee_count > 0 ? period.employee_count : '-'}</td>
-                  <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--gold-dark)' }}>{period.total_net_pay > 0 ? formatCurrency(period.total_net_pay) : '-'}</td>
-                  <td>
-                    <div className="table-actions" style={{ flexWrap: 'wrap' }}>
-                      <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/payroll/periods/${period.id}/inputs`)} title="View/Edit Inputs">
-                        Inputs
-                      </button>
-                      {!locked(period) && (
-                        <button className="btn btn-outline btn-sm" onClick={() => syncAttendance(period)} disabled={syncingId === period.id} title="Sync attendance records for this period">
-                          {syncingId === period.id ? '⟳ Syncing…' : '⟳ Sync Attendance'}
-                        </button>
-                      )}
-                      {!locked(period) && (
-                        <button className="btn btn-outline btn-sm" onClick={() => loadInputs(period)} disabled={actionId === period.id}>
-                          {actionId === period.id ? '…' : 'Load Profiles'}
-                        </button>
-                      )}
-                      {!locked(period) && (
-                        <button className="btn btn-primary btn-sm" onClick={() => compute(period)} disabled={actionId === period.id}>
-                          {actionId === period.id ? 'Computing…' : 'Compute'}
-                        </button>
-                      )}
-                      {period.latest_run_id && (
-                        <button className="btn btn-outline btn-sm" onClick={() => navigate(`/payroll/periods/${period.id}/preview`)}>
-                          Preview
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Periods grid */}
+      <div className="entity-toolbar" style={{ marginTop: 6 }}>
+        <div className="entity-toolbar-meta">
+          {loading ? 'Loading…' : `${periods.length} payroll cutoff${periods.length === 1 ? '' : 's'}`}
         </div>
       </div>
+      {periods.length === 0 && !loading ? (
+        <div className="card entity-empty">
+          <div className="entity-empty-icon" style={{ background: 'var(--gold-light)', color: 'var(--gold-dark)' }}>
+            <span style={{ fontFamily: 'Nunito', fontWeight: 800, fontSize: 18 }}>P</span>
+          </div>
+          <div className="entity-empty-title">No payroll periods yet</div>
+          <div className="entity-empty-sub">
+            {canPayrollWrite.period
+              ? 'Create your first payroll cutoff above to start running payroll.'
+              : 'Once an admin creates a payroll cutoff, it will appear here.'}
+          </div>
+        </div>
+      ) : (
+        <div className="period-card-grid">
+          {periods.map((period) => {
+            const status = String(period.status || 'draft').toLowerCase()
+            const isLocked = locked(period)
+            return (
+              <div key={period.id} className={`period-card status-${status}`}>
+                <div className="period-card-head">
+                  <div>
+                    <div className="period-card-code">{period.code}</div>
+                    <div className="period-card-dates">
+                      {formatDate(period.start_date)} — {formatDate(period.end_date)}
+                    </div>
+                  </div>
+                  <PeriodBadge status={period.status} />
+                </div>
+
+                <div className="period-card-body">
+                  <div className="period-card-row">
+                    <span className="period-card-row-label">Frequency</span>
+                    <span className="period-card-row-value">{FREQ_LABEL[period.frequency] || period.frequency}</span>
+                  </div>
+                  <div className="period-card-row">
+                    <span className="period-card-row-label">Payout</span>
+                    <span className="period-card-row-value">{formatDate(period.payout_date)}</span>
+                  </div>
+                  <div className="period-card-stats">
+                    <div className="period-card-stat">
+                      <span className="period-card-stat-label">Employees</span>
+                      <span className="period-card-stat-value">{period.employee_count > 0 ? period.employee_count : '—'}</span>
+                    </div>
+                    <div className="period-card-stat tone-gold">
+                      <span className="period-card-stat-label">Pay</span>
+                      <span className="period-card-stat-value">{period.total_net_pay > 0 ? formatCurrency(period.total_net_pay) : '—'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="period-card-actions">
+                  <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/payroll/periods/${period.id}/inputs`)}>
+                    Inputs
+                  </button>
+                  {!isLocked && canPayrollWrite.compute && (
+                    <button className="btn btn-outline btn-sm" onClick={() => syncAttendance(period)} disabled={syncingId === period.id}>
+                      {syncingId === period.id ? 'Syncing…' : 'Sync'}
+                    </button>
+                  )}
+                  {!isLocked && canPayrollWrite.compute && (
+                    <button className="btn btn-outline btn-sm" onClick={() => loadInputs(period)} disabled={actionId === period.id}>
+                      {actionId === period.id ? '…' : 'Load'}
+                    </button>
+                  )}
+                  {!isLocked && canPayrollWrite.compute && (
+                    <button className="btn btn-primary btn-sm" onClick={() => compute(period)} disabled={actionId === period.id}>
+                      {actionId === period.id ? 'Computing…' : 'Compute'}
+                    </button>
+                  )}
+                  {period.latest_run_id && (
+                    <button className="btn btn-outline btn-sm" onClick={() => navigate(`/payroll/periods/${period.id}/preview`)}>
+                      Preview
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* Workflow guide */}
       <div className="card" style={{ marginTop: 20, background: 'var(--cream-white)', border: '1px solid var(--border-light)' }}>

@@ -1,44 +1,15 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/api.js'
 import { ConfirmModal } from '../components/Modal.js'
+import Icon from '../components/Icons.js'
 
-function ActionIcon({ children }) {
-  return (
-    <span className="users-action-icon" aria-hidden="true">
-      {children}
-    </span>
-  )
-}
-
-function ViewIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
-      <circle cx="12" cy="12" r="2.8" />
-    </svg>
-  )
-}
-
-function EditIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 20h9" />
-      <path d="m16.5 3.5 4 4L8 20l-5 1 1-5 12.5-12.5Z" />
-    </svg>
-  )
-}
-
-function DeleteIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 6h18" />
-      <path d="M8 6V4h8v2" />
-      <path d="m19 6-1 14H6L5 6" />
-      <path d="M10 11v6" />
-      <path d="M14 11v6" />
-    </svg>
-  )
+function getInitials(text) {
+  const trimmed = String(text || '').trim()
+  if (!trimmed) return '·'
+  const parts = trimmed.split(/\s+/).filter(Boolean)
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
 
 function composeDisplayName(user = {}) {
@@ -47,16 +18,19 @@ function composeDisplayName(user = {}) {
     .map((part) => String(part || '').trim())
     .filter(Boolean)
     .join(' ')
-  return composed || user.full_name || user.employee?.name || '-'
+  return composed || user.full_name || user.employee?.name || user.username || '—'
 }
 
-function FieldLine({ label, value, primary = false }) {
-  return (
-    <div className={`users-field-line ${primary ? 'is-primary' : ''}`}>
-      <span className="users-field-label">{label}</span>
-      <span className="users-field-value">{value || '-'}</span>
-    </div>
-  )
+function formatDate(value) {
+  if (!value) return '—'
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? '—' : parsed.toLocaleDateString()
+}
+
+function formatCurrency(value) {
+  if (value === null || value === undefined || value === '') return '—'
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? `₱${parsed.toFixed(2)}` : '—'
 }
 
 export default function Users() {
@@ -70,17 +44,16 @@ export default function Users() {
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [error, setError] = useState(location.state?.flashError || null)
   const [success, setSuccess] = useState(location.state?.flashSuccess || null)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [roleFilter, setRoleFilter] = useState('')
 
-  useEffect(() => {
-    fetchUsers()
-  }, [])
+  useEffect(() => { fetchUsers() }, [])
 
   useEffect(() => {
     const flashSuccess = location.state?.flashSuccess || null
     const flashError = location.state?.flashError || null
-
     if (!flashSuccess && !flashError) return
-
     setSuccess(flashSuccess)
     setError(flashError)
     navigate(location.pathname, { replace: true, state: null })
@@ -93,8 +66,9 @@ export default function Users() {
       setUsers(res.data || [])
     } catch {
       setError('Failed to fetch users')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   const handleDelete = async () => {
@@ -118,212 +92,214 @@ export default function Users() {
     setShowDetails(true)
   }
 
-  const formatDate = (value) => {
-    if (!value) return '-'
-    const parsed = new Date(value)
-    return Number.isNaN(parsed.getTime()) ? '-' : parsed.toLocaleDateString()
-  }
+  const allRoles = useMemo(() => {
+    const set = new Set()
+    users.forEach((u) => {
+      const r = u.primary_role || (u.roles || [])[0]
+      if (r) set.add(r)
+    })
+    return Array.from(set).sort()
+  }, [users])
 
-  const formatCurrency = (value) => {
-    if (value === null || value === undefined || value === '') return '-'
-    const parsed = Number(value)
-    return Number.isFinite(parsed) ? `\u20b1${parsed.toFixed(2)}` : '-'
-  }
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return users.filter((u) => {
+      const isActive = u.is_active === 1
+      if (statusFilter === 'active' && !isActive) return false
+      if (statusFilter === 'inactive' && isActive) return false
+      const role = u.primary_role || (u.roles || [])[0] || ''
+      if (roleFilter && role !== roleFilter) return false
+      if (!q) return true
+      const haystack = [
+        u.username, u.email, u.first_name, u.last_name, u.display_name, u.full_name,
+        u.employee?.mobile_number, u.employee?.contact, u.employee?.position_title,
+        u.employee?.department_name, role
+      ].map((v) => String(v || '').toLowerCase()).join(' ')
+      return haystack.includes(q)
+    })
+  }, [users, search, statusFilter, roleFilter])
 
-  const detailsRowStyle = {
-    marginBottom: 12,
-    borderBottom: '1px solid #eee',
-    paddingBottom: 12
-  }
+  const stats = useMemo(() => {
+    const total = users.length
+    const active = users.filter((u) => u.is_active === 1).length
+    const inactive = total - active
+    return { total, active, inactive }
+  }, [users])
 
   return (
     <div className="page users-page">
       <div className="page-header">
-        <h1 className="page-title">Users</h1>
-        <button className="btn btn-primary" onClick={() => navigate('/users/new')}>
-          + Create new
-        </button>
+        <div>
+          <h1 className="page-title">Users</h1>
+          <p className="page-subtitle">All accounts that can sign in to the POS — including their roles and employment details.</p>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-secondary btn-sm" type="button" onClick={fetchUsers} disabled={loading}>
+            {loading ? 'Refreshing…' : '↺ Refresh'}
+          </button>
+          <button className="btn btn-primary" type="button" onClick={() => navigate('/users/new')}>
+            + New User
+          </button>
+        </div>
       </div>
 
-      {error && (
-        <div style={{ background: '#fee', border: '1px solid #f99', color: '#c33', padding: '10px 14px', borderRadius: 6, marginBottom: 16 }}>
-          {error}
-        </div>
-      )}
-      {success && (
-        <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d', padding: '10px 14px', borderRadius: 6, marginBottom: 16 }}>
-          {success}
-        </div>
-      )}
+      {error && <div className="error-msg" style={{ marginBottom: 14 }}>{error}</div>}
+      {success && <div className="success-msg" style={{ marginBottom: 14 }}>{success}</div>}
 
-      <div className="table-wrap responsive users-table-wrap" style={{ marginBottom: 40 }}>
-        {loading ? (
-          <p>Loading...</p>
-        ) : (
-          <table className="users-table">
-            <thead>
-              <tr>
-                <th>Account</th>
-                <th>Employee</th>
-                <th>Access</th>
-                <th>Contact</th>
-                <th>Employment</th>
-                <th className="text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="text-center text-muted">
-                    No users found.
-                  </td>
-                </tr>
-              ) : (
-                users.map((user) => {
-                  const primaryRole = user.primary_role || (user.roles || [])[0] || '-'
-                  const isActive = user.is_active === 1
-                  const contactNumber = user.contact_number || user.employee?.mobile_number || user.employee?.contact || '-'
-                  const displayName = composeDisplayName(user)
-                  const employmentType = user.employment_type || user.employee?.employment_type || '-'
-                  const positionLabel = user.position_label || user.employee?.position_title || user.employee?.role || '-'
-
-                  return (
-                    <tr key={user.id}>
-                      <td>
-                        <div className="users-cell-stack">
-                          <FieldLine label="Username" value={user.username} primary />
-                          <FieldLine label="Email" value={user.email} />
-                        </div>
-                      </td>
-                      <td>
-                        <div className="users-cell-stack">
-                          <FieldLine label="Name" value={displayName} primary />
-                          <FieldLine label="Position" value={positionLabel} />
-                        </div>
-                      </td>
-                      <td>
-                        <div className="users-cell-stack">
-                          <FieldLine label="Access Role" value={primaryRole} primary />
-                          <span className={`badge users-status-badge ${isActive ? 'badge-success' : 'badge-neutral'}`}>
-                            {isActive ? 'Active' : 'Inactive'}
-                          </span>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="users-cell-stack">
-                          <FieldLine label="Mobile" value={contactNumber} primary />
-                          <FieldLine label="Employment Type" value={employmentType} />
-                        </div>
-                      </td>
-                      <td>
-                        <div className="users-cell-stack">
-                          <FieldLine label="Hire Date" value={formatDate(user.employee?.hire_date)} primary />
-                          <FieldLine label="Pay Rate" value={formatCurrency(user.employee?.pay_rate)} />
-                        </div>
-                      </td>
-                      <td className="text-right users-actions-cell">
-                        <div className="table-actions users-table-actions">
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-icon users-action-btn"
-                            title={`View ${user.username || 'user'}`}
-                            aria-label={`View ${user.username || 'user'}`}
-                            onClick={() => showUserDetails(user)}
-                          >
-                            <ActionIcon><ViewIcon /></ActionIcon>
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-icon users-action-btn"
-                            title={`Edit ${user.username || 'user'}`}
-                            aria-label={`Edit ${user.username || 'user'}`}
-                            onClick={() => navigate(`/users/${user.id}/edit`)}
-                          >
-                            <ActionIcon><EditIcon /></ActionIcon>
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-danger btn-icon users-action-btn"
-                            title={`Delete ${user.username || 'user'}`}
-                            aria-label={`Delete ${user.username || 'user'}`}
-                            onClick={() => setDeleteTarget(user)}
-                          >
-                            <ActionIcon><DeleteIcon /></ActionIcon>
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
-        )}
+      <div className="users-stat-row">
+        <div className="users-stat"><span className="users-stat-label">Total</span><span className="users-stat-value">{stats.total}</span></div>
+        <div className="users-stat tone-success"><span className="users-stat-label">Active</span><span className="users-stat-value">{stats.active}</span></div>
+        <div className="users-stat tone-muted"><span className="users-stat-label">Inactive</span><span className="users-stat-value">{stats.inactive}</span></div>
+        <div className="users-stat tone-gold"><span className="users-stat-label">Roles in use</span><span className="users-stat-value">{allRoles.length}</span></div>
       </div>
+
+      <div className="entity-toolbar users-toolbar">
+        <div className="entity-toolbar-search">
+          <input
+            type="text"
+            className="form-input"
+            placeholder="Search username, name, email, position, role…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <select className="form-input users-toolbar-select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+          <option value="">All Roles</option>
+          {allRoles.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+        <select className="form-input users-toolbar-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option value="">All Statuses</option>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+        <div className="entity-toolbar-meta">
+          {loading ? 'Loading…' : `${filtered.length} of ${users.length}`}
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="card entity-empty">
+          <div className="entity-empty-icon"><Icon name="users" size={28} /></div>
+          <div className="entity-empty-title">
+            {users.length === 0 ? 'No users yet' : 'No matching users'}
+          </div>
+          <div className="entity-empty-sub">
+            {users.length === 0
+              ? 'Create the first account to start using the POS.'
+              : 'Try a different search term or clear the filters.'}
+          </div>
+          {users.length === 0 && (
+            <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => navigate('/users/new')}>
+              + New User
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="user-card-grid">
+          {filtered.map((user) => {
+            const primaryRole = user.primary_role || (user.roles || [])[0] || '—'
+            const isActive = user.is_active === 1
+            const displayName = composeDisplayName(user)
+            const positionLabel = user.position_label || user.employee?.position_title || user.employee?.role || ''
+            const contactNumber = user.contact_number || user.employee?.mobile_number || user.employee?.contact || ''
+            const employmentType = user.employment_type || user.employee?.employment_type || ''
+            return (
+              <div key={user.id} className={`user-card ${!isActive ? 'is-inactive' : ''}`}
+                   onClick={() => showUserDetails(user)} role="button" tabIndex={0}
+                   onKeyDown={(e) => { if (e.key === 'Enter') showUserDetails(user) }}>
+                <div className="user-card-head">
+                  <div className="user-card-avatar" aria-hidden="true">{getInitials(displayName)}</div>
+                  <div className="user-card-id">
+                    <div className="user-card-name">{displayName}</div>
+                    <div className="user-card-handle">@{user.username || '—'}</div>
+                  </div>
+                  <span className={`badge ${isActive ? 'badge-success' : 'badge-neutral'} user-card-status`}>
+                    {isActive ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
+
+                <div className="user-card-role-chip">{primaryRole}</div>
+
+                <div className="user-card-meta">
+                  {positionLabel && (
+                    <div className="user-card-meta-row">
+                      <span className="user-card-meta-label">Position</span>
+                      <span className="user-card-meta-value">{positionLabel}</span>
+                    </div>
+                  )}
+                  {user.email && (
+                    <div className="user-card-meta-row">
+                      <span className="user-card-meta-label">Email</span>
+                      <span className="user-card-meta-value user-card-meta-truncate">{user.email}</span>
+                    </div>
+                  )}
+                  {contactNumber && (
+                    <div className="user-card-meta-row">
+                      <span className="user-card-meta-label">Mobile</span>
+                      <span className="user-card-meta-value">{contactNumber}</span>
+                    </div>
+                  )}
+                  {(employmentType || user.employee?.hire_date) && (
+                    <div className="user-card-meta-row">
+                      <span className="user-card-meta-label">Employment</span>
+                      <span className="user-card-meta-value">
+                        {employmentType || '—'}{user.employee?.hire_date ? ` · since ${formatDate(user.employee.hire_date)}` : ''}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="user-card-actions" onClick={(e) => e.stopPropagation()}>
+                  <button className="btn btn-secondary btn-sm" type="button" onClick={() => showUserDetails(user)}>View</button>
+                  <button className="btn btn-outline btn-sm" type="button" onClick={() => navigate(`/users/${user.id}/edit`)}>Edit</button>
+                  <button className="btn btn-danger btn-sm" type="button" onClick={() => setDeleteTarget(user)}>Delete</button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {showDetails && selectedUser && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'white', padding: 30, borderRadius: 8, maxWidth: 700, maxHeight: '90vh', overflow: 'auto', width: '90%' }}>
-            <h2>User Details</h2>
-            <div style={{ marginBottom: 20 }}>
-              <div style={detailsRowStyle}>
-                <strong>Username: </strong>
-                <span>{selectedUser.username}</span>
+        <div className="user-detail-overlay" onClick={() => setShowDetails(false)}>
+          <div className="user-detail-paper" onClick={(e) => e.stopPropagation()}>
+            <div className="user-detail-head">
+              <div className="user-card-avatar" aria-hidden="true">{getInitials(composeDisplayName(selectedUser))}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h2 className="user-detail-name">{composeDisplayName(selectedUser)}</h2>
+                <div className="user-detail-handle">@{selectedUser.username}</div>
               </div>
-              <div style={detailsRowStyle}>
-                <strong>Email: </strong>
-                <span>{selectedUser.email}</span>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowDetails(false)}>✕ Close</button>
+            </div>
+            <div className="user-detail-body">
+              <div className="user-detail-section">
+                <div className="user-detail-section-title">Account</div>
+                <div className="user-detail-grid">
+                  <div><span className="user-detail-k">Email</span><span className="user-detail-v">{selectedUser.email || '—'}</span></div>
+                  <div><span className="user-detail-k">Status</span><span className="user-detail-v">{selectedUser.is_active === 1 ? 'Active' : 'Inactive'}</span></div>
+                  <div><span className="user-detail-k">Role(s)</span><span className="user-detail-v">{(selectedUser.roles || []).join(', ') || '—'}</span></div>
+                  <div><span className="user-detail-k">First Name</span><span className="user-detail-v">{selectedUser.first_name || '—'}</span></div>
+                  <div><span className="user-detail-k">Last Name</span><span className="user-detail-v">{selectedUser.last_name || '—'}</span></div>
+                </div>
               </div>
-              <div style={detailsRowStyle}>
-                <strong>First Name: </strong>
-                <span>{selectedUser.first_name || '-'}</span>
-              </div>
-              <div style={detailsRowStyle}>
-                <strong>Last Name: </strong>
-                <span>{selectedUser.last_name || '-'}</span>
-              </div>
-              <div style={detailsRowStyle}>
-                <strong>Access Role: </strong>
-                <span>{(selectedUser.roles || []).join(', ') || '-'}</span>
-              </div>
-              <div style={detailsRowStyle}>
-                <strong>Active: </strong>
-                <span>{selectedUser.is_active === 1 ? 'Yes' : 'No'}</span>
-              </div>
-
               {selectedUser.employee && (
-                <>
-                  <h4 style={{ marginTop: 20, marginBottom: 10 }}>Employee Information</h4>
-                  <div style={detailsRowStyle}>
-                    <strong>Mobile Number: </strong>
-                    <span>{selectedUser.employee.mobile_number || selectedUser.employee.contact || '-'}</span>
+                <div className="user-detail-section">
+                  <div className="user-detail-section-title">Employee</div>
+                  <div className="user-detail-grid">
+                    <div><span className="user-detail-k">Mobile</span><span className="user-detail-v">{selectedUser.employee.mobile_number || selectedUser.employee.contact || '—'}</span></div>
+                    <div><span className="user-detail-k">Position</span><span className="user-detail-v">{selectedUser.employee.position_title || '—'}</span></div>
+                    <div><span className="user-detail-k">Department</span><span className="user-detail-v">{selectedUser.employee.department_name || '—'}</span></div>
+                    <div><span className="user-detail-k">Hire Date</span><span className="user-detail-v">{formatDate(selectedUser.employee.hire_date)}</span></div>
+                    <div><span className="user-detail-k">Type</span><span className="user-detail-v">{selectedUser.employee.employment_type || '—'}</span></div>
+                    <div><span className="user-detail-k">Pay Rate</span><span className="user-detail-v">{formatCurrency(selectedUser.employee.pay_rate)}</span></div>
                   </div>
-                  <div style={detailsRowStyle}>
-                    <strong>Position Title: </strong>
-                    <span>{selectedUser.employee.position_title || '-'}</span>
-                  </div>
-                  <div style={detailsRowStyle}>
-                    <strong>Department / Store: </strong>
-                    <span>{selectedUser.employee.department_name || '-'}</span>
-                  </div>
-                  <div style={detailsRowStyle}>
-                    <strong>Hire Date: </strong>
-                    <span>{formatDate(selectedUser.employee.hire_date)}</span>
-                  </div>
-                  <div style={detailsRowStyle}>
-                    <strong>Employment Type: </strong>
-                    <span>{selectedUser.employee.employment_type || '-'}</span>
-                  </div>
-                  <div style={detailsRowStyle}>
-                    <strong>Pay Rate: </strong>
-                    <span>{formatCurrency(selectedUser.employee.pay_rate)}</span>
-                  </div>
-                </>
+                </div>
               )}
             </div>
-            <button type="button" onClick={() => setShowDetails(false)} className="btn btn-secondary" style={{ width: '100%' }}>
-              Close
-            </button>
+            <div className="user-detail-actions">
+              <button type="button" className="btn btn-secondary" onClick={() => setShowDetails(false)}>Close</button>
+              <button type="button" className="btn btn-primary" onClick={() => { setShowDetails(false); navigate(`/users/${selectedUser.id}/edit`) }}>Edit User</button>
+            </div>
           </div>
         </div>
       )}

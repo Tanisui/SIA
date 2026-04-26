@@ -482,46 +482,77 @@ export default function Roles() {
         </div>
       ) : (
         <div>
-          <div style={{ marginBottom: 15 }}>
-            <button className="btn btn-primary" onClick={startNew}>+ Add New Role</button>
+          <div className="entity-toolbar" style={{ marginBottom: 14 }}>
+            <div className="entity-toolbar-meta">
+              {roles.length} role{roles.length === 1 ? '' : 's'} defined
+            </div>
+            <button className="btn btn-primary" onClick={startNew}>+ New Role</button>
           </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Role Name</th>
-                  <th>Description</th>
-                  <th>Access Level</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {!roles.length ? (
-                  <tr>
-                    <td colSpan={4} style={{ textAlign: 'center', padding: 24, color: '#94a3b8' }}>No roles defined yet.</td>
-                  </tr>
-                ) : roles.map((role) => {
-                  const summary = summarizeRoleAccess(role.permissions)
-                  return (
-                    <tr key={role.id}>
-                      <td style={{ fontWeight: 600, color: '#0f172a' }}>{role.name}</td>
-                      <td>{role.description || '-'}</td>
-                      <td>
-                        <div style={{ display: 'grid', gap: 4 }}>
-                          <span style={{ background: role.permissions?.includes('admin.*') ? '#faf5ff' : '#f1f5f9', color: role.permissions?.includes('admin.*') ? '#7e22ce' : '#334155', padding: '4px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, justifySelf: 'start' }}>{summary.badge}</span>
-                          <span style={{ color: '#64748b', fontSize: 12 }}>{summary.detail}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 11, marginRight: 6 }} onClick={() => startEdit(role)}>Edit</button>
-                        <button className="btn btn-danger" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => deleteRole(role.id)}>Delete</button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+
+          {!roles.length ? (
+            <div className="card entity-empty">
+              <div className="entity-empty-icon"><span style={{ fontSize: 22, fontWeight: 800 }}>R</span></div>
+              <div className="entity-empty-title">No roles defined yet</div>
+              <div className="entity-empty-sub">Roles bundle permissions so you can assign access to users in one click.</div>
+              <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={startNew}>+ New Role</button>
+            </div>
+          ) : (
+            <div className="role-card-grid">
+              {roles.map((role) => {
+                const summary = summarizeRoleAccess(role.permissions)
+                const isFullAccess = (role.permissions || []).includes('admin.*')
+                const areaMap = new Map()
+                ;(role.permissions || []).forEach((p) => {
+                  const meta = buildPermissionMeta(p)
+                  if (!meta) return
+                  if (!areaMap.has(meta.groupKey)) areaMap.set(meta.groupKey, { title: meta.groupTitle, accent: meta.groupAccent, count: 0, sensitive: 0 })
+                  const entry = areaMap.get(meta.groupKey)
+                  entry.count += 1
+                  if (meta.isSensitive) entry.sensitive += 1
+                })
+                const areas = Array.from(areaMap.values()).sort((a, b) => b.count - a.count)
+                return (
+                  <div key={role.id} className={`role-card ${isFullAccess ? 'is-admin' : ''}`}
+                       onClick={() => startEdit(role)} role="button" tabIndex={0}
+                       onKeyDown={(e) => { if (e.key === 'Enter') startEdit(role) }}>
+                    <div className="role-card-head">
+                      <div className="role-card-icon" aria-hidden="true">{isFullAccess ? '★' : (role.name || 'R').slice(0, 1).toUpperCase()}</div>
+                      <div className="role-card-id">
+                        <div className="role-card-name">{role.name}</div>
+                        <div className="role-card-sub">{role.description || 'No description'}</div>
+                      </div>
+                      <span className={`badge ${isFullAccess ? 'badge-warning' : 'badge-neutral'} role-card-badge`}>
+                        {summary.badge}
+                      </span>
+                    </div>
+
+                    <div className="role-card-areas">
+                      {areas.length === 0 ? (
+                        <span className="role-card-area-empty">No permissions assigned</span>
+                      ) : (
+                        areas.slice(0, 6).map((area, i) => (
+                          <span key={i} className="role-card-area-chip" style={{ borderColor: area.accent, color: area.accent }}>
+                            <span className="role-card-area-dot" style={{ background: area.accent }} aria-hidden="true" />
+                            {area.title}
+                            <span className="role-card-area-count">{area.count}</span>
+                          </span>
+                        ))
+                      )}
+                      {areas.length > 6 && <span className="role-card-area-chip is-more">+{areas.length - 6} more</span>}
+                    </div>
+
+                    <div className="role-card-foot">
+                      <span className="role-card-detail">{summary.detail}</span>
+                      <div className="role-card-actions" onClick={(e) => e.stopPropagation()}>
+                        <button className="btn btn-outline btn-sm" type="button" onClick={() => startEdit(role)}>Edit</button>
+                        <button className="btn btn-danger btn-sm" type="button" onClick={() => deleteRole(role.id)} disabled={isFullAccess}>Delete</button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>

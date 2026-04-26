@@ -386,9 +386,14 @@ router.get('/', verifyToken, authorize('sales.view'), async (req, res) => {
   try {
     await ensureSalesSchema()
     await ensureScannerSchema()
-    const { status, from, to, payment_method, receipt_no } = req.query
+    const {
+      status, from, to, payment_method, receipt_no,
+      search,
+      return_status,
+      page, limit
+    } = req.query
 
-    let sql = `
+    const baseSelect = `
       SELECT
         s.*,
         u.username AS clerk_name,
@@ -418,23 +423,73 @@ router.get('/', verifyToken, authorize('sales.view'), async (req, res) => {
       ) ret ON ret.sale_id = s.id
       WHERE s.status <> 'DRAFT'
     `
+    const filters = []
     const params = []
     if (status) {
-      sql += ' AND s.status = ?'
+      filters.push(' AND s.status = ?')
       params.push(status)
     }
     if (payment_method) {
-      sql += ' AND s.payment_method = ?'
+      filters.push(' AND s.payment_method = ?')
       params.push(payment_method)
     }
     if (receipt_no) {
-      sql += ' AND s.receipt_no = ?'
+      filters.push(' AND s.receipt_no = ?')
       params.push(String(receipt_no).trim())
     }
-    sql += buildDateFilter('s', 'date', from, to, params)
-    sql += ' ORDER BY s.date DESC, s.id DESC'
+    if (search) {
+      const needle = `%${String(search).trim()}%`
+      filters.push(` AND (
+        s.sale_number LIKE ? OR s.receipt_no LIKE ?
+        OR s.customer_name_snapshot LIKE ? OR c.full_name LIKE ?
+        OR c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ?
+        OR u.username LIKE ?
+      )`)
+      params.push(needle, needle, needle, needle, needle, needle, needle, needle)
+    }
+    const dateFilter = buildDateFilter('s', 'date', from, to, params)
 
-    const [rows] = await db.pool.query(sql, params)
+    let returnStatusHaving = ''
+    const havingParams = []
+    if (return_status) {
+      const want = String(return_status).trim().toUpperCase()
+      if (want === 'NONE')              returnStatusHaving = ' HAVING returned_qty = 0'
+      else if (want === 'PARTIAL')      returnStatusHaving = ' HAVING returned_qty > 0 AND returned_qty < sold_qty'
+      else if (want === 'FULL')         returnStatusHaving = ' HAVING returned_qty >= sold_qty AND returned_qty > 0'
+    }
+
+    const filterClause = filters.join('') + dateFilter
+    const orderClause = ' ORDER BY s.date DESC, s.id DESC'
+
+    // Pagination — opt-in. If `page` is provided, return { data, total, page, limit }.
+    const wantPagination = page !== undefined
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 25, 200))
+    const safePage  = Math.max(1, Number(page) || 1)
+    const offset    = (safePage - 1) * safeLimit
+
+    if (wantPagination) {
+      // Total: wrap inner query so we can count rows after HAVING (return_status filter).
+      const countSql = `
+        SELECT COUNT(*) AS total FROM (
+          ${baseSelect}
+          ${filterClause}
+          ${returnStatusHaving}
+        ) AS x
+      `
+      const [[{ total }]] = await db.pool.query(countSql, [...params, ...havingParams])
+      const pageSql = `${baseSelect}${filterClause}${returnStatusHaving}${orderClause} LIMIT ? OFFSET ?`
+      const [rows] = await db.pool.query(pageSql, [...params, ...havingParams, safeLimit, offset])
+      const sales = []
+      for (const row of rows) {
+        const sale = enrichSaleRecord(row)
+        sale.items = await getSaleItems(db.pool, sale.id)
+        sales.push(sale)
+      }
+      return res.json({ data: sales, total: Number(total) || 0, page: safePage, limit: safeLimit })
+    }
+
+    // Legacy: array response (for callers that don't paginate)
+    const [rows] = await db.pool.query(`${baseSelect}${filterClause}${returnStatusHaving}${orderClause}`, [...params, ...havingParams])
     const sales = []
     for (const row of rows) {
       const sale = enrichSaleRecord(row)

@@ -3,6 +3,7 @@ import JsBarcode from 'jsbarcode'
 import QRCode from 'qrcode'
 import { jsPDF } from 'jspdf'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { useSelector } from 'react-redux'
 import api from '../api/api.js'
 import { PRODUCT_SIZE_OPTIONS } from '../constants/productSizes.js'
 
@@ -701,6 +702,10 @@ function deleteActionIcon() {
 }
 
 export default function Inventory() {
+  const currentUser = useSelector((s) => s.auth?.user) || null
+  const currentUserDisplayName = String(
+    currentUser?.full_name || currentUser?.username || ''
+  ).trim() || 'Current User'
   // ── state ──
   const [products, setProducts] = useState([])
   const [employees, setEmployees] = useState([])
@@ -2759,6 +2764,7 @@ export default function Inventory() {
       ?? Math.max(Number(selectedBaleStockOption?.standard_total || 0) - Number(selectedBaleStockOption?.standard_stocked || 0), 0)
   )
   const selectedBalePendingTotal = selectedBalePendingPremium + selectedBalePendingStandard
+  const selectedBaleDamagedItems = Number(selectedBaleStockOption?.damaged_items ?? 0)
   const currentProductsListedCount = listedProducts.length
   const currentProductsInStockCount = listedProducts.filter((product) => Number(product?.stock_quantity || 0) > 0).length
   const currentBaleLinkedProductsCount = listedProducts.filter((product) => productSourceKey(product) === 'bale_breakdown').length
@@ -2815,7 +2821,7 @@ export default function Inventory() {
   // Dynamic tab labels
   const tabLabels = {
     'overview': { title: 'Inventory Overview', subtitle: 'View summary, stock levels, and key metrics.' },
-    'stock-in': { title: 'Stock In', subtitle: 'Review bale availability, then create each item one by one in Product Management with complete product details.' },
+    'stock-in': { title: 'Stock In', subtitle: 'Review bale availability and stock in each item with full product details. Damaged items from a bale are auto-transferred to the Damaged tab.' },
     'stock-out': { title: 'Stock Out', subtitle: 'Record adjustments, shrinkage, and damage.' },
     'products': { title: 'Product Management', subtitle: 'Create, edit, and manage sellable products, including received repaired items.' },
     'barcode-labels': { title: 'Barcode Labels', subtitle: 'Print barcodes and QR labels for products.' },
@@ -3174,6 +3180,44 @@ export default function Inventory() {
                   marginBottom: 16
                 }
               },
+                React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+                  React.createElement('label', { className: 'form-label' }, 'Bale Breakdown'),
+                  React.createElement('input', {
+                    className: 'form-input',
+                    readOnly: true,
+                    value: selectedBaleStockOption
+                      ? `Breakdown #${selectedBaleStockOption.breakdown_id || '-'} — ${fmtDate(selectedBaleStockOption.breakdown_date || selectedBaleStockOption.purchase_date)}`
+                      : '',
+                    placeholder: 'Choose a bale record to see its breakdown'
+                  })
+                ),
+                React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+                  React.createElement('label', { className: 'form-label' }, 'Supplier'),
+                  React.createElement('input', {
+                    className: 'form-input',
+                    readOnly: true,
+                    value: String(selectedBaleStockOption?.supplier_name || '').trim(),
+                    placeholder: 'Auto-filled from bale record'
+                  })
+                ),
+                React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
+                  React.createElement('label', { className: 'form-label' }, 'Stocked In By'),
+                  React.createElement('input', {
+                    className: 'form-input',
+                    readOnly: true,
+                    value: currentUserDisplayName,
+                    title: 'The signed-in user who is performing this stock-in'
+                  })
+                )
+              ),
+              React.createElement('div', {
+                style: {
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                  gap: 12,
+                  marginBottom: 16
+                }
+              },
                 React.createElement('div', { className: 'card', style: { margin: 0, padding: 14 } },
                   React.createElement('div', { className: 'card-title' }, 'Total Products Available for Stock In'),
                   React.createElement('div', { className: 'card-value' }, selectedBalePendingTotal)
@@ -3185,6 +3229,22 @@ export default function Inventory() {
                 React.createElement('div', { className: 'card', style: { margin: 0, padding: 14 } },
                   React.createElement('div', { className: 'card-title' }, 'Standard Products Available for Stock In'),
                   React.createElement('div', { className: 'card-value' }, selectedBalePendingStandard)
+                ),
+                React.createElement('div', {
+                  className: 'card',
+                  style: {
+                    margin: 0,
+                    padding: 14,
+                    borderLeft: '4px solid var(--error)'
+                  }
+                },
+                  React.createElement('div', { className: 'card-title' }, 'Damaged Items (auto-transferred)'),
+                  React.createElement('div', { className: 'card-value' }, selectedBaleDamagedItems),
+                  React.createElement('div', {
+                    style: { fontSize: 11, color: 'var(--text-light)', marginTop: 4 }
+                  }, selectedBaleDamagedItems > 0
+                    ? 'Already moved to the Damaged tab.'
+                    : 'No damaged items recorded for this bale.')
                 )
               ),
               React.createElement('div', {
@@ -3207,7 +3267,7 @@ export default function Inventory() {
                     className: 'btn btn-primary',
                     disabled: !selectedBaleStockOptionId || selectedBaleLeftToStockIn <= 0,
                     onClick: startBaleIndividualCreate
-                  }, selectedBaleLeftToStockIn <= 0 ? 'No Quantity Left' : 'Create Individual Product'),
+                  }, selectedBaleLeftToStockIn <= 0 ? 'No Quantity Left' : 'Stock In Item'),
                   React.createElement('button', {
                     type: 'button',
                     className: 'btn btn-secondary',
@@ -3222,7 +3282,7 @@ export default function Inventory() {
                   fontSize: 12,
                   color: 'var(--text-light)'
                 }
-              }, 'Automatic bale stock-in is disabled. Use Product Management to create one item at a time with full details.'),
+              }, 'Stock In Item adds one bale unit to inventory with full product details. Damaged items from this bale are auto-transferred to the Damaged tab and never enter sellable stock.'),
               React.createElement('div', {
                 style: {
                   marginTop: 12,
@@ -3736,33 +3796,55 @@ export default function Inventory() {
           ? `Showing ${searchedProducts.length} of ${listedProducts.length} active products. Products linked to selected bale ${selectedBaleStockOption.bale_batch_no || '-'}: ${selectedBaleListedProducts.length}. In-stock products for this selected bale: ${selectedBaleReadyForProductManagement}.`
           : `Showing ${searchedProducts.length} of ${listedProducts.length} active products. Repaired items received from Damaged appear here as individual products ready to sell.`
       ),
-      React.createElement('div', { className: 'table-wrap responsive inventory-products-table' },
-        React.createElement('table', { className: 'inventory-products-grid-table' },
-          React.createElement('thead', null,
-            React.createElement('tr', null,
-              React.createElement('th', null, 'Product'),
-              React.createElement('th', null, 'Source'),
-              React.createElement('th', null, 'Price'),
-              React.createElement('th', null, 'Stock'),
-              React.createElement('th', null, 'Actions')
-            )
-          ),
-          React.createElement('tbody', null,
-            searchedProducts.length === 0
-              ? React.createElement('tr', null, React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, productSearchText ? 'No products match your search.' : 'No products found.'))
-              : searchedProducts.map((p) => {
-                const linkedBaleOption = Number(p?.bale_purchase_id || 0) > 0
-                  ? baleOptionByPurchaseId.get(String(p.bale_purchase_id))
-                  : null
-
-                return React.createElement('tr', { key: p.id },
-              React.createElement('td', { className: 'inventory-product-cell-main' },
-                React.createElement('div', { className: 'inventory-product-primary' }, p.name || 'Unnamed product'),
-                React.createElement('div', { className: 'inventory-product-meta' }, `${p.sku || 'No SKU'} • ${p.barcode || 'No barcode'}`),
-                React.createElement('div', { className: 'inventory-product-meta' }, `${p.brand || 'No brand'} • ${p.category || 'Uncategorized'}${p.subcategory ? ` • ${p.subcategory}` : ''}`)
-              ),
-              React.createElement('td', { className: 'inventory-product-cell-source' },
-                React.createElement('div', { className: 'inventory-product-chips' },
+      // ── Product tile grid ─────────────────────────────────────────
+      searchedProducts.length === 0
+        ? React.createElement('div', { className: 'card entity-empty' },
+            React.createElement('div', { className: 'entity-empty-icon' },
+              React.createElement('span', { style: { fontFamily: 'Nunito', fontWeight: 800, fontSize: 18 } }, 'P')
+            ),
+            React.createElement('div', { className: 'entity-empty-title' }, productSearchText ? 'No matching products' : 'No products yet'),
+            React.createElement('div', { className: 'entity-empty-sub' }, productSearchText
+              ? 'Try a different keyword, or clear the search.'
+              : 'Use Stock In to bring in your first product.')
+          )
+        : React.createElement('div', { className: 'inventory-product-tile-grid' },
+            searchedProducts.map((p) => {
+              const linkedBaleOption = Number(p?.bale_purchase_id || 0) > 0
+                ? baleOptionByPurchaseId.get(String(p.bale_purchase_id))
+                : null
+              const stock = Number(p.stock_quantity || 0)
+              const threshold = Number(p.low_stock_threshold || 10)
+              const stockTone = stock <= 0 ? 'out'
+                : stock <= threshold ? 'low'
+                : 'ok'
+              const initial = String(p.name || 'P').trim().charAt(0).toUpperCase() || 'P'
+              return React.createElement('div', {
+                key: p.id,
+                className: `inventory-product-tile stock-${stockTone}`,
+                onClick: () => startEditProduct(p),
+                role: 'button',
+                tabIndex: 0,
+                onKeyDown: (e) => { if (e.key === 'Enter') startEditProduct(p) }
+              },
+                React.createElement('div', { className: 'inventory-product-tile-head' },
+                  React.createElement('div', { className: 'inventory-product-tile-thumb', 'aria-hidden': 'true' }, initial),
+                  React.createElement('div', { className: 'inventory-product-tile-id' },
+                    React.createElement('div', { className: 'inventory-product-tile-name' }, p.name || 'Unnamed product'),
+                    React.createElement('div', { className: 'inventory-product-tile-sub' },
+                      `${p.sku || 'No SKU'} · ${p.barcode || 'No barcode'}`)
+                  ),
+                  React.createElement('span', { className: `inventory-product-tile-stock-pill tone-${stockTone}` },
+                    stock <= 0 ? 'OUT' : stock <= threshold ? 'LOW' : 'OK'
+                  )
+                ),
+                React.createElement('div', { className: 'inventory-product-tile-price-row' },
+                  React.createElement('span', { className: 'inventory-product-tile-price' }, fmt(p.price)),
+                  React.createElement('span', { className: `inventory-product-tile-stock tone-${stockTone}` },
+                    `${stock} in stock`)
+                ),
+                React.createElement('div', { className: 'inventory-product-tile-meta' },
+                  `${p.brand || 'No brand'} · ${p.category || 'Uncategorized'}${p.subcategory ? ` · ${p.subcategory}` : ''}`),
+                React.createElement('div', { className: 'inventory-product-tile-chips' },
                   React.createElement('span', { className: 'inventory-chip' }, productSourceLabel(p)),
                   p.condition_grade
                     ? React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, toTitleCaseWords(p.condition_grade))
@@ -3770,46 +3852,34 @@ export default function Inventory() {
                         ? React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, 'Ready to Sell')
                         : null),
                   linkedBaleOption?.bale_batch_no && React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, linkedBaleOption.bale_batch_no)
-                )
-              ),
-              React.createElement('td', { className: 'inventory-product-cell-price', style: { fontWeight: 600 } }, fmt(p.price)),
-              React.createElement('td', { className: 'inventory-product-cell-stock' },
-                React.createElement('div', {
-                  className: 'inventory-stock-pill',
-                  style: { color: p.stock_quantity <= (p.low_stock_threshold || 10) ? 'var(--error)' : 'var(--success)' }
-                }, p.stock_quantity),
-                React.createElement('div', { className: 'inventory-product-meta' }, `Alert at ${p.low_stock_threshold || 10}`)
-              ),
-              React.createElement('td', { className: 'inventory-product-cell-actions' },
-                React.createElement('div', { className: 'product-table-actions inventory-product-actions' },
-                  React.createElement('button', {
-                    type: 'button',
-                    className: 'product-action-icon',
-                    title: 'View QR',
-                    'aria-label': `View QR for ${p.name}`,
-                    onClick: () => openQrPreview(p)
-                  }, qrActionIcon()),
-                  React.createElement('button', {
-                    type: 'button',
-                    className: 'product-action-icon',
-                    title: 'Edit product',
-                    'aria-label': `Edit ${p.name}`,
-                    onClick: () => startEditProduct(p)
-                  }, editActionIcon()),
-                  React.createElement('button', {
-                    type: 'button',
-                    className: 'product-action-icon product-action-icon--danger',
-                    title: 'Delete product',
-                    'aria-label': `Delete ${p.name}`,
-                    onClick: () => deleteProduct(p.id),
-                    style: undefined
-                  }, deleteActionIcon())
+                ),
+                React.createElement('div', { className: 'inventory-product-tile-foot', onClick: (e) => e.stopPropagation() },
+                  React.createElement('span', { className: 'inventory-product-tile-threshold' },
+                    `Low stock alert at ${threshold}`),
+                  React.createElement('div', { className: 'inventory-product-tile-actions' },
+                    React.createElement('button', {
+                      type: 'button',
+                      className: 'btn btn-secondary btn-sm',
+                      title: `View QR for ${p.name}`,
+                      onClick: () => openQrPreview(p)
+                    }, 'QR'),
+                    React.createElement('button', {
+                      type: 'button',
+                      className: 'btn btn-outline btn-sm',
+                      title: `Edit ${p.name}`,
+                      onClick: () => startEditProduct(p)
+                    }, 'Edit'),
+                    React.createElement('button', {
+                      type: 'button',
+                      className: 'btn btn-danger btn-sm',
+                      title: `Delete ${p.name}`,
+                      onClick: () => deleteProduct(p.id)
+                    }, 'Delete')
+                  )
                 )
               )
-            )})
-          )
-        )
-      ),
+            })
+          ),
 
       false && qrPreviewProduct && React.createElement('div', {
         className: 'modal-backdrop',
@@ -4123,95 +4193,162 @@ export default function Inventory() {
         ),
         React.createElement('div', { className: 'inventory-damaged-toolbar-note' }, 'Select Receive Repaired to turn one remaining damaged unit into a sellable individual product.')
       ),
-      React.createElement('div', { className: 'table-wrap responsive inventory-damaged-table-wrap' },
-        React.createElement('table', { className: 'inventory-damaged-table' },
-          React.createElement('thead', null,
-            React.createElement('tr', null,
-              React.createElement('th', { style: { minWidth: 150 } }, 'Date'),
-              React.createElement('th', { style: { minWidth: 290 } }, 'Record'),
-              React.createElement('th', { style: { minWidth: 215 } }, 'Status'),
-              React.createElement('th', { style: { minWidth: 240 } }, 'Notes'),
-              React.createElement('th', { style: { minWidth: 160, textAlign: 'center' } }, 'Action')
-            )
-          ),
-          React.createElement('tbody', null,
-            damaged.length === 0
-              ? React.createElement('tr', null,
-                  React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No damaged records found for this filter.')
-                )
-              : damaged.map((d) => {
-                const rowKey = String(d.record_key || `${d.damage_source_type || 'damage'}-${d.damage_source_id || d.id || ''}`)
-                const originalQty = Number(d.original_quantity ?? d.quantity ?? 0)
-                const repairedQty = Number(d.repaired_quantity || 0)
-                const remainingQty = Number(d.remaining_quantity ?? d.quantity ?? 0)
-                const rowSelected = rowKey === selectedDamagedRecordKey
-
-                return React.createElement('tr', {
-                  key: rowKey,
-                  style: rowSelected ? { background: 'rgba(184, 134, 11, 0.08)' } : undefined
-                },
-                React.createElement('td', null,
-                  React.createElement('div', { className: 'inventory-product-primary', style: { fontSize: 14 } }, fmtDate(d.created_at)),
-                  React.createElement('div', { className: 'inventory-product-meta' }, d.reported_by_name ? `Reported by ${d.reported_by_name}` : 'Reporter not set')
+      damaged.length === 0
+        ? React.createElement('div', { className: 'card entity-empty' },
+            React.createElement('div', { className: 'entity-empty-icon', style: { background: 'var(--success-light)', color: 'var(--success)' } },
+              React.createElement('span', { style: { fontSize: 22, fontWeight: 800 } }, '✓')
+            ),
+            React.createElement('div', { className: 'entity-empty-title' }, 'No damaged records'),
+            React.createElement('div', { className: 'entity-empty-sub' }, 'Either the filter is too narrow, or there\'s nothing damaged in this period — good news.')
+          )
+        : React.createElement('div', { className: 'damaged-card-grid' },
+            damaged.map((d) => {
+              const rowKey = String(d.record_key || `${d.damage_source_type || 'damage'}-${d.damage_source_id || d.id || ''}`)
+              const originalQty  = Number(d.original_quantity ?? d.quantity ?? 0)
+              const repairedQty  = Number(d.repaired_quantity || 0)
+              const remainingQty = Number(d.remaining_quantity ?? d.quantity ?? 0)
+              const isSelected = rowKey === selectedDamagedRecordKey
+              const isComplete = remainingQty <= 0
+              const repairProgress = originalQty > 0 ? Math.min(100, Math.round((repairedQty / originalQty) * 100)) : 0
+              const tone = isComplete ? 'complete' : (repairedQty > 0 ? 'partial' : 'pending')
+              return React.createElement('div', {
+                key: rowKey,
+                className: `damaged-card tone-${tone} ${isSelected ? 'is-selected' : ''}`
+              },
+                React.createElement('div', { className: 'damaged-card-head' },
+                  React.createElement('div', { className: 'damaged-card-id' },
+                    React.createElement('div', { className: 'damaged-card-name' }, d.product_name || 'Damaged item'),
+                    React.createElement('div', { className: 'damaged-card-sub' },
+                      d.sku ? `SKU ${d.sku}` : `Source ID #${d.damage_source_id || '-'}`)
+                  ),
+                  React.createElement('span', { className: `damaged-status-pill tone-${tone}` },
+                    isComplete ? 'Complete' : (repairedQty > 0 ? 'Partial' : 'Pending'))
                 ),
-                React.createElement('td', null,
-                  React.createElement('div', { className: 'inventory-product-primary' }, d.product_name || 'Damaged item'),
-                  React.createElement('div', { className: 'inventory-product-meta' }, d.sku ? `SKU ${d.sku}` : `Source ID #${d.damage_source_id || '-'}`),
-                  React.createElement('div', { className: 'inventory-product-chips', style: { marginTop: 8 } },
-                    React.createElement('span', { className: 'inventory-chip' }, d.source_label || 'Inventory'),
-                    rowSelected ? React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, 'Selected') : null
+                React.createElement('div', { className: 'damaged-card-meta' },
+                  React.createElement('div', { className: 'damaged-card-meta-row' },
+                    React.createElement('span', { className: 'damaged-card-meta-label' }, 'Reported'),
+                    React.createElement('span', { className: 'damaged-card-meta-value' }, fmtDate(d.created_at) || '—')
+                  ),
+                  React.createElement('div', { className: 'damaged-card-meta-row' },
+                    React.createElement('span', { className: 'damaged-card-meta-label' }, 'Reporter'),
+                    React.createElement('span', { className: 'damaged-card-meta-value' }, d.reported_by_name || 'Not set')
+                  ),
+                  React.createElement('div', { className: 'damaged-card-meta-row' },
+                    React.createElement('span', { className: 'damaged-card-meta-label' }, 'Source'),
+                    React.createElement('span', { className: 'damaged-card-meta-value' },
+                      React.createElement('span', { className: 'inventory-chip' }, d.source_label || 'Inventory'))
                   )
                 ),
-                React.createElement('td', null,
-                  React.createElement('div', { className: 'inventory-damaged-status' },
-                    React.createElement('span', { className: 'inventory-chip inventory-chip--danger' }, `Original ${originalQty}`),
-                    React.createElement('span', { className: 'inventory-chip inventory-chip--warning' }, `Received ${repairedQty}`),
-                    React.createElement('span', { className: `inventory-chip ${remainingQty > 0 ? 'inventory-chip--success' : 'inventory-chip--subtle'}` }, `Left ${remainingQty}`)
+                React.createElement('div', { className: 'damaged-card-progress' },
+                  React.createElement('div', { className: 'damaged-card-progress-track' },
+                    React.createElement('div', {
+                      className: `damaged-card-progress-fill tone-${tone}`,
+                      style: { width: `${repairProgress}%` }
+                    })
+                  ),
+                  React.createElement('div', { className: 'damaged-card-progress-stats' },
+                    React.createElement('span', null, React.createElement('strong', null, originalQty), ' damaged'),
+                    React.createElement('span', null, React.createElement('strong', null, repairedQty), ' received'),
+                    React.createElement('span', { className: remainingQty > 0 ? 'tone-amber' : 'tone-success' },
+                      React.createElement('strong', null, remainingQty), ' left'
+                    )
                   )
                 ),
-                React.createElement('td', null,
-                  React.createElement('div', { className: 'inventory-damaged-reason' }, formatTransactionReason(d.reason, d.reference))
+                (d.reason || d.reference) && React.createElement('div', { className: 'damaged-card-reason' },
+                  formatTransactionReason(d.reason, d.reference)
                 ),
-                React.createElement('td', { style: { textAlign: 'center' } },
+                React.createElement('div', { className: 'damaged-card-foot' },
                   React.createElement('button', {
                     type: 'button',
-                    className: `btn ${remainingQty <= 0 ? 'btn-secondary' : 'btn-primary'} btn-sm inventory-damaged-repair-btn`,
+                    className: `btn ${isComplete ? 'btn-secondary' : 'btn-primary'} btn-sm`,
                     onClick: () => startRepairDamagedItem(d),
-                    disabled: remainingQty <= 0
-                  }, remainingQty <= 0 ? 'Complete' : 'Receive Repaired')
-                ))
-              })
+                    disabled: isComplete
+                  }, isComplete ? 'Complete' : 'Receive Repaired')
+                )
+              )
+            })
           )
-        )
-      )
     ),
 
     // ═══════════════ LOW STOCK ═══════════════
     tab === 'low-stock' && React.createElement('div', null,
-      React.createElement('div', { className: 'table-wrap' },
-        React.createElement('table', null,
-          React.createElement('thead', null,
-            React.createElement('tr', null,
-              React.createElement('th', null, 'SKU'),
-              React.createElement('th', null, 'Product'),
-              React.createElement('th', null, 'Category'),
-              React.createElement('th', null, 'Current Stock'),
-              React.createElement('th', null, 'Threshold')
-            )
-          ),
-          React.createElement('tbody', null,
-            lowStock.length === 0
-              ? React.createElement('tr', null, React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No low stock items — all good!'))
-              : lowStock.map(p => React.createElement('tr', { key: p.id },
-                  React.createElement('td', null, p.sku || '—'),
-                  React.createElement('td', null, p.name),
-                  React.createElement('td', null, p.category || '—'),
-                  React.createElement('td', { style: { fontWeight: 600, color: 'var(--error)' } }, p.stock_quantity),
-                  React.createElement('td', null, p.low_stock_threshold)
-                ))
+      lowStock.length === 0
+        ? React.createElement('div', { className: 'card entity-empty' },
+            React.createElement('div', { className: 'entity-empty-icon', style: { background: 'var(--success-light)', color: 'var(--success)' } },
+              React.createElement('span', { style: { fontSize: 22, fontWeight: 800 } }, '✓')
+            ),
+            React.createElement('div', { className: 'entity-empty-title' }, 'All stock levels healthy'),
+            React.createElement('div', { className: 'entity-empty-sub' }, 'Nothing below its threshold right now. Items will appear here once stock dips into low territory.')
           )
-        )
-      )
+        : (() => {
+            const outOfStock = lowStock.filter((p) => Number(p.stock_quantity || 0) <= 0)
+            const critical   = lowStock.filter((p) => { const s = Number(p.stock_quantity || 0); const t = Number(p.low_stock_threshold || 10); return s > 0 && s <= Math.max(1, Math.floor(t / 2)) })
+            const warnings   = lowStock.filter((p) => { const s = Number(p.stock_quantity || 0); const t = Number(p.low_stock_threshold || 10); return s > Math.max(1, Math.floor(t / 2)) && s <= t })
+            return React.createElement('div', null,
+              React.createElement('div', { className: 'lowstock-summary-row' },
+                React.createElement('div', { className: 'lowstock-summary tone-error' },
+                  React.createElement('div', { className: 'lowstock-summary-label' }, 'Out of Stock'),
+                  React.createElement('div', { className: 'lowstock-summary-value' }, outOfStock.length)
+                ),
+                React.createElement('div', { className: 'lowstock-summary tone-warning' },
+                  React.createElement('div', { className: 'lowstock-summary-label' }, 'Critical'),
+                  React.createElement('div', { className: 'lowstock-summary-value' }, critical.length)
+                ),
+                React.createElement('div', { className: 'lowstock-summary tone-info' },
+                  React.createElement('div', { className: 'lowstock-summary-label' }, 'Approaching Threshold'),
+                  React.createElement('div', { className: 'lowstock-summary-value' }, warnings.length)
+                ),
+                React.createElement('div', { className: 'lowstock-summary tone-neutral' },
+                  React.createElement('div', { className: 'lowstock-summary-label' }, 'Total Alerts'),
+                  React.createElement('div', { className: 'lowstock-summary-value' }, lowStock.length)
+                )
+              ),
+              React.createElement('div', { className: 'lowstock-card-grid' },
+                lowStock.map((p) => {
+                  const stock     = Number(p.stock_quantity || 0)
+                  const threshold = Number(p.low_stock_threshold || 10)
+                  const ratio     = threshold > 0 ? Math.min(100, Math.round((stock / threshold) * 100)) : 0
+                  const tone = stock <= 0 ? 'out' : stock <= Math.max(1, Math.floor(threshold / 2)) ? 'critical' : 'warn'
+                  const label = stock <= 0 ? 'OUT OF STOCK' : (tone === 'critical' ? 'CRITICAL' : 'LOW')
+                  return React.createElement('div', { key: p.id, className: `lowstock-card tone-${tone}` },
+                    React.createElement('div', { className: 'lowstock-card-head' },
+                      React.createElement('div', { className: 'lowstock-card-id' },
+                        React.createElement('div', { className: 'lowstock-card-name' }, p.name || 'Unnamed product'),
+                        React.createElement('div', { className: 'lowstock-card-sub' },
+                          (p.sku ? `SKU ${p.sku}` : 'No SKU') + (p.category ? ` · ${p.category}` : '')
+                        )
+                      ),
+                      React.createElement('span', { className: `lowstock-status-pill tone-${tone}` }, label)
+                    ),
+                    React.createElement('div', { className: 'lowstock-card-stock' },
+                      React.createElement('span', { className: 'lowstock-card-stock-current' }, stock),
+                      React.createElement('span', { className: 'lowstock-card-stock-divider' }, '/'),
+                      React.createElement('span', { className: 'lowstock-card-stock-threshold' }, threshold),
+                      React.createElement('span', { className: 'lowstock-card-stock-label' }, 'in stock vs threshold')
+                    ),
+                    React.createElement('div', { className: 'lowstock-card-bar' },
+                      React.createElement('div', {
+                        className: `lowstock-card-bar-fill tone-${tone}`,
+                        style: { width: `${ratio}%` }
+                      })
+                    ),
+                    React.createElement('div', { className: 'lowstock-card-foot' },
+                      React.createElement('span', { className: 'lowstock-card-foot-label' },
+                        stock <= 0
+                          ? 'Restock immediately — none on hand.'
+                          : `Reorder soon. ${threshold - stock} unit${(threshold - stock) === 1 ? '' : 's'} below threshold.`
+                      ),
+                      React.createElement('button', {
+                        type: 'button',
+                        className: 'btn btn-outline btn-sm',
+                        onClick: () => navigate('/inventory?tab=stock-in')
+                      }, 'Stock In →')
+                    )
+                  )
+                })
+              )
+            )
+          })()
     ),
 
     // ═══════════════ SHRINKAGE ═══════════════

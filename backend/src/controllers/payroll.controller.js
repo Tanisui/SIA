@@ -1,5 +1,6 @@
 const db = require('../database')
 const { logAuditEventSafe } = require('../utils/auditLog')
+const { emitNotification } = require('../utils/notify')
 const {
   asPositiveId,
   parseReportQuery,
@@ -550,6 +551,22 @@ async function release(req, res) {
         }
       }
     })
+    // Notify each employee whose payslip was released
+    try {
+      const [items] = await db.pool.query(
+        `SELECT pri.user_id FROM payroll_run_items pri WHERE pri.payroll_run_id = ? AND pri.user_id IS NOT NULL`,
+        [run.id]
+      )
+      await Promise.all(items.map((row) => emitNotification({
+        type: 'payroll.released',
+        title: 'Payslip available',
+        body: `Your payslip for ${run.period_code || `run #${run.id}`} has been released.`,
+        recipientUserId: row.user_id,
+        payload: { run_id: run.id, period_code: run.period_code }
+      })))
+    } catch (notifyErr) {
+      console.error('payroll release notify failed:', notifyErr.message)
+    }
     res.json(run)
   } catch (err) {
     handleControllerError(res, err, 'failed to release payroll run')
