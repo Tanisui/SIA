@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import Pagination, { PaginationInfo } from '../components/Pagination.js'
 import JsBarcode from 'jsbarcode'
 import QRCode from 'qrcode'
 import { jsPDF } from 'jspdf'
@@ -746,7 +747,20 @@ export default function Inventory() {
   const [stockInTo, setStockInTo] = useState('')
   const [filterType, setFilterType] = useState('')
   const [transactionSearchQuery, setTransactionSearchQuery] = useState('')
+  const [transactionsPage, setTransactionsPage] = useState(1)
+  const [shrinkageSearchQuery, setShrinkageSearchQuery] = useState('')
+  const [shrinkagePage, setShrinkagePage] = useState(1)
   const [inventoryReportSearchQuery, setInventoryReportSearchQuery] = useState('')
+  const [inventoryReportActiveFilter, setInventoryReportActiveFilter] = useState('all')
+  const [inventoryReportVisibleCols, setInventoryReportVisibleCols] = useState(() => {
+    try {
+      const saved = localStorage.getItem('inventoryReportVisibleCols')
+      if (saved) return JSON.parse(saved)
+    } catch {}
+    return { codes: true, details: true, category: true, source: true, stock: true, pricing: true, movement: false, dates: false }
+  })
+  const [inventoryReportShowColMenu, setInventoryReportShowColMenu] = useState(false)
+  const [inventoryReportExpandedRows, setInventoryReportExpandedRows] = useState(new Set())
   const [damagedSourceFilter, setDamagedSourceFilter] = useState('')
   const [damagedFrom, setDamagedFrom] = useState('')
   const [damagedTo, setDamagedTo] = useState('')
@@ -1246,6 +1260,9 @@ export default function Inventory() {
     if (tab === 'reports') fetchSummary()
     if (tab === 'overview') { fetchSummary(); fetchOverviewTransactions() }
   }, [tab, fetchStockInRecords, fetchBaleStockOptions, fetchTransactions, fetchOverviewTransactions, fetchDamaged, fetchLowStock, fetchShrinkage, fetchSummary])
+
+  useEffect(() => { setTransactionsPage(1) }, [transactionSearchText, filterType])
+  useEffect(() => { setShrinkagePage(1) }, [shrinkageSearchQuery])
 
   useEffect(() => {
     if (location.pathname !== '/inventory') return
@@ -2878,9 +2895,19 @@ export default function Inventory() {
       .slice(0, 5)
   }, [transactions])
   const inventoryReportSearchText = String(inventoryReportSearchQuery || '').trim()
-  const filteredInventoryReportProducts = useMemo(() => (
-    inventoryReportProducts.filter((product) => inventoryReportSearchMatches(product, inventoryReportSearchText))
-  ), [inventoryReportProducts, inventoryReportSearchText])
+  const filteredInventoryReportProducts = useMemo(() => {
+    let filtered = inventoryReportProducts.filter((product) => inventoryReportSearchMatches(product, inventoryReportSearchText))
+    if (inventoryReportActiveFilter === 'low-stock') {
+      filtered = filtered.filter((p) => Number(p.stock_quantity || 0) <= Number(p.low_stock_threshold || 0))
+    } else if (inventoryReportActiveFilter === 'bale') {
+      filtered = filtered.filter((p) => productSourceKey(p) === 'bale_breakdown')
+    } else if (inventoryReportActiveFilter === 'repaired') {
+      filtered = filtered.filter((p) => productSourceKey(p) === 'repaired_damage')
+    } else if (inventoryReportActiveFilter === 'direct') {
+      filtered = filtered.filter((p) => productSourceKey(p) === 'manual')
+    }
+    return filtered
+  }, [inventoryReportProducts, inventoryReportSearchText, inventoryReportActiveFilter])
   const transactionSearchText = String(transactionSearchQuery || '').trim()
   const searchedTransactions = useMemo(() => (
     transactions.filter((row) => transactionSearchMatches(row, transactionSearchText))
@@ -2931,6 +2958,27 @@ export default function Inventory() {
       largestItem: null
     })
   }, [shrinkage])
+
+  const TRANSACTIONS_PAGE_SIZE = 25
+  const transactionsTotalPages = Math.max(1, Math.ceil(searchedTransactions.length / TRANSACTIONS_PAGE_SIZE))
+  const pagedTransactions = useMemo(() =>
+    searchedTransactions.slice((transactionsPage - 1) * TRANSACTIONS_PAGE_SIZE, transactionsPage * TRANSACTIONS_PAGE_SIZE)
+  , [searchedTransactions, transactionsPage])
+
+  const SHRINKAGE_PAGE_SIZE = 20
+  const shrinkageSearchText = String(shrinkageSearchQuery || '').trim().toLowerCase()
+  const filteredShrinkage = useMemo(() => {
+    if (!shrinkageSearchText) return shrinkage
+    return shrinkage.filter(s =>
+      (s.product_name || '').toLowerCase().includes(shrinkageSearchText) ||
+      (s.sku || '').toLowerCase().includes(shrinkageSearchText)
+    )
+  }, [shrinkage, shrinkageSearchText])
+  const shrinkageTotalPages = Math.max(1, Math.ceil(filteredShrinkage.length / SHRINKAGE_PAGE_SIZE))
+  const pagedShrinkage = useMemo(() =>
+    filteredShrinkage.slice((shrinkagePage - 1) * SHRINKAGE_PAGE_SIZE, shrinkagePage * SHRINKAGE_PAGE_SIZE)
+  , [filteredShrinkage, shrinkagePage])
+
   const editingProductRow = products.find((p) => Number(p.id) === Number(editingProduct)) || null
   const editingProductSourceText = editingProductRow
     ? productSourceLabel(editingProductRow)
@@ -4054,8 +4102,8 @@ export default function Inventory() {
             React.createElement('h3', null, 'Transaction History'),
             React.createElement('p', null,
               transactionSearchText
-                ? `Showing ${searchedTransactions.length} of ${transactions.length} transactions`
-                : `${transactionSummary.rows} ${transactionSummary.rows === 1 ? 'transaction' : 'transactions'} shown`
+                ? `${searchedTransactions.length} of ${transactions.length} transactions`
+                : `${transactionSummary.rows} ${transactionSummary.rows === 1 ? 'transaction' : 'transactions'} total`
             )
           ),
           React.createElement('div', {
@@ -4093,7 +4141,7 @@ export default function Inventory() {
             )
           )
         ),
-        React.createElement('div', { className: 'table-wrap responsive inventory-report-table-wrap' },
+        React.createElement('div', { className: 'table-wrap responsive inventory-report-table-wrap', style: { marginBottom: 0 } },
           React.createElement('table', { className: 'inventory-report-table inventory-transaction-table' },
             React.createElement('thead', null,
               React.createElement('tr', null,
@@ -4109,7 +4157,7 @@ export default function Inventory() {
                 ? React.createElement('tr', null,
                     React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, transactionSearchText ? 'No transactions match your search.' : 'No transactions found.')
                   )
-                : searchedTransactions.map((t) => {
+                : pagedTransactions.map((t) => {
                     const legacySaleLinkInReason = !String(t.reference || '').trim() && /^SALE_LINK[:|]/.test(String(t.reason || '').trim())
                     const resolvedReference = legacySaleLinkInReason ? t.reason : t.reference
                     const resolvedReason = formatTransactionReason(t.reason, resolvedReference)
@@ -4151,6 +4199,10 @@ export default function Inventory() {
                   })
             )
           )
+        ),
+        React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, paddingTop: 12 } },
+          React.createElement(PaginationInfo, { current: transactionsPage, pageSize: TRANSACTIONS_PAGE_SIZE, total: searchedTransactions.length }),
+          transactionsTotalPages > 1 && React.createElement(Pagination, { current: transactionsPage, total: transactionsTotalPages, onPageChange: setTransactionsPage })
         )
       )
     ),
@@ -4373,14 +4425,35 @@ export default function Inventory() {
         )
       ),
       React.createElement('div', { className: 'card reports-section-card inventory-report-panel' },
-        React.createElement('div', { className: 'inventory-report-toolbar' },
+        React.createElement('div', { className: 'inventory-report-toolbar', style: { flexWrap: 'wrap', gap: 12 } },
           React.createElement('div', { className: 'inventory-report-title-group' },
             React.createElement('h3', null, 'Shrinkage Details'),
-            React.createElement('p', null, `${shrinkageSummary.products} ${shrinkageSummary.products === 1 ? 'product affected' : 'products affected'}`)
+            React.createElement('p', null,
+              shrinkageSearchText
+                ? `${filteredShrinkage.length} of ${shrinkage.length} products`
+                : `${shrinkageSummary.products} ${shrinkageSummary.products === 1 ? 'product affected' : 'products affected'}`
+            )
           ),
-          React.createElement('span', { className: 'inventory-chip inventory-chip--danger' }, `${shrinkageSummary.totalLoss} units lost`)
+          React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+            React.createElement('div', { style: { display: 'flex', gap: 8 } },
+              React.createElement('input', {
+                className: 'form-input',
+                type: 'search',
+                value: shrinkageSearchQuery,
+                onChange: (e) => setShrinkageSearchQuery(e.target.value),
+                placeholder: 'Search product or SKU',
+                autoComplete: 'off',
+                style: { minWidth: 200 }
+              }),
+              shrinkageSearchText && React.createElement('button', {
+                type: 'button', className: 'btn btn-secondary',
+                onClick: () => setShrinkageSearchQuery('')
+              }, 'Clear')
+            ),
+            React.createElement('span', { className: 'inventory-chip inventory-chip--danger' }, `${shrinkageSummary.totalLoss} units lost`)
+          )
         ),
-        React.createElement('div', { className: 'table-wrap responsive inventory-report-table-wrap' },
+        React.createElement('div', { className: 'table-wrap responsive inventory-report-table-wrap', style: { marginBottom: 0 } },
           React.createElement('table', { className: 'inventory-report-table inventory-shrinkage-table' },
             React.createElement('thead', null,
               React.createElement('tr', null,
@@ -4392,9 +4465,9 @@ export default function Inventory() {
               )
             ),
             React.createElement('tbody', null,
-              shrinkage.length === 0
-                ? React.createElement('tr', null, React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No shrinkage recorded.'))
-                : shrinkage.map((s, index) => {
+              filteredShrinkage.length === 0
+                ? React.createElement('tr', null, React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, shrinkageSearchText ? 'No shrinkage records match your search.' : 'No shrinkage recorded.'))
+                : pagedShrinkage.map((s, index) => {
                     const shrinkageReasons = formatGroupedTransactionReasonList(s.reasons)
 
                     return React.createElement('tr', { key: s.product_id || s.sku || `shrinkage-${index}` },
@@ -4419,6 +4492,10 @@ export default function Inventory() {
                   })
             )
           )
+        ),
+        React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, paddingTop: 12 } },
+          React.createElement(PaginationInfo, { current: shrinkagePage, pageSize: SHRINKAGE_PAGE_SIZE, total: filteredShrinkage.length }),
+          shrinkageTotalPages > 1 && React.createElement(Pagination, { current: shrinkagePage, total: shrinkageTotalPages, onPageChange: setShrinkagePage })
         )
       )
     ),
@@ -4449,23 +4526,11 @@ export default function Inventory() {
         )
       ),
       React.createElement('div', {
-        style: {
-          marginTop: 18,
-          marginBottom: 10,
-          color: 'var(--text-light)',
-          fontSize: 12,
-          lineHeight: 1.6
-        }
-      }, `Showing ${filteredInventoryReportProducts.length} of ${inventoryReportProducts.length} inventory records. Detailed inventory snapshot includes codes, category/type, source, bale data, pricing, movement totals, and dates.`),
+        style: { marginTop: 18, marginBottom: 10, color: 'var(--text-light)', fontSize: 12, lineHeight: 1.6 }
+      }, `Showing ${filteredInventoryReportProducts.length} of ${inventoryReportProducts.length} records.`),
       React.createElement('div', {
         className: 'inventory-report-toolbar',
-        style: {
-          marginBottom: 12,
-          display: 'flex',
-          gap: 10,
-          alignItems: 'end',
-          flexWrap: 'wrap'
-        }
+        style: { marginBottom: 8, display: 'flex', gap: 10, alignItems: 'end', flexWrap: 'wrap' }
       },
         React.createElement('div', { className: 'form-group', style: { marginBottom: 0, flex: '1 1 360px', maxWidth: 620 } },
           React.createElement('label', { className: 'form-label', htmlFor: 'inventory-report-search' }, 'Search Inventory Report'),
@@ -4485,128 +4550,241 @@ export default function Inventory() {
               onClick: () => setInventoryReportSearchQuery('')
             }, 'Clear')
           )
+        ),
+        React.createElement('div', { style: { position: 'relative', marginBottom: 0 } },
+          React.createElement('button', {
+            type: 'button',
+            className: 'btn btn-secondary',
+            onClick: () => setInventoryReportShowColMenu(v => !v),
+            style: { whiteSpace: 'nowrap' }
+          }, 'Columns ▾'),
+          inventoryReportShowColMenu && React.createElement(React.Fragment, null,
+            React.createElement('div', {
+              style: { position: 'fixed', inset: 0, zIndex: 10 },
+              onClick: () => setInventoryReportShowColMenu(false)
+            }),
+            React.createElement('div', {
+              style: {
+                position: 'absolute', top: '100%', right: 0, marginTop: 4,
+                background: 'var(--bg)', border: '1px solid var(--border)',
+                borderRadius: 6, padding: '6px 0', zIndex: 11,
+                minWidth: 180, boxShadow: '0 4px 12px rgba(0,0,0,0.12)'
+              }
+            },
+              [
+                { key: 'codes', label: 'Codes' },
+                { key: 'details', label: 'Product Details' },
+                { key: 'category', label: 'Category / Type' },
+                { key: 'source', label: 'Source / Bale' },
+                { key: 'stock', label: 'Stock' },
+                { key: 'pricing', label: 'Pricing' },
+                { key: 'movement', label: 'Movement' },
+                { key: 'dates', label: 'Last Active' },
+              ].map(col =>
+                React.createElement('label', {
+                  key: col.key,
+                  style: { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 14px', cursor: 'pointer', fontSize: 13 }
+                },
+                  React.createElement('input', {
+                    type: 'checkbox',
+                    checked: !!inventoryReportVisibleCols[col.key],
+                    onChange: () => setInventoryReportVisibleCols(prev => {
+                      const next = { ...prev, [col.key]: !prev[col.key] }
+                      try { localStorage.setItem('inventoryReportVisibleCols', JSON.stringify(next)) } catch {}
+                      return next
+                    })
+                  }),
+                  col.label
+                )
+              )
+            )
+          )
         )
       ),
-      React.createElement('div', { className: 'table-wrap responsive', style: { marginTop: 20 } },
+      React.createElement('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 } },
+        [
+          { key: 'all', label: 'All' },
+          { key: 'low-stock', label: 'Low Stock' },
+          { key: 'bale', label: 'Bale Breakdown' },
+          { key: 'repaired', label: 'Repaired' },
+          { key: 'direct', label: 'Direct' },
+        ].map(chip =>
+          React.createElement('button', {
+            key: chip.key,
+            type: 'button',
+            onClick: () => setInventoryReportActiveFilter(chip.key),
+            style: {
+              padding: '4px 12px',
+              borderRadius: 20,
+              border: inventoryReportActiveFilter === chip.key ? '1.5px solid var(--primary)' : '1.5px solid var(--border)',
+              background: inventoryReportActiveFilter === chip.key ? 'var(--primary)' : 'transparent',
+              color: inventoryReportActiveFilter === chip.key ? '#fff' : 'var(--text)',
+              fontSize: 12,
+              cursor: 'pointer',
+              fontWeight: inventoryReportActiveFilter === chip.key ? 600 : 400
+            }
+          }, chip.label)
+        )
+      ),
+      React.createElement('div', { className: 'table-wrap responsive', style: { marginTop: 8 } },
         React.createElement('table', { className: 'inventory-report-table' },
           React.createElement('thead', null,
             React.createElement('tr', null,
-              React.createElement('th', null, 'Codes'),
-              React.createElement('th', null, 'Product Details'),
-              React.createElement('th', null, 'Category / Type'),
-              React.createElement('th', null, 'Source / Bale'),
-              React.createElement('th', null, 'Stock'),
-              React.createElement('th', null, 'Pricing'),
-              React.createElement('th', null, 'Movement'),
-              React.createElement('th', null, 'Dates')
+              inventoryReportVisibleCols.codes && React.createElement('th', null, 'Codes'),
+              inventoryReportVisibleCols.details && React.createElement('th', null, 'Product Details'),
+              inventoryReportVisibleCols.category && React.createElement('th', null, 'Category / Type'),
+              inventoryReportVisibleCols.source && React.createElement('th', null, 'Source / Bale'),
+              inventoryReportVisibleCols.stock && React.createElement('th', null, 'Stock'),
+              inventoryReportVisibleCols.pricing && React.createElement('th', null, 'Pricing'),
+              inventoryReportVisibleCols.movement && React.createElement('th', null, 'Movement'),
+              inventoryReportVisibleCols.dates && React.createElement('th', null, 'Last Active'),
+              React.createElement('th', { style: { width: 24 } })
             )
           ),
           React.createElement('tbody', null,
             filteredInventoryReportProducts.length === 0
-              ? React.createElement('tr', null, React.createElement('td', { colSpan: 8, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, inventoryReportSearchText ? 'No inventory records match your search.' : 'No active inventory products found.'))
-              : filteredInventoryReportProducts.map((p) => {
-                const stockQuantity = Number(p.stock_quantity || 0)
-                const lowStockThreshold = Number(p.low_stock_threshold || 0)
-                const isLowStockProduct = stockQuantity <= lowStockThreshold
-                const sourceLabel = productSourceLabel(p)
-                const statusLabel = p.status ? toTitleCaseWords(p.status) : (Number(p.is_active ?? 1) === 1 ? 'Active' : 'Inactive')
-                const gradeLabel = p.condition_grade ? toTitleCaseWords(p.condition_grade) : ''
+              ? React.createElement('tr', null,
+                  React.createElement('td', {
+                    colSpan: Object.values(inventoryReportVisibleCols).filter(Boolean).length + 1,
+                    style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 }
+                  }, inventoryReportSearchText || inventoryReportActiveFilter !== 'all' ? 'No inventory records match your filters.' : 'No active inventory products found.')
+                )
+              : filteredInventoryReportProducts.flatMap((p) => {
+                  const stockQuantity = Number(p.stock_quantity || 0)
+                  const lowStockThreshold = Number(p.low_stock_threshold || 0)
+                  const isLowStockProduct = stockQuantity <= lowStockThreshold
+                  const sourceLabel = productSourceLabel(p)
+                  const statusLabel = p.status ? toTitleCaseWords(p.status) : (Number(p.is_active ?? 1) === 1 ? 'Active' : 'Inactive')
+                  const gradeLabel = p.condition_grade ? toTitleCaseWords(p.condition_grade) : ''
+                  const isExpanded = inventoryReportExpandedRows.has(p.id)
+                  const toggleExpand = () => setInventoryReportExpandedRows(prev => {
+                    const next = new Set(prev)
+                    if (next.has(p.id)) next.delete(p.id); else next.add(p.id)
+                    return next
+                  })
+                  const lastActivity = [p.last_transaction_at, p.updated_at, p.breakdown_date, p.bale_purchase_date, p.date_encoded, p.created_at]
+                    .filter(Boolean).sort().pop()
+                  const datesTitle = [
+                    p.date_encoded ? `Encoded: ${fmtDate(p.date_encoded)}` : null,
+                    p.bale_purchase_date ? `Bale purchase: ${fmtDate(p.bale_purchase_date)}` : null,
+                    p.breakdown_date ? `Breakdown: ${fmtDate(p.breakdown_date)}` : null,
+                    p.last_transaction_at ? `Last move: ${fmtDate(p.last_transaction_at)}` : null,
+                    p.created_at ? `Created: ${fmtDate(p.created_at)}` : null,
+                    p.updated_at ? `Updated: ${fmtDate(p.updated_at)}` : null,
+                  ].filter(Boolean).join('\n')
+                  const visibleColCount = Object.values(inventoryReportVisibleCols).filter(Boolean).length + 1
 
-                return React.createElement('tr', { key: `detailed-report-${p.id}` },
-                  React.createElement('td', null,
-                    React.createElement('div', { className: 'inventory-report-primary' }, p.sku || 'No SKU'),
-                    React.createElement('div', { className: 'inventory-report-secondary' }, p.barcode ? `Barcode: ${p.barcode}` : 'No barcode'),
-                    p.item_code && React.createElement('div', { className: 'inventory-report-secondary' }, `Item code: ${p.item_code}`)
-                  ),
-                  React.createElement('td', null,
-                    React.createElement('div', { className: 'inventory-report-primary' }, p.name || 'Unnamed product'),
-                    React.createElement('div', { className: 'inventory-report-secondary' }, p.brand ? `Brand: ${p.brand}` : 'No brand'),
-                    React.createElement('div', { className: 'inventory-report-secondary' }, `${p.size ? `Size: ${p.size}` : 'No size'}${p.color ? ` - Color: ${p.color}` : ''}`),
-                    p.description && React.createElement('div', { className: 'inventory-report-secondary' }, p.description)
-                  ),
-                  React.createElement('td', null,
-                    React.createElement('div', { className: 'inventory-report-primary' }, p.category || 'Uncategorized'),
-                    React.createElement('div', { className: 'inventory-report-secondary' }, p.subcategory ? `Type: ${p.subcategory}` : 'No type'),
-                    p.bale_category && React.createElement('div', { className: 'inventory-report-secondary' }, `Bale category: ${p.bale_category}`)
-                  ),
-                  React.createElement('td', null,
-                    React.createElement('div', { className: 'inventory-product-chips' },
-                      React.createElement('span', { className: 'inventory-chip' }, sourceLabel),
-                      gradeLabel && React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, gradeLabel),
-                      React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, statusLabel)
+                  const mainRow = React.createElement('tr', {
+                    key: `rpt-${p.id}`,
+                    onClick: toggleExpand,
+                    style: { cursor: 'pointer', background: isExpanded ? 'var(--bg-alt, #f4f5f7)' : undefined }
+                  },
+                    inventoryReportVisibleCols.codes && React.createElement('td', null,
+                      React.createElement('div', { className: 'inventory-report-primary' }, p.sku || 'No SKU'),
+                      React.createElement('div', { className: 'inventory-report-secondary' }, p.barcode || 'No barcode')
                     ),
-                    p.bale_batch_no && React.createElement('div', { className: 'inventory-report-secondary', style: { marginTop: 6 } }, `Bale: ${p.bale_batch_no}`),
-                    p.supplier_name && React.createElement('div', { className: 'inventory-report-secondary' }, `Supplier: ${p.supplier_name}`),
-                    p.source_breakdown_id && React.createElement('div', { className: 'inventory-report-secondary' }, `Breakdown #${p.source_breakdown_id}`)
-                  ),
-                  React.createElement('td', null,
-                    React.createElement('div', {
-                      className: 'inventory-report-primary',
-                      style: { fontWeight: 700, color: isLowStockProduct ? 'var(--error)' : 'var(--text-dark)' }
-                    }, stockQuantity),
-                    React.createElement('div', { className: 'inventory-report-secondary' }, `Low threshold: ${lowStockThreshold}`),
-                    React.createElement('div', { className: 'inventory-report-secondary' }, isLowStockProduct ? 'Low stock' : 'Healthy stock')
-                  ),
-                  React.createElement('td', null,
-                    React.createElement('div', { className: 'inventory-report-secondary' }, `Cost: ${fmt(p.cost)}`),
-                    p.allocated_cost && React.createElement('div', { className: 'inventory-report-secondary' }, `Allocated: ${fmt(p.allocated_cost)}`),
-                    React.createElement('div', { className: 'inventory-report-secondary' }, `Price: ${fmt(p.price)}`),
-                    React.createElement('div', { className: 'inventory-report-primary' }, `Cost value: ${fmt(p.stock_value)}`),
-                    React.createElement('div', { className: 'inventory-report-secondary' }, `Retail value: ${fmt(p.retail_value)}`)
-                  ),
-                  React.createElement('td', null,
-                    React.createElement('div', { className: 'inventory-report-secondary' }, `In: ${Number(p.total_in_units || 0)}`),
-                    React.createElement('div', { className: 'inventory-report-secondary' }, `Out: ${Number(p.total_out_units || 0)}`),
-                    React.createElement('div', { className: 'inventory-report-secondary' }, `Adjust: ${Number(p.total_adjustment_units || 0)}`),
-                    React.createElement('div', { className: 'inventory-report-secondary' }, `Return: ${Number(p.total_return_units || 0)}`),
-                    React.createElement('div', { className: 'inventory-report-secondary' }, `Last: ${p.last_transaction_at ? fmtDate(p.last_transaction_at) : 'No movement'}`)
-                  ),
-                  React.createElement('td', null,
-                    React.createElement('div', { className: 'inventory-report-secondary' }, `Encoded: ${p.date_encoded ? fmtDate(p.date_encoded) : 'Not set'}`),
-                    p.bale_purchase_date && React.createElement('div', { className: 'inventory-report-secondary' }, `Bale purchase: ${fmtDate(p.bale_purchase_date)}`),
-                    p.breakdown_date && React.createElement('div', { className: 'inventory-report-secondary' }, `Breakdown: ${fmtDate(p.breakdown_date)}`),
-                    React.createElement('div', { className: 'inventory-report-secondary' }, `Created: ${p.created_at ? fmtDate(p.created_at) : 'Not set'}`),
-                    React.createElement('div', { className: 'inventory-report-secondary' }, `Updated: ${p.updated_at ? fmtDate(p.updated_at) : 'Not set'}`)
+                    inventoryReportVisibleCols.details && React.createElement('td', null,
+                      React.createElement('div', { className: 'inventory-report-primary' }, p.name || 'Unnamed'),
+                      React.createElement('div', { className: 'inventory-report-secondary' },
+                        [p.brand, p.size ? `Sz ${p.size}` : null].filter(Boolean).join(' · ') || 'No brand'
+                      )
+                    ),
+                    inventoryReportVisibleCols.category && React.createElement('td', null,
+                      React.createElement('div', { className: 'inventory-report-primary' }, p.category || 'Uncategorized'),
+                      p.subcategory && React.createElement('div', { className: 'inventory-report-secondary' }, p.subcategory)
+                    ),
+                    inventoryReportVisibleCols.source && React.createElement('td', null,
+                      React.createElement('div', { className: 'inventory-product-chips' },
+                        React.createElement('span', { className: 'inventory-chip' }, sourceLabel),
+                        gradeLabel && React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, gradeLabel),
+                        React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, statusLabel)
+                      )
+                    ),
+                    inventoryReportVisibleCols.stock && React.createElement('td', null,
+                      React.createElement('div', {
+                        className: 'inventory-report-primary',
+                        style: { fontWeight: 700, color: isLowStockProduct ? 'var(--error)' : 'var(--text-dark)' }
+                      }, stockQuantity),
+                      React.createElement('div', { className: 'inventory-report-secondary' }, isLowStockProduct ? 'Low stock' : 'Healthy')
+                    ),
+                    inventoryReportVisibleCols.pricing && React.createElement('td', null,
+                      React.createElement('div', { className: 'inventory-report-primary' }, fmt(p.price || p.selling_price || 0)),
+                      React.createElement('div', { className: 'inventory-report-secondary' }, `Cost ${fmt(p.cost)} · Val ${fmt(p.stock_value)}`)
+                    ),
+                    inventoryReportVisibleCols.movement && React.createElement('td', null,
+                      React.createElement('div', { className: 'inventory-report-secondary' },
+                        `↑${Number(p.total_in_units || 0)} ↓${Number(p.total_out_units || 0)} ~${Number(p.total_adjustment_units || 0)} ↩${Number(p.total_return_units || 0)}`
+                      ),
+                      React.createElement('div', { className: 'inventory-report-secondary' },
+                        p.last_transaction_at ? fmtDate(p.last_transaction_at) : 'No movement'
+                      )
+                    ),
+                    inventoryReportVisibleCols.dates && React.createElement('td', { title: datesTitle },
+                      React.createElement('div', { className: 'inventory-report-primary' }, lastActivity ? fmtDate(lastActivity) : '—'),
+                      React.createElement('div', { className: 'inventory-report-secondary', style: { fontSize: 10 } }, 'hover for dates')
+                    ),
+                    React.createElement('td', {
+                      style: { textAlign: 'center', color: 'var(--text-light)', fontSize: 11, userSelect: 'none', padding: '0 6px' }
+                    }, isExpanded ? '▾' : '▸')
                   )
-                )
-              })
-          )
-        )
-      ),
-      false && React.createElement('div', { className: 'table-wrap', style: { marginTop: 20 } },
-        React.createElement('table', null,
-          React.createElement('thead', null,
-            React.createElement('tr', null,
-              React.createElement('th', null, 'Codes'),
-              React.createElement('th', null, 'Product Details'),
-              React.createElement('th', null, 'Category / Type'),
-              React.createElement('th', null, 'Source / Bale'),
-              React.createElement('th', null, 'Stock'),
-              React.createElement('th', null, 'Pricing'),
-              React.createElement('th', null, 'Movement'),
-              React.createElement('th', null, 'Dates')
-            )
-          ),
-          React.createElement('tbody', null,
-            (summary.products || []).length === 0
-              ? React.createElement('tr', null, React.createElement('td', { colSpan: 8, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No active inventory products found.'))
-              : (summary.products || []).map(p => {
-                const stockQuantity = Number(p.stock_quantity || 0)
-                const lowStockThreshold = Number(p.low_stock_threshold || 0)
-                const isLowStockProduct = stockQuantity <= lowStockThreshold
-                const sourceLabel = productSourceLabel(p)
-                const statusLabel = p.status ? toTitleCaseWords(p.status) : (Number(p.is_active ?? 1) === 1 ? 'Active' : 'Inactive')
-                const gradeLabel = p.condition_grade ? toTitleCaseWords(p.condition_grade) : ''
 
-                return React.createElement('tr', { key: p.id },
-              React.createElement('td', null, p.sku || '—'),
-              React.createElement('td', null, p.name),
-              React.createElement('td', null, p.category || '—'),
-              React.createElement('td', { style: { fontWeight: 600, color: p.stock_quantity <= p.low_stock_threshold ? 'var(--error)' : 'var(--text-dark)' } }, p.stock_quantity),
-              React.createElement('td', null, fmt(p.price)),
-              React.createElement('td', { style: { fontWeight: 500 } }, fmt(p.stock_value))
-                )
-              })
+                  const detailRow = isExpanded && React.createElement('tr', { key: `rpt-detail-${p.id}` },
+                    React.createElement('td', {
+                      colSpan: visibleColCount,
+                      style: { background: 'var(--bg-alt, #f4f5f7)', padding: '14px 20px', borderTop: 'none' }
+                    },
+                      React.createElement('div', {
+                        style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '14px 24px' }
+                      },
+                        React.createElement('div', null,
+                          React.createElement('div', { style: { fontSize: 10, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', marginBottom: 4, letterSpacing: '0.04em' } }, 'Codes'),
+                          React.createElement('div', { style: { fontSize: 12 } }, `SKU: ${p.sku || '—'}`),
+                          React.createElement('div', { style: { fontSize: 12 } }, `Barcode: ${p.barcode || '—'}`),
+                          p.item_code && React.createElement('div', { style: { fontSize: 12 } }, `Item code: ${p.item_code}`)
+                        ),
+                        React.createElement('div', null,
+                          React.createElement('div', { style: { fontSize: 10, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', marginBottom: 4, letterSpacing: '0.04em' } }, 'Product'),
+                          (p.size || p.color) && React.createElement('div', { style: { fontSize: 12 } }, [p.size ? `Size: ${p.size}` : null, p.color ? `Color: ${p.color}` : null].filter(Boolean).join(' · ')),
+                          p.bale_category && React.createElement('div', { style: { fontSize: 12 } }, `Bale cat: ${p.bale_category}`),
+                          p.description && React.createElement('div', { style: { fontSize: 12, color: 'var(--text-light)', marginTop: 2 } }, p.description)
+                        ),
+                        (p.bale_batch_no || p.supplier_name || p.source_breakdown_id) && React.createElement('div', null,
+                          React.createElement('div', { style: { fontSize: 10, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', marginBottom: 4, letterSpacing: '0.04em' } }, 'Bale / Source'),
+                          p.bale_batch_no && React.createElement('div', { style: { fontSize: 12 } }, `Batch: ${p.bale_batch_no}`),
+                          p.supplier_name && React.createElement('div', { style: { fontSize: 12 } }, `Supplier: ${p.supplier_name}`),
+                          p.source_breakdown_id && React.createElement('div', { style: { fontSize: 12 } }, `Breakdown #${p.source_breakdown_id}`)
+                        ),
+                        React.createElement('div', null,
+                          React.createElement('div', { style: { fontSize: 10, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', marginBottom: 4, letterSpacing: '0.04em' } }, 'Pricing Detail'),
+                          React.createElement('div', { style: { fontSize: 12 } }, `Sell: ${fmt(p.price || p.selling_price || 0)}`),
+                          React.createElement('div', { style: { fontSize: 12 } }, `Cost: ${fmt(p.cost)}`),
+                          p.allocated_cost && React.createElement('div', { style: { fontSize: 12 } }, `Allocated: ${fmt(p.allocated_cost)}`),
+                          React.createElement('div', { style: { fontSize: 12 } }, `Stock value: ${fmt(p.stock_value)}`),
+                          React.createElement('div', { style: { fontSize: 12 } }, `Retail value: ${fmt(p.retail_value)}`),
+                          React.createElement('div', { style: { fontSize: 12 } }, `Threshold: ${lowStockThreshold}`)
+                        ),
+                        React.createElement('div', null,
+                          React.createElement('div', { style: { fontSize: 10, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', marginBottom: 4, letterSpacing: '0.04em' } }, 'Movement'),
+                          React.createElement('div', { style: { fontSize: 12 } }, `In: ${Number(p.total_in_units || 0)}`),
+                          React.createElement('div', { style: { fontSize: 12 } }, `Out: ${Number(p.total_out_units || 0)}`),
+                          React.createElement('div', { style: { fontSize: 12 } }, `Adjust: ${Number(p.total_adjustment_units || 0)}`),
+                          React.createElement('div', { style: { fontSize: 12 } }, `Return: ${Number(p.total_return_units || 0)}`),
+                          React.createElement('div', { style: { fontSize: 12 } }, `Last: ${p.last_transaction_at ? fmtDate(p.last_transaction_at) : '—'}`)
+                        ),
+                        React.createElement('div', null,
+                          React.createElement('div', { style: { fontSize: 10, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', marginBottom: 4, letterSpacing: '0.04em' } }, 'Dates'),
+                          React.createElement('div', { style: { fontSize: 12 } }, `Encoded: ${p.date_encoded ? fmtDate(p.date_encoded) : '—'}`),
+                          p.bale_purchase_date && React.createElement('div', { style: { fontSize: 12 } }, `Bale purchase: ${fmtDate(p.bale_purchase_date)}`),
+                          p.breakdown_date && React.createElement('div', { style: { fontSize: 12 } }, `Breakdown: ${fmtDate(p.breakdown_date)}`),
+                          React.createElement('div', { style: { fontSize: 12 } }, `Created: ${p.created_at ? fmtDate(p.created_at) : '—'}`),
+                          React.createElement('div', { style: { fontSize: 12 } }, `Updated: ${p.updated_at ? fmtDate(p.updated_at) : '—'}`)
+                        )
+                      )
+                    )
+                  )
+
+                  return [mainRow, detailRow].filter(Boolean)
+                })
           )
         )
       )

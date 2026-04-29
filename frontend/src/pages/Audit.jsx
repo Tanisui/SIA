@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import api from '../api/api.js'
+import Pagination, { PaginationInfo } from '../components/Pagination.js'
 
 const MODULE_OPTIONS = [
   { value: '', label: 'All areas' },
@@ -848,27 +849,8 @@ export default function Audit() {
         )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ color: '#64748b', fontSize: 13 }}>
-            Showing {items.length} of {total.toLocaleString()} item{total === 1 ? '' : 's'}
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setPage((current) => Math.max(1, current - 1))}
-              disabled={page <= 1 || loading}
-            >
-              Previous
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-              disabled={page >= totalPages || loading}
-            >
-              Next
-            </button>
-          </div>
+          <PaginationInfo current={page} pageSize={Number(filters.limit)} total={total} />
+          <Pagination current={page} total={totalPages} onPageChange={setPage} loading={loading} />
         </div>
       </div>
     </div>
