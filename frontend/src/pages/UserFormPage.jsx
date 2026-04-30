@@ -21,7 +21,6 @@ const PROFILE_SECTIONS = [
   { id: 'account', title: 'Account & Access', tone: 'Required now', note: 'Set the employee login identity and access group first.' },
   { id: 'employment', title: 'Employment', tone: 'Required now', note: 'Capture the employee assignment before completing the rest of the file.' },
   { id: 'personal', title: 'Personal Information', tone: 'Complete later', note: 'Keep legal identity and contact details ready for HR review.' },
-  { id: 'compensation', title: 'Compensation', tone: 'Complete later', note: 'Pay setup can be finished once payroll details are available.' },
   { id: 'government', title: 'Government Numbers', tone: 'Complete later', note: 'Track statutory numbers without blocking the initial employee setup.' },
   { id: 'emergency', title: 'Emergency Contact', tone: 'Complete later', note: 'Keep one reachable contact on file for operational and safety use.' }
 ]
@@ -47,19 +46,11 @@ const SECTION_FIELDS = {
   account: ['email', 'first_name', 'last_name', 'roles'],
   employment: ['position_title', 'hire_date', 'employment_status'],
   personal: ['birth_date', 'sex', 'mobile_number', 'present_address'],
-  compensation: ['pay_basis', 'pay_rate', 'payroll_method', 'provider_name', 'account_name', 'account_number'],
   government: ['tin', 'sss_number', 'philhealth_pin', 'pagibig_mid'],
   emergency: ['emergency_contact_name', 'emergency_contact_relationship', 'emergency_contact_number']
 }
 
 const ALLOWED_EMPLOYMENT_TYPES = new Set(['REGULAR', 'PART_TIME'])
-
-const DEFAULT_BANK_DETAILS = {
-  provider_name: '',
-  account_name: '',
-  account_number: '',
-  account_type: ''
-}
 
 const DEFAULT_FORM = {
   email: '',
@@ -79,10 +70,6 @@ const DEFAULT_FORM = {
   hire_date: '',
   employment_type: '',
   employment_status: 'ACTIVE',
-  pay_basis: '',
-  pay_rate: '',
-  payroll_method: 'CASH',
-  bank_details: { ...DEFAULT_BANK_DETAILS },
   tin: '',
   sss_number: '',
   philhealth_pin: '',
@@ -96,11 +83,7 @@ const DEFAULT_FORM = {
 function cloneForm(formData = DEFAULT_FORM) {
   return {
     ...DEFAULT_FORM,
-    ...formData,
-    bank_details: {
-      ...DEFAULT_BANK_DETAILS,
-      ...(formData.bank_details || {})
-    }
+    ...formData
   }
 }
 
@@ -150,15 +133,7 @@ function mergeDocuments(rows = []) {
 }
 
 function sanitizeFormForDirty(formData) {
-  return {
-    ...formData,
-    bank_details: {
-      provider_name: formData.bank_details?.provider_name || '',
-      account_name: formData.bank_details?.account_name || '',
-      account_number: formData.bank_details?.account_number || '',
-      account_type: formData.bank_details?.account_type || ''
-    }
-  }
+  return { ...formData }
 }
 
 function sanitizeDocumentsForDirty(rows = []) {
@@ -228,18 +203,6 @@ function isValidMobileNumber(value) {
   return /^(09\d{9}|\+639\d{9})$/.test(String(value || '').trim())
 }
 
-function isPositiveRate(value) {
-  if (value === '' || value === null || value === undefined) return false
-  const numeric = Number(value)
-  return Number.isFinite(numeric) && numeric > 0
-}
-
-function formatCurrency(value) {
-  const numeric = Number(value)
-  if (!Number.isFinite(numeric) || numeric <= 0) return '-'
-  return `PHP ${numeric.toFixed(2)}`
-}
-
 function formatFileSize(size) {
   const numeric = Number(size)
   if (!Number.isFinite(numeric) || numeric <= 0) return ''
@@ -259,17 +222,6 @@ function getSectionCompletion(formData) {
     account: hasText(formData.email) && hasText(formData.first_name) && hasText(formData.last_name) && Array.isArray(formData.roles) && formData.roles.length > 0,
     employment: hasText(formData.position_title) && hasText(formData.hire_date) && hasText(formData.employment_status),
     personal: hasText(formData.birth_date) && hasText(formData.sex) && isValidMobileNumber(formData.mobile_number) && hasText(formData.present_address),
-    compensation: hasText(formData.pay_basis)
-      && isPositiveRate(formData.pay_rate)
-      && hasText(formData.payroll_method)
-      && (
-        formData.payroll_method === 'CASH'
-        || (
-          hasText(formData.bank_details?.provider_name)
-          && hasText(formData.bank_details?.account_name)
-          && hasText(formData.bank_details?.account_number)
-        )
-      ),
     government: ['tin', 'sss_number', 'philhealth_pin', 'pagibig_mid'].every((key) => hasText(formData[key])),
     emergency: hasText(formData.emergency_contact_name)
       && hasText(formData.emergency_contact_relationship)
@@ -400,13 +352,6 @@ export default function UserFormPage({ mode = 'create' }) {
           hire_date: employee.hire_date || '',
           employment_type: normalizeEmploymentType(employee.employment_type),
           employment_status: employee.employment_status || 'ACTIVE',
-          pay_basis: employee.pay_basis || '',
-          pay_rate: employee.pay_rate || '',
-          payroll_method: employee.payroll_method || 'CASH',
-          bank_details: {
-            ...DEFAULT_BANK_DETAILS,
-            ...(employee.bank_details || {})
-          },
           tin: employee.tin || '',
           sss_number: employee.sss_number || '',
           philhealth_pin: employee.philhealth_pin || '',
@@ -511,20 +456,6 @@ export default function UserFormPage({ mode = 'create' }) {
     setFormData((prev) => ({ ...prev, [name]: value }))
   }
 
-  const handleBankDetailChange = (event) => {
-    const { name, value } = event.target
-    clearFieldError(name)
-    setError(null)
-    setSuccess(null)
-    setFormData((prev) => ({
-      ...prev,
-      bank_details: {
-        ...prev.bank_details,
-        [name]: value
-      }
-    }))
-  }
-
   const updateDocumentRow = (documentType, updater) => {
     setDocuments((prev) => prev.map((row) => {
       if (row.document_type !== documentType) return row
@@ -616,10 +547,6 @@ export default function UserFormPage({ mode = 'create' }) {
       nextErrors.mobile_number = 'Use 09xxxxxxxxx or +639xxxxxxxxx'
     }
 
-    if (String(formData.pay_rate || '').trim() && !isPositiveRate(formData.pay_rate)) {
-      nextErrors.pay_rate = 'Pay rate must be greater than 0'
-    }
-
     for (const fieldName of ['tin', 'sss_number', 'philhealth_pin', 'pagibig_mid']) {
       const raw = String(formData[fieldName] || '').trim()
       if (raw && !governmentIdPattern.test(raw)) {
@@ -664,17 +591,6 @@ export default function UserFormPage({ mode = 'create' }) {
     hire_date: formData.hire_date || null,
     employment_type: normalizeEmploymentType(formData.employment_type) || null,
     employment_status: formData.employment_status || 'ACTIVE',
-    pay_basis: formData.pay_basis || null,
-    pay_rate: formData.pay_rate === '' ? null : Number(formData.pay_rate),
-    payroll_method: formData.payroll_method || null,
-    bank_details: (formData.payroll_method === 'BANK_TRANSFER' || formData.payroll_method === 'E_WALLET')
-      ? {
-          provider_name: formData.bank_details?.provider_name || null,
-          account_name: formData.bank_details?.account_name || null,
-          account_number: formData.bank_details?.account_number || null,
-          account_type: formData.bank_details?.account_type || null
-        }
-      : null,
     tin: String(formData.tin || '').trim() || null,
     sss_number: String(formData.sss_number || '').trim() || null,
     philhealth_pin: String(formData.philhealth_pin || '').trim() || null,
@@ -965,57 +881,6 @@ export default function UserFormPage({ mode = 'create' }) {
           </div>
         )
 
-      case 'compensation':
-        return (
-          <div className="user-form-grid">
-            <div className="user-form-field">
-              <label className="user-form-label">Pay Basis</label>
-              <select className="user-form-control" name="pay_basis" value={formData.pay_basis} onChange={handleInputChange}>
-                <option value="">Select</option>
-                <option value="DAILY">Daily</option>
-                <option value="MONTHLY">Monthly</option>
-              </select>
-            </div>
-            <div className="user-form-field">
-              <label className="user-form-label">Pay Rate</label>
-              <input className="user-form-control" type="number" name="pay_rate" value={formData.pay_rate} onChange={handleInputChange} step="0.01" />
-              {fieldErrors.pay_rate && <small className="user-form-error">{fieldErrors.pay_rate}</small>}
-            </div>
-            <div className="user-form-field">
-              <label className="user-form-label">Payroll Method</label>
-              <select className="user-form-control" name="payroll_method" value={formData.payroll_method} onChange={handleInputChange}>
-                <option value="CASH">Cash</option>
-                <option value="BANK_TRANSFER">Bank transfer</option>
-                <option value="E_WALLET">E-wallet</option>
-              </select>
-            </div>
-            <div className="user-form-field">
-              <label className="user-form-label">Current Pay Summary</label>
-              <div className="user-form-inline-note">{formatCurrency(formData.pay_rate)}</div>
-            </div>
-            {(formData.payroll_method === 'BANK_TRANSFER' || formData.payroll_method === 'E_WALLET') && (
-              <>
-                <div className="user-form-field">
-                  <label className="user-form-label">{formData.payroll_method === 'BANK_TRANSFER' ? 'Bank Name' : 'Wallet Provider'}</label>
-                  <input className="user-form-control" type="text" name="provider_name" value={formData.bank_details.provider_name} onChange={handleBankDetailChange} />
-                </div>
-                <div className="user-form-field">
-                  <label className="user-form-label">Account Name</label>
-                  <input className="user-form-control" type="text" name="account_name" value={formData.bank_details.account_name} onChange={handleBankDetailChange} />
-                </div>
-                <div className="user-form-field">
-                  <label className="user-form-label">Account Number</label>
-                  <input className="user-form-control" type="text" name="account_number" value={formData.bank_details.account_number} onChange={handleBankDetailChange} />
-                </div>
-                <div className="user-form-field">
-                  <label className="user-form-label">Account Type</label>
-                  <input className="user-form-control" type="text" name="account_type" value={formData.bank_details.account_type} onChange={handleBankDetailChange} placeholder="Savings, Payroll, Verified wallet" />
-                </div>
-              </>
-            )}
-          </div>
-        )
-
       case 'government':
         return (
           <div className="user-form-grid">
@@ -1200,7 +1065,7 @@ export default function UserFormPage({ mode = 'create' }) {
           <p className="page-subtitle">
             {currentStep === 'documents'
               ? 'Manage statutory documents after the employee profile has been saved.'
-              : 'Start with the core employee profile. Supporting documents can be completed on a separate step.'}
+              : 'Start with the core employee profile. Compensation stays in Payroll, and supporting documents can be completed on a separate step.'}
           </p>
         </div>
       </div>
@@ -1235,7 +1100,7 @@ export default function UserFormPage({ mode = 'create' }) {
                 <div className="user-form-intro">
                   <div>
                     <h2 className="user-form-intro-title">Starter Profile</h2>
-                    <p className="user-form-intro-text">Save the login, role, and employee assignment first. The rest of the profile stays available section by section instead of all at once.</p>
+                    <p className="user-form-intro-text">Save the login, role, and employee assignment first. Compensation is handled in Payroll, while the rest of the profile stays available section by section.</p>
                   </div>
                   <div className="user-form-intro-tags">
                     <span className={`user-form-intro-tag ${allProfileSectionsComplete ? 'is-complete' : starterSectionsComplete ? 'is-in-progress' : 'is-pending'}`}>
@@ -1246,7 +1111,8 @@ export default function UserFormPage({ mode = 'create' }) {
                           : 'Notification: Starter profile incomplete'}
                     </span>
                     <span className="user-form-intro-tag">Required now: Account &amp; Employment</span>
-                    <span className="user-form-intro-tag">Complete later: Personal, Pay, IDs, Emergency</span>
+                    <span className="user-form-intro-tag">Compensation is managed in Payroll</span>
+                    <span className="user-form-intro-tag">Complete later: Personal, IDs, Emergency</span>
                   </div>
                 </div>
 

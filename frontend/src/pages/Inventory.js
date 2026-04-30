@@ -764,6 +764,7 @@ export default function Inventory() {
   const [damagedSourceFilter, setDamagedSourceFilter] = useState('')
   const [damagedFrom, setDamagedFrom] = useState('')
   const [damagedTo, setDamagedTo] = useState('')
+  const transactionSearchText = String(transactionSearchQuery || '').trim()
   const [repairForm, setRepairForm] = useState(createEmptyRepairForm())
   const [repairDrafts, setRepairDrafts] = useState({})
   const [selectedDamagedRecordKey, setSelectedDamagedRecordKey] = useState('')
@@ -2908,7 +2909,6 @@ export default function Inventory() {
     }
     return filtered
   }, [inventoryReportProducts, inventoryReportSearchText, inventoryReportActiveFilter])
-  const transactionSearchText = String(transactionSearchQuery || '').trim()
   const searchedTransactions = useMemo(() => (
     transactions.filter((row) => transactionSearchMatches(row, transactionSearchText))
   ), [transactions, transactionSearchText])
