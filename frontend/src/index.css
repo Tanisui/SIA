@@ -10010,3 +10010,86 @@ html, body {
     max-width: 100%;
   }
 }
+
+/* ── 6a. Payroll Pages ───────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  /* Payslip header: stack company info and period info */
+  .payroll-slip-header {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .payroll-slip-period-block {
+    text-align: left;
+    justify-items: start;
+  }
+  /* Payslip paper: tighter padding on phone */
+  .payroll-slip-paper {
+    padding: 1rem;
+  }
+  /* Payroll summary grids: single column */
+  .payroll-summary-grid,
+  .payroll-grid-2col,
+  [class*="payroll-grid"] {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .payroll-slip-paper {
+    padding: 0.75rem;
+  }
+}
+
+/* ── 6b. Sales Return ────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .sales-return-lookup-grid {
+    grid-template-columns: 1fr;
+  }
+  .sales-return-process-grid {
+    grid-template-columns: 1fr;
+  }
+  .sales-return-paper-topbar {
+    flex-direction: column;
+    gap: 12px;
+  }
+  /* Items grid: scrollable instead of reflowing */
+  .sales-return-paper-items {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sales-return-paper-items-header,
+  .sales-return-paper-item {
+    min-width: 560px;
+  }
+  .sales-return-process-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .sales-return-process-summary {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+/* ── 6c. Purchase Order & Bale PO ───────────────────────────────── */
+
+@media (max-width: 768px) {
+  .po-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .po-table-wrap table {
+    min-width: 600px;
+  }
+}
+
+/* ── 6d. Reports Summary Grid ───────────────────────────────────── */
+
+@media (max-width: 480px) {
+  .reports-summary-grid {
+    grid-template-columns: 1fr !important;
+    gap: 10px;
+  }
+}
