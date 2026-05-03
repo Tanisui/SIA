@@ -9839,3 +9839,95 @@ html, body {
     min-width: 600px;
   }
 }
+
+/* ── 4a. Modals ──────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 16px 16px 0 0;
+    max-height: 92vh;
+    margin: 0;
+  }
+  .modal-header {
+    padding: 16px 20px;
+  }
+  .modal-header h2 {
+    font-size: 18px;
+  }
+  .modal-body {
+    padding: 16px 20px;
+  }
+  .modal-footer {
+    padding: 12px 20px;
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+  .modal-footer .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* On very small phones, keep modal from overflowing */
+@media (max-width: 480px) {
+  .modal {
+    max-height: 88vh;
+  }
+  .modal-header h2 {
+    font-size: 16px;
+  }
+}
+
+/* ── 4b. Forms ───────────────────────────────────────────────────── */
+
+/* Multi-column form grids collapse to single column on phone */
+@media (max-width: 768px) {
+  .user-form-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .user-form-stepbar {
+    flex-direction: column;
+  }
+  .user-form-step {
+    min-width: 0;
+    width: 100%;
+  }
+  .user-form-intro {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .user-form-intro-tags {
+    justify-content: flex-start;
+  }
+  .user-form-card {
+    padding: 16px;
+  }
+  /* Customer form and other generic form grids */
+  .form-grid,
+  .form-row-2col {
+    grid-template-columns: 1fr !important;
+    gap: 12px;
+  }
+  /* Form inputs: min touch target */
+  .form-input,
+  .form-select,
+  .user-form-control {
+    min-height: 44px;
+    font-size: 16px; /* prevents iOS auto-zoom on focus */
+  }
+}
+
+@media (max-width: 480px) {
+  .user-form-section-content {
+    padding: 12px;
+  }
+  .user-accordion-trigger {
+    padding: 12px 14px;
+  }
+}
