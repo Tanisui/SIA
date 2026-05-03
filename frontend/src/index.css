@@ -9744,7 +9744,7 @@ html, body {
     padding: 14px 16px;
   }
   .card-header {
-    padding-bottom: 10px;
+    padding: 12px 14px 10px;
     margin-bottom: 12px;
   }
 }
@@ -9781,13 +9781,16 @@ html, body {
 }
 
 /* Chart canvas: never exceed container width */
-canvas {
+.chart-card-body canvas,
+.chart-wrap canvas,
+[class*="chart"] canvas {
   max-width: 100% !important;
 }
 
 @media (max-width: 768px) {
-  canvas {
-    height: auto !important;
+  .chart-card-body canvas,
+  .chart-wrap canvas,
+  [class*="chart"] canvas {
     max-height: 300px !important;
   }
 }
