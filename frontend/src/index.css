@@ -9807,7 +9807,8 @@ html, body {
   .table-wrap table {
     min-width: 600px;
   }
-  /* Smaller cell padding to save horizontal space */
+  /* Smaller cell padding to save horizontal space — bare selectors intentional:
+     covers unclassed tables; higher-specificity rules in base CSS win over these */
   thead th,
   tbody td,
   tfoot td {
@@ -10005,7 +10006,7 @@ html, body {
 /* ── Fix: bottom-sheet modal flush to screen edge at ≤560px ─────── */
 @media (max-width: 560px) {
   .modal-backdrop > .modal {
-    margin: 0;
+    margin: 0 !important;
     width: 100%;
     max-width: 100%;
   }
@@ -10127,13 +10128,16 @@ html, body {
   input[type="number"],
   input[type="search"],
   input[type="tel"],
-  input[type="date"] {
+  input[type="date"],
+  select,
+  textarea {
     font-size: 16px !important;
   }
 }
 
 /* Minimum touch targets for all interactive elements */
 @media (max-width: 768px) {
+  button,
   .btn,
   a.btn,
   [role="button"] {
