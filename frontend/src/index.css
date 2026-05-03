@@ -9794,3 +9794,48 @@ html, body {
     max-height: 300px !important;
   }
 }
+
+/* ── 3. Tables ───────────────────────────────────────────────────── */
+
+/* All table-wraps: horizontal scroll on tablet and phone */
+@media (max-width: 991.98px) {
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Wider min-width so columns stay readable while scrolling */
+  .table-wrap table {
+    min-width: 600px;
+  }
+  /* Smaller cell padding to save horizontal space */
+  thead th,
+  tbody td,
+  tfoot td {
+    padding: 9px 10px;
+    font-size: 12.5px;
+  }
+}
+
+/* Action button columns: always wrap, never clip */
+@media (max-width: 768px) {
+  .table-actions {
+    flex-wrap: wrap;
+    gap: 4px;
+    justify-content: flex-end;
+  }
+  .table-actions .btn-sm {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+}
+
+/* Reports table wrapper */
+@media (max-width: 768px) {
+  .reports-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .reports-table-wrap table {
+    min-width: 600px;
+  }
+}
