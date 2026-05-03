@@ -10093,3 +10093,68 @@ html, body {
     gap: 10px;
   }
 }
+
+/* ── 7. Header & Notification Popover ───────────────────────────── */
+
+/* Notification popover: clamp width so it doesn't overflow on narrow phones */
+@media (max-width: 480px) {
+  .notif-popover {
+    width: calc(100vw - 32px);
+    right: -48px;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+}
+
+/* Header: tighten gap between action items on phone */
+@media (max-width: 480px) {
+  .header-right,
+  .topbar-right {
+    gap: 8px;
+  }
+  .btn-signout {
+    padding: 0 0.6rem;
+    font-size: 0.8rem;
+  }
+}
+
+/* ── 8. General Mobile Polish ───────────────────────────────────── */
+
+/* Input font-size 16px everywhere on mobile — prevents iOS auto-zoom */
+@media (max-width: 768px) {
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="search"],
+  input[type="tel"],
+  input[type="date"],
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Minimum touch targets for all interactive elements */
+@media (max-width: 768px) {
+  button,
+  .btn,
+  a.btn,
+  [role="button"] {
+    min-height: 40px;
+  }
+  .btn-sm {
+    min-height: 32px;
+  }
+}
+
+/* Login page: tighter on phone */
+@media (max-width: 480px) {
+  .login-card,
+  .auth-card,
+  [class*="login-"] {
+    padding: 24px 20px;
+    margin: 16px;
+    width: calc(100% - 32px);
+  }
+}
