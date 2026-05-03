@@ -9919,7 +9919,7 @@ html, body {
   .form-select,
   .user-form-control {
     min-height: 44px;
-    font-size: 16px; /* prevents iOS auto-zoom on focus */
+    font-size: 16px; /* prevents iOS auto-zoom; Task 7 extends this to all input types */
   }
 }
 
@@ -9985,15 +9985,28 @@ html, body {
 @media (max-width: 768px) {
   .tab-bar,
   .tabs,
-  [class*="-tabs"],
-  [class*="tab-list"] {
+  .purchase-tabs,
+  .reports-tabs,
+  .sales-tabs {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     flex-wrap: nowrap;
     scrollbar-width: none;
   }
   .tab-bar::-webkit-scrollbar,
-  .tabs::-webkit-scrollbar {
+  .tabs::-webkit-scrollbar,
+  .purchase-tabs::-webkit-scrollbar,
+  .reports-tabs::-webkit-scrollbar,
+  .sales-tabs::-webkit-scrollbar {
     display: none;
+  }
+}
+
+/* ── Fix: bottom-sheet modal flush to screen edge at ≤560px ─────── */
+@media (max-width: 560px) {
+  .modal-backdrop > .modal {
+    margin: 0;
+    width: 100%;
+    max-width: 100%;
   }
 }
