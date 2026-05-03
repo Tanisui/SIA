@@ -9732,3 +9732,62 @@ html, body {
     transition: none;
   }
 }
+
+/* ── 2. Cards & Dashboard ────────────────────────────────────────── */
+
+/* Reduce oversized card-value font on phones */
+@media (max-width: 640px) {
+  .card-value {
+    font-size: 26px;
+  }
+  .card {
+    padding: 14px 16px;
+  }
+  .card-header {
+    padding-bottom: 10px;
+    margin-bottom: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .card-value {
+    font-size: 22px;
+  }
+  .card {
+    padding: 12px 14px;
+  }
+  .card-value-sm {
+    font-size: 18px;
+  }
+}
+
+/* Dashboard stat grid: single column on smallest phones */
+@media (max-width: 430px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
+
+/* Dashboard lower section (charts): stack vertically on phones */
+@media (max-width: 768px) {
+  .dashboard-lower,
+  .dashboard-charts,
+  .dashboard-bottom-row {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+}
+
+/* Chart canvas: never exceed container width */
+canvas {
+  max-width: 100% !important;
+}
+
+@media (max-width: 768px) {
+  canvas {
+    height: auto !important;
+    max-height: 300px !important;
+  }
+}
