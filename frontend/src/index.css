@@ -9931,3 +9931,69 @@ html, body {
     padding: 12px 14px;
   }
 }
+
+/* ── 5. Page Headers, Toolbars & Filter Bars ─────────────────────── */
+
+/* Page title reduces further on small phones */
+@media (max-width: 480px) {
+  .page-title {
+    font-size: 18px;
+  }
+  .page-subtitle {
+    font-size: 12px;
+  }
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding-bottom: 14px;
+    margin-bottom: 16px;
+  }
+  /* Action buttons in page header go full-width on smallest phones */
+  .page-header > .btn,
+  .page-header > div > .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Toolbar: all selects and search inputs full-width on phone */
+@media (max-width: 768px) {
+  .toolbar-left .form-select,
+  .toolbar-right .form-select,
+  .toolbar-left .form-input,
+  .toolbar-right .form-input {
+    width: 100%;
+    min-width: 0;
+  }
+  /* Select dropdowns in toolbars: full width */
+  .toolbar select {
+    width: 100%;
+  }
+}
+
+/* Breadcrumb: wrap tightly on phone */
+@media (max-width: 480px) {
+  .breadcrumb {
+    font-size: 12px;
+    gap: 4px;
+    margin-bottom: 16px;
+  }
+}
+
+/* Tab bars: scroll horizontally when tabs don't fit */
+@media (max-width: 768px) {
+  .tab-bar,
+  .tabs,
+  [class*="-tabs"],
+  [class*="tab-list"] {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+  }
+  .tab-bar::-webkit-scrollbar,
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+}
