@@ -4693,6 +4693,7 @@ tbody tr:hover {
   .sidebar {
     transform: translateX(-100%);
     visibility: hidden;
+    transition: transform 0.25s ease, visibility 0.25s ease;
   }
 
   .sidebar.is-open {
@@ -9647,4 +9648,91 @@ select.form-input {
   font-size: 17px;
   letter-spacing: 0.005em;
   color: var(--gray-900);
+}
+
+/* ── Stock-out two-column layout (responsive) ─────────────────────── */
+.inv-stockout-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 760px) {
+  .inv-stockout-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Make all table-wraps scroll horizontally on mobile ──────────── */
+@media (max-width: 900px) {
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .table-wrap table {
+    min-width: 480px;
+  }
+}
+
+/* ── Smooth sidebar animation on desktop collapse ────────────────── */
+.main-content {
+  transition: margin-left 0.2s ease;
+}
+
+/* ── Inventory overview cards stack on phone ─────────────────────── */
+@media (max-width: 640px) {
+  .inv-stockout-grid { gap: 14px; }
+  .inventory-report-page { padding: 0; }
+}
+
+/* ── Modal fills viewport on small phones ────────────────────────── */
+@media (max-width: 560px) {
+  .modal-backdrop > div,
+  .modal-inner,
+  [class*="modal-paper"] {
+    width: calc(100vw - 16px) !important;
+    max-width: 100% !important;
+    margin: 8px auto !important;
+    border-radius: 12px !important;
+  }
+}
+
+/* ── Header user pill: hide avatar text on tiny screens ─────────── */
+@media (max-width: 400px) {
+  .header-user-name,
+  .header-user-role,
+  .header-user-meta { display: none; }
+  .header-user-pill { gap: 0; padding: 0; }
+}
+
+/* ================================================================
+   MOBILE RESPONSIVENESS — ALL PAGES
+   Added: 2026-05-03
+   Breakpoints: ≤991.98px tablet | ≤768px phone | ≤480px small phone
+   ================================================================ */
+
+/* ── 1. Layout Shell ─────────────────────────────────────────────── */
+
+/* When sidebar-is-collapsed class is active on mobile, keep margin at 0 */
+@media (max-width: 991.98px) {
+  .layout.sidebar-is-collapsed .main-content {
+    margin-left: 0 !important;
+  }
+}
+
+/* Prevent horizontal overflow on body at all times */
+html, body {
+  overflow-x: hidden;
+}
+
+/* Smooth transition only on desktop (where sidebar margin changes) */
+@media (min-width: 992px) {
+  .main-content {
+    transition: margin-left 0.2s ease;
+  }
+}
+@media (max-width: 991.98px) {
+  .main-content {
+    transition: none;
+  }
 }
