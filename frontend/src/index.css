@@ -9674,11 +9674,6 @@ select.form-input {
   }
 }
 
-/* ── Smooth sidebar animation on desktop collapse ────────────────── */
-.main-content {
-  transition: margin-left 0.2s ease;
-}
-
 /* ── Inventory overview cards stack on phone ─────────────────────── */
 @media (max-width: 640px) {
   .inv-stockout-grid { gap: 14px; }
@@ -9716,6 +9711,7 @@ select.form-input {
 /* When sidebar-is-collapsed class is active on mobile, keep margin at 0 */
 @media (max-width: 991.98px) {
   .layout.sidebar-is-collapsed .main-content {
+    /* !important guards against CSS variable --sidebar-width applied inline via JS */
     margin-left: 0 !important;
   }
 }
