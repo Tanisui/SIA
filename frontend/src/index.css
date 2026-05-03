@@ -10029,8 +10029,7 @@ html, body {
   }
   /* Payroll summary grids: single column */
   .payroll-summary-grid,
-  .payroll-grid-2col,
-  [class*="payroll-grid"] {
+  .payroll-grid-2col {
     grid-template-columns: 1fr !important;
   }
 }
@@ -10100,7 +10099,7 @@ html, body {
 @media (max-width: 480px) {
   .notif-popover {
     width: calc(100vw - 32px);
-    right: -48px;
+    right: -16px;
     max-height: 70vh;
     overflow-y: auto;
   }
@@ -10128,16 +10127,13 @@ html, body {
   input[type="number"],
   input[type="search"],
   input[type="tel"],
-  input[type="date"],
-  select,
-  textarea {
+  input[type="date"] {
     font-size: 16px !important;
   }
 }
 
 /* Minimum touch targets for all interactive elements */
 @media (max-width: 768px) {
-  button,
   .btn,
   a.btn,
   [role="button"] {
@@ -10151,8 +10147,7 @@ html, body {
 /* Login page: tighter on phone */
 @media (max-width: 480px) {
   .login-card,
-  .auth-card,
-  [class*="login-"] {
+  .auth-card {
     padding: 24px 20px;
     margin: 16px;
     width: calc(100% - 32px);
