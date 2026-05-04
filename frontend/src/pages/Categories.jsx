@@ -114,7 +114,7 @@ export default function Categories() {
             <button type="button" className="btn btn-secondary btn-sm" onClick={handleCancel}>✕ Close</button>
           </div>
           <form onSubmit={handleSave} style={{ padding: '14px 18px 18px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) 2fr', gap: 12 }}>
+            <div className="category-form-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) 2fr', gap: 12 }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">Name *</label>
                 <input className="form-input" required value={form.name}
@@ -128,7 +128,7 @@ export default function Categories() {
                   placeholder="Optional description" />
               </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
+            <div className="category-form-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
               <button type="button" className="btn btn-secondary" onClick={handleCancel}>Cancel</button>
               <button type="submit" className="btn btn-primary">{editing ? 'Update Category' : 'Create Category'}</button>
             </div>

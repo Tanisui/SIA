@@ -3500,7 +3500,7 @@ export default function Sales() {
 
       {tab === 'report' && report && (
         <div>
-          <div className="card" style={{ marginBottom: 16, display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 12, alignItems: 'end' }}>
+          <div className="card sales-report-filter-grid" style={{ marginBottom: 16, display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 12, alignItems: 'end' }}>
             <div className="form-group" style={{ marginBottom: 0 }}><label className="form-label">From</label><input className="form-input" type="date" value={reportFrom} onChange={(e) => setReportFrom(e.target.value)} /></div>
             <div className="form-group" style={{ marginBottom: 0 }}><label className="form-label">To</label><input className="form-input" type="date" value={reportTo} onChange={(e) => setReportTo(e.target.value)} /></div>
             <button className="btn btn-primary" onClick={fetchReport}>Refresh Report</button>

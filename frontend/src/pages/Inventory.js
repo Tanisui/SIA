@@ -1262,7 +1262,7 @@ export default function Inventory() {
     if (tab === 'overview') { fetchSummary(); fetchOverviewTransactions() }
   }, [tab, fetchStockInRecords, fetchBaleStockOptions, fetchTransactions, fetchOverviewTransactions, fetchDamaged, fetchLowStock, fetchShrinkage, fetchSummary])
 
-  useEffect(() => { setTransactionsPage(1) }, [transactionSearchText, filterType])
+  useEffect(() => { setTransactionsPage(1) }, [transactionSearchQuery, filterType])
   useEffect(() => { setShrinkagePage(1) }, [shrinkageSearchQuery])
 
   useEffect(() => {
@@ -3184,6 +3184,7 @@ export default function Inventory() {
         stockInMode === 'bale'
           ? React.createElement('div', null,
               React.createElement('div', {
+                className: 'inventory-bale-selector-grid',
                 style: {
                   display: 'grid',
                   gridTemplateColumns: 'minmax(260px, 560px) minmax(180px, 280px)',
@@ -3340,7 +3341,7 @@ export default function Inventory() {
               }, `All records: ${baleStockSummary.breakdownRecords} | Left to stock in: ${baleStockSummary.leftToStockIn} | Ready for Product Management: ${baleStockSummary.readyForProductManagement}`)
             )
           : React.createElement('form', { onSubmit: handleStockIn },
-              React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 } },
+              React.createElement('div', { className: 'inventory-manual-stock-grid', style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 } },
                 React.createElement('div', { className: 'form-group' },
                   React.createElement('label', { className: 'form-label' }, 'Product *'),
                   React.createElement('select', {
@@ -3386,7 +3387,7 @@ export default function Inventory() {
     ),
 
     // ═══════════════ STOCK OUT ═══════════════
-    tab === 'stock-out' && React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 } },
+    tab === 'stock-out' && React.createElement('div', { className: 'inv-stockout-grid' },
       React.createElement('div', { className: 'card' },
         React.createElement('h3', { style: { marginBottom: 16 } }, 'Net Adjustment (Shrinkage/Lost)'),
         React.createElement('form', { onSubmit: handleAdjust },
@@ -4020,7 +4021,7 @@ export default function Inventory() {
           }),
           React.createElement('div', { style: { marginTop: 8, color: 'var(--text-light)', fontSize: 12 } }, 'When a registered code is scanned here, the product is looked up automatically and sent to Sales POS.')
         ),
-        React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 140px auto', gap: 12, alignItems: 'end' } },
+        React.createElement('div', { className: 'inventory-label-controls-grid', style: { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 140px auto', gap: 12, alignItems: 'end' } },
           React.createElement('div', { className: 'form-group', style: { marginBottom: 0 } },
             React.createElement('label', { className: 'form-label' }, 'Product'),
             React.createElement('select', { className: 'form-input', value: labelProductId, onChange: (e) => setLabelProductId(e.target.value) },

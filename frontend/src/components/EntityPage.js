@@ -516,7 +516,7 @@ export default function EntityPage({
       React.createElement('h3', { style: { marginBottom: 6 } }, editing === 'create' ? (createTitle || 'Create') : (editTitle || 'Edit')),
       formIntro && React.createElement('p', { style: { marginBottom: 14, color: 'var(--text-mid)', fontSize: 13.5 } }, formIntro),
       React.createElement('form', { onSubmit: submit },
-        React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(220px, 1fr))', gap: 12 } },
+        React.createElement('div', { className: 'entity-form-grid', style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(220px, 1fr))', gap: 12 } },
           formSchema.map((f) => React.createElement('div', { key: f.name, style: { marginBottom: 2 } },
             (() => {
               const helperText = typeof f.helpText === 'function' ? f.helpText(form, editing) : f.helpText

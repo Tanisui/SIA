@@ -1,0 +1,1296 @@
+` 
+System Integration and Architecture 2 
+Ilanga, Prinz Cozy B. Palanca, Carl Chester S.
+Sintos, Tristan James
+Ms. Maria Teresa Quindoy   
+Mr. Bernie Jereza Mrs. Louise Lynne Seprado    
+S.Y 2025 - 2026 2nd Semester
+
+Table of Contents: 1. Introduction .......................................................................................... 3
+
+
+
+1.1 The Organization ........................................................................ 3
+
+
+
+1.2 Organization Brief Description ...................................................... 3
+
+
+
+1.3 Current Business Process .......................................................... 3
+
+
+
+1.4 Identified Problems ..................................................................... 4
+
+2. Proposed System .................................................................................. 4
+
+2.1 Events Table ............................................................................5
+
+
+
+2.2 Use Case List ...................................................................... 10
+
+2.3 Use case Diagram............................................................... 13
+
+
+
+2.4 Design Class Diagram ................................................................ 17
+
+3. Use case Descriptions............................................................................ 21
+
+4. UI Interface.......................................................................................25
+
+2
+
+1. Introduction
+
+1.1. The Organization
+
+
+
+The name of the organization chosen for this study is Cecille's N' Style
+
+Boutique, a small retail clothing store located in Davao City. The representative and
+
+owner of the business is Mrs. Cecille B. Ilanga, who oversees daily operations including
+
+sales, employee management, and supplier coordination. The boutique specializes in
+
+trendy apparel and accessories for men and women, catering primarily to walk-in
+
+customers within the local area.
+
+1.2. Organization Brief Description
+
+
+
+Cecille's N' Style Boutique operates within the retail fashion industry,
+
+focusing on clothing and fashion accessories. The store caters to both walk-in
+
+customers and occasional bulk orders from loyal clients. The organizational structure is
+
+simple -- with the Store Owner/Manager at the top, followed by a small staff of sales
+
+clerks who manage customer orders and handle transactions. The store manager is
+
+responsible for supervising operations, managing inventory, monitoring employee
+
+attendance, and overseeing financial reports. The sales clerks, on the other hand, assist
+
+customers with product inquiries, record sales transactions, and update order
+
+information. The boutique started as a small clothing stall and has since expanded into
+
+a full boutique, although operations remain primarily manual.
+
+1.3. Current Business Process
+At present, Cecille's N' Style Boutique operates with a semi-manual workflow that relies heavily on paper records and handwritten documentation. The following summarizes their current processes:
+ Sales and Ordering (Checkout) - Customers select items for purchase with assistance from sales clerks. The sales clerks manually compute prices and write down receipts. Because there is no barcode scanning system, checking out multiple items is slow, tedious, and prone to human error during manual price calculations.
+ Inventory and Bale Management - Stock monitoring is done by visually checking physical stock levels. The boutique frequently purchases clothing in bulk (bales) from suppliers. Currently, there is no systematic way to track the source of these bales or accurately break them down into individual, sellable items. Replenishment orders are made only when the owner notices shortages, and there is no formal system to track supplier records, stock-ins, or damaged goods.
+ Employee Access and Security - Employee details are kept on paper. Currently, the store operates without strict system access controls, meaning any employee handling the cash register has the same level of access as the owner, which poses a security risk for business data.
+
+3
+
+ Supplier and Bale Purchasing - The boutique purchases clothing stocks from suppliers, often in bale form. These bale purchases are manually recorded, and details such as supplier name, purchase date, bale category, cost, quantity, and received items are not consistently tracked in one centralized record. After purchasing, the bale contents are sorted into premium, standard, and damaged items. However, the breakdown of each bale is still manually monitored, making it difficult to trace which products came from a specific bale batch.
+
+1.4. Identified Problems
+
+
+
+
+
+Based on observation and interviews with the store owner, several operational
+
+problems were identified:
+
+1. Lack of a centralized record system - Employee, customer, and product records are kept manually, leading to inconsistencies and delays in retrieval.
+2. Unmonitored inventory movement - Stock-ins and stock-outs are not systematically tracked, leading to inaccurate inventory counts.
+3. Inefficient bulk (bale) inventory breakdown - Items purchased in bulk bales from suppliers are difficult to track individually, leading to pricing and stock inaccuracies.
+4. Slow and manual checkout processes - The absence of a barcode scanner system for processing multiple items at once slows down sales operations.
+5. Lack of strict user access control - Roles and permissions are not strictly defined, risking unauthorized access to sensitive financial and inventory data.
+6. Untracked bale purchase and breakdown records ­ Bale purchases, supplier orders, received quantities, returned bales, and bale breakdown details are not centrally monitored, making it difficult to know the exact category, cost, quantity, and inventory movement of each bale batch.
+
+2. Proposed System The proposed system, Cecille's N' Style Boutique Management System, is designed to automate and streamline key operations within the boutique. The system focuses on Inventory Management (with specialized Bale Purchasing and Breakdown features), a Point of Sale (POS) system integrated with Barcode Scanning, Supplier Management, and an Advanced Role-Based Access Control (RBAC) module. Each subsystem handles specific organizational functions but remains securely interconnected through a shared, automated database.
+
+4
+
+2.1
+
+Events Table
+
+2.1.1 User and Role Management System (RBAC)
+
+Event
+
+Trigger
+
+Source
+
+Use Case Response
+
+Destination
+
+Manage Custom Roles
+
+System needs a new access level
+
+Admin
+
+Create / View / Delete / Modify Role
+
+Saves role names, descriptions , and permissions
+
+Role Database
+
+Profile Creation (Step 1)
+
+New
+
+Admin
+
+employee is
+
+hired
+
+Create Employee/Us er Profile
+
+Triggers input for personal, employment , and account details
+
+Employee Database
+
+Document Setup (Step 2)
+
+Employee submits required files
+
+Admin
+
+Manage Employee Documents
+
+Uploads PSA, IDs, TIN, SSS, etc.
+
+Document Storage
+
+Role Assignme nt
+
+Profile creation is complete or role changes
+
+Admin
+
+Assign Role
+
+Inherits role access rights for the user
+
+Role Database
+
+5
+
+Profile Modificati on
+
+Employee details change or employment ends
+
+Admin
+
+Update /
+
+Updates or Employee
+
+Delete / View archives
+
+Database
+
+Profile
+
+user records
+
+2.1.2 Inventory Management System
+
+Suppliers, Stock In & Bale Purchases
+
+Event
+
+Trigger
+
+Source
+
+Use Case Response
+
+Destination
+
+Add New Supplier
+
+New supplier relationship formed
+
+Store Manager
+
+Create supplier profile
+
+Saves supplier contact & details
+
+Supplier Database
+
+Update Supplier
+
+Supplier info changes
+
+Store Manager
+
+Edit supplier profile
+
+Updates supplier record
+
+Supplier Database
+
+6
+
+Input new product
+
+New product type identified
+
+Store Manager / Add new
+
+Clerk
+
+product
+
+Creates product record
+
+Inventory Database
+
+Generate Barcode
+
+New product needs a price tag
+
+Store Clerk
+
+Generate item barcode
+
+Creates unique barcode image
+
+Printer / Database
+
+Create Bale Purchase Order
+
+Need to order bulk clothes
+
+Store Manager
+
+Create new Bale P.O. with supplier details
+
+Saves Bale Purchase Order
+
+Bale Records DB
+
+Record Bale Delivery / Breakdow n
+
+Bale delivery arrives and is opened
+
+Store Manager / Clerk
+
+Process bale breakdown
+
+Updates individual product stock levels and closes P.O.
+
+Inventory Database
+
+Input manual stock (Stock In)
+
+Manual restock outside of bales
+
+Store Manager / Clerk
+
+Create new stock-in record
+
+Adds quantity to inventory
+
+Inventory Database
+
+Stock Out & Adjustments 7
+
+Event
+
+Trigger
+
+Source
+
+Use Case Response
+
+Destination
+
+Record return
+
+Returned item from customer
+
+Store Manager / Process
+
+Clerk
+
+return
+
+Restocks item to inventory
+
+Inventory Database
+
+Record damages
+
+Defective or Store Clerk unsellable item found
+
+Record damaged stock
+
+Deducts from available stock and logs damage
+
+Inventory Database
+
+Record stock adjustmen t
+
+Lost, missing, or mismatched item count (Shrinkage)
+
+Store Manager
+
+Process stock adjustment
+
+Updates discrepancy record and adjusts stock
+
+Inventory Database
+
+8
+
+Other Inventory Functions
+
+Event
+
+Trigger
+
+Source
+
+Use Case Response
+
+Destination
+
+Update product details
+
+Item details (price, name) change
+
+Store Manager
+
+Update inventory item
+
+Updates product record
+
+Inventory Database
+
+Low stock Product
+
+System
+
+alert
+
+drops below
+
+threshold
+
+Generate alert
+
+Notifies Manager
+
+Manager Dashboard
+
+Check inventory status
+
+Manager checks overall stock status
+
+Store Manager
+
+View inventory analytics
+
+Displays inventory summary
+
+Manager Dashboard
+
+9
+
+2.1.3 Sales Management System (POS)
+
+Event
+
+Trigger
+
+Source
+
+Use Case
+
+Response
+
+Destination
+
+Scan / Input Item to Cart
+
+Customer brings item(s) to checkout
+
+Barcode Scanner / Cashier
+
+Add item to cart
+
+Automatically retrieves item details & price from DB, adds to POS cart
+
+POS Interface
+
+Clear Order
+
+Customer cancels order or cashier error
+
+Cashier
+
+Clear current cart
+
+Empties the POS cart screen completely
+
+POS Interface
+
+Review Order Details
+
+Cashier verifies items before checkout
+
+Cashier
+
+View order details
+
+Displays total computation (including VAT, discounts)
+
+POS Interface
+
+Process Payment (Generate Transaction)
+
+Customer provides payment
+
+Cashier
+
+Record payment
+
+Finalizes transaction, saves sales record, and deducts items from inventory
+
+Sales & Inventory DB
+
+Print Receipt
+
+Transaction successfully completed
+
+System / Cashier
+
+Print order receipt
+
+Generates and prints physical receipt with transaction details
+
+Customer / Printer
+
+10
+
+Process Return (Load Receipt)
+
+Customer returns a purchased item
+
+Manager / Process Sales Cashier Return
+
+Loads transaction via receipt, updates sales record, flags returned item
+
+Sales Database
+
+View Sales & Transactions
+
+Manager reviews daily/monthl y sales
+
+Store Manager
+
+View Sales Performance
+
+Displays detailed sales metrics and transaction history
+
+Manager Dashboard
+
+11
+
+2.1.4 Purchasing Management System
+
+Event
+
+Trigger
+
+Source
+
+Use Case
+
+Response
+
+Destination
+
+Order Creation
+
+Need to order bulk items
+
+Manager
+
+Create Purchase Order
+
+Inputs bale quantity, cost, and supplier details
+
+Purchasing DB
+
+Bale Processing
+
+Received bale is opened
+
+Manager Process Bale Breakdown
+
+Inputs total pieces, sorts to categories, logs damage
+
+Inventory DB
+
+Return Processing
+
+Bale is defective or incorrect
+
+Manager
+
+Process
+
+Inputs return Purchasing DB
+
+Supplier Return details and
+
+(Bale Return) links to supplier
+
+History Review
+
+Manager audits past orders
+
+Manager
+
+View Purchase Displays past
+
+History /
+
+purchase
+
+Manage Orders records
+
+Dashboard
+
+12
+
+2.1.5 Payroll Management System
+
+Event
+
+Trigger
+
+Source
+
+Use Case
+
+Response
+
+Destination
+
+Manage Profiles
+
+HR needs to Manager setup payroll info
+
+Manage Payroll Inputs payroll
+
+Profiles
+
+details
+
+Payroll Database
+
+Initiate Payroll Run
+
+New cutoff period begins
+
+Manager Create Payroll Period
+
+Sets start/end dates and frequency
+
+Payroll Database
+
+Attendance Logging
+
+Daily employee shifts
+
+Manager Record Attendance
+
+Logs time-in and time-out
+
+Attendance Database
+
+Execute Payroll Process
+
+Cutoff is reached
+
+Manager
+
+Process Payroll
+
+Syncs attendance, loads profiles, computes deductions
+
+Payroll Database
+
+Manual Adjustments
+
+Employee has bonuses/ded uctions
+
+Manager
+
+Edit Inputs
+
+Adjusts days, OT, bonuses manually
+
+Payroll Database
+
+Finalize Payroll
+
+Computation Manager is approved
+
+Preview & Release Payslips
+
+Generates physical or digital payslips
+
+Employee / Reports
+
+View Reports Manager requests
+
+Manager View Payroll Reports
+
+Displays historical payroll data
+
+Dashboard
+
+13
+
+payroll history
+
+2.1.6 Supplier Management System
+
+Event
+
+Trigger
+
+Source
+
+Use Case
+
+Response
+
+Destination
+
+Supplier Profiling
+
+New vendor partnership
+
+Manager
+
+Manage Supplier Profiles
+
+Creates or edits Supplier supplier details Database
+
+View Directory
+
+Need to look Manager up vendor details
+
+View Supplier List/Directory
+
+Displays all
+
+Dashboard
+
+active suppliers
+
+Supplier Selection
+
+Initiating a transaction (Bale/Stock/ Return)
+
+Manager
+
+Select Supplier for Transaction
+
+Links the chosen supplier to the active record
+
+Transaction Database
+
+2.1.7 Category and Type Management System
+
+Event
+
+Trigger
+
+Source
+
+Use Case
+
+Response
+
+Destination
+
+14
+
+Category Maintenance
+
+Need to classify products
+
+Manager
+
+Manage Product Categories
+
+Creates, updates, or deletes product categories
+
+Category Database
+
+Type Creation/Upd ate
+
+Expanding product variations
+
+Manager
+
+Update/Delete/ Create Product Type
+
+Modifies product types based on loaded category options
+
+Category Database
+
+Link Classification
+
+A new product is being added to inventory
+
+Manager
+
+Link Product Type to Product Records
+
+Assigns the correct category/type to a specific item
+
+Inventory Database
+
+2.1.8 Customer Management System
+15
+
+Event
+
+Trigger
+
+Source
+
+Use Case
+
+Response
+
+Destination
+
+Profile Management
+
+Customer wants to register/upd ate info
+
+Manager
+
+Manage Customer Records
+
+Creates or updates customer profile
+
+Customer Database
+
+Profile Inquiry
+
+Need to check customer status
+
+Manager
+
+View Customer Profile
+
+Displays customer details and tracks purchase history
+
+Dashboard
+
+Transaction Linking
+
+Customer is checking out at POS
+
+Manager/ Cashier
+
+Link Customer to Sale Transaction
+
+Searches customer record and associates with sale
+
+Sales Database
+
+2.2
+Use Case List
+This proposed study focuses on improving the management and operations of Cecille's N' Style Boutique through an integrated system that supports employee records, inventory tracking, bale purchasing, product management, sales transactions, supplier coordination, customer records, reports, and future payroll automation. The system is designed to replace manual paper-based processes with a centralized database where products, suppliers, categories, bale purchases, stock movements, sales, customers, employee records, and reports can be accurately stored and monitored.
+16
+
+The Payroll module is retained as a planned expansion of the system. It will connect employee records with attendance, leaves, deductions, cash advances, payroll computation, and payslip generation.
+This proposed system covers the following business areas:
+2.2 1 User and Role Management System (RBAC):
+Handles employee/user profiling, document records, account access, and role-based permissions.
+ Create user or employee profile  Update user or employee profile  View user or employee profile  Assign role and permissions  Manage employee documents  Track employee status  Authenticate user login  Restrict access based on user role
+2.2.2Inventory Management System
+Tracks products, stock-in, stock-out, damaged items, repairs, barcode labels, inventory transactions, and inventory reports.
+ Create product manually  Create product from bale record  Automatically identify product category from selected bale record  Load product type options based on product category  Save product SKU, barcode, category, type, price, quantity, brand, size, and
+stock threshold  Record manual stock-in with supplier  Record stock-out adjustment  Record damaged item  Track shrinkage  Receive repaired damaged item
+17
+
+ View inventory overview  View stock-in records  View stock-out records  View product list  Generate barcode or QR labels  View inventory transactions  View damaged item records  View low stock alerts  View inventory reports and analytics
+2.2.3 Sales Management System
+Handles customer purchases, sales transactions, payments, receipts, and sales returns.
+ Search product by name, SKU, barcode, category, or reference  Scan barcode or QR code  Add product to sales cart  Input quantity  Compute subtotal, discount, tax, and total amount  Accept payment  Complete sale transaction  Print or generate receipt  Deduct sold quantity from inventory  Record sales transaction  Process sales return or refund  View sales reports
+2.2.4 Purchasing Management System
+Handles bale purchasing, bale purchase orders, receiving, returns, and bale breakdown records.
+ Create bale purchase order  Auto-generate purchase order number  Add multiple order lines in one purchase order
+18
+
+ Select supplier for purchase order  Input bale category, quantity, cost, and expected delivery  View bale purchase orders  Receive ordered bales  Validate received quantity against ordered quantity  Return bales to supplier  Validate return quantity against purchased or received quantity  Create bale purchase record  Record bale batch number  Record bale category  Record bale cost and total cost  Create bale breakdown  Record premium, standard, and damaged quantities  Automatically display bale category in bale breakdown records
+2.2.5 Payroll Management System
+Handles future payroll computation and employee compensation records.
+ Create payroll period  Record attendance and leaves  Record cash advances  Record deductions and allowances  Compute salary based on attendance and payroll rules  Update payroll record  View payroll profile  Generate payslip  Generate payroll report  Generate Daily Time Record
+2.2.6 Supplier Management System
+Handles supplier information used in manual stock-in, bale purchases, purchase orders, and supplier returns.
+19
+
+ Create supplier profile  Update supplier profile  View supplier list  Select supplier during purchase or stock-in  Link supplier to bale purchase records  Link supplier to manual product stock-in  Link supplier to bale purchase orders and returns
+2.2.7 Category and Type Management System
+Handles product classification used by Product Management and bale-linked product creation.
+ Create product category  Update product category  View product categories  Load type options based on selected category  Link product type to product records
+2.2.8 Customer Management System
+Handles customer records that can be linked to sales transactions.  Create customer profile  Update customer profile  View customer profile  Search customer record  Link customer to sale transaction  Track customer purchase history when applicable
+20
+
+2.3 Use Case Diagrams
+2.3.1 User and Role Management System (RBAC):
+21
+
+2.3.2 Inventory Management System 22
+
+2.3.3 Sales Management System (POS) 23
+
+2.3.4 Purchasing Management System 24
+
+2.3.5 Payroll Management System 25
+
+26
+
+2.3.6 Supplier Management System 27
+
+2.3.7 Category and Type Management System 28
+
+2.3.8 Customer Management System 29
+
+2.4 Design Class Diagram
+2.4.1 User and Role Management System (RBAC)
+30
+
+2.4.2 Inventory Management System
+31
+
+2.4.3 Sales Management System (POS)
+32
+
+2.4.4 Purchasing Management System
+33
+
+2.4.5 Payroll Management System
+34
+
+2.4.6 Supplier Management System
+35
+
+2.4.7 Category and Type Management System
+36
+
+2.4.8 Customer Management System
+37
+
+3. Use Case Descriptions
+
+3.1 User and Role Management System (RBAC)
+
+Field
+
+Details
+
+Use Case Name
+
+Create Employee Profile & Assign Role
+
+Scenario
+
+A newly hired employee needs a system account with specific access restrictions.
+
+Triggering Event The Admin navigates to the User Management dashboard and clicks "Add Employee."
+
+Brief Description
+
+The Admin inputs the employee's personal details, uploads necessary documents, creates system login credentials, and assigns a specific Role. The system restricts the user's view based on this assigned role.
+
+Actors
+
+Admin
+
+38
+
+Related Use Cases
+
+<<include>> Assign Role and Permissions, <<include>> Manage Employee Documents
+
+Preconditions
+
+Admin must be logged in with maximum privileges; custom Roles must be predefined.
+
+Postconditions
+
+A new user account is active, documents are saved, and login credentials are valid.
+
+Flow of Activities Actor: (1) Fills in personal details. (2) Uploads required PDF/Image documents. (3) Selects Role. (4) Saves profile.
+
+System: (1.1) Validates required fields. (2.1) Stores documents in private uploads. (3.1) Links Role ID to User ID. (4.1) Grants module access based on Role.
+
+39
+
+3.2 Inventory Management System
+
+Field
+
+Details
+
+Use Case Name Record Stock Adjustments (Shrinkage/Damage)
+
+Scenario
+
+An inventory audit reveals a discrepancy, or a clerk finds a defective item on the floor.
+
+Triggering Event
+
+A user initiates a manual stock adjustment or damage report.
+
+Brief Description
+
+The user selects a specific product and records a deduction due to loss, shrinkage, or damage. The system updates the live inventory count and logs the reason for the discrepancy for auditing purposes.
+
+Actors
+
+Admin / Clerk
+
+Related Use Cases
+
+<<include>> Load Product Options, <<extend>> Low Stock Alert
+
+Preconditions The product must exist in the Inventory Database.
+
+40
+
+Postconditions The item's available stock is reduced, and an adjustment log is created.
+
+Flow of Activities
+
+Actor: (1) Searches for product SKU/Name. (2) Selects adjustment type. (3) Inputs quantity and reason.
+
+System: (1.1) Displays current stock. (2.1) Validates deduction amount. (3.1) Updates inventory and triggers Low Stock Alert if needed.
+
+41
+
+3.3 Sales Management System (POS)
+
+Field
+
+Details
+
+Use Case Name Process Sales Transaction
+
+Scenario
+
+A customer brings items to the counter, and the cashier finalizes the sale.
+
+Triggering Event The cashier initiates a new cart and scans the first product barcode.
+
+Brief Description
+
+The cashier adds items to the POS cart, applies discounts, links a customer profile (optional), and accepts payment. The system computes totals, records the transaction, prints a receipt, and deducts the items from live inventory.
+
+Actors
+
+Cashier, Admin
+
+Related Use Cases
+
+<<include>> Link Customer to Sale, <<include>> Accept Payment, <<extend>> Generate Receipt
+
+Preconditions Cashier must be logged in; products must have active inventory stock.
+
+42
+
+Postconditions A permanent sales record is created, and inventory quantities are reduced.
+
+Flow of Activities
+
+Actor: (1) Scans item barcodes. (2) Links customer profile. (3) Inputs payment amount.
+
+System: (1.1) Computes subtotal. (2.1) Calculates tax/discounts. (3.1) Validates payment, deducts inventory, and prompts receipt printing.
+
+43
+
+3.4 Purchasing Management System
+
+Field
+
+Details
+
+Use Case Name Process Bale Breakdown
+
+Scenario
+
+A received bale from a supplier is opened, sorted, and converted into individual products.
+
+Triggering Event The manager selects a "Received" Bale Purchase Order and initiates the breakdown.
+
+Brief Description
+
+The manager inputs the total pieces found inside a bulk bale. They sort the items into Class A (Premium) and Class B (Standard). If defective items are found, they are recorded. The system then automatically converts these into individual stock records.
+
+Actors
+
+Admin / Purchasing Manager
+
+Related Use Cases
+
+<<include>> Select Supplier, <<extend>> Record Damaged/Unsellable
+
+Preconditions A Bale Purchase Order must exist and be marked as "Received."
+
+44
+
+Postconditions
+
+The Bale status is updated to "Broken Down," and new product stock is injected into Inventory.
+
+Flow of Activities Actor: (1) Selects bale. (2) Inputs total pieces. (3) Assigns quantities to Class A and Class B. (4) Flags unsellable items.
+
+System: (1.1) Loads bale data. (2.1) Validates piece counts against total. (3.1) Generates stock-in records.
+
+45
+
+3.5 Payroll Management System
+
+Field
+
+Details
+
+Use Case Name Process Payroll Cycle
+
+Scenario
+
+HR computes the salary for all active employees for a specific cutoff period.
+
+Triggering Event The manager creates a new Payroll Period and clicks "Process Payroll."
+
+Brief Description
+
+The system loads active employee profiles and syncs their attendance. The manager manually edits inputs for bonuses or deductions. The system computes the final net pay including statutory deductions and generates payslips.
+
+Actors
+
+Admin / HR Manager
+
+Related Use Cases
+
+<<include>> Sync Attendance, <<include>> Compute Payroll, <<extend>> Edit Inputs
+
+Preconditions
+
+Employees must have active Payroll Profiles; Attendance logs must be complete.
+
+46
+
+Postconditions
+
+Payroll records are permanently saved, and payslips are made available for release.
+
+Flow of Activities Actor: (1) Sets date range for cutoff. (2) Clicks Sync Attendance. (3) Adjusts overtime manually. (4) Approves computation.
+
+System: (1.1) Creates period record. (2.1) Pulls time-in/out data. (3.1) Computes gross pay, taxes, and net pay. (4.1) Generates payslip PDFs.
+
+47
+
+3.6 Supplier Management System
+
+Field
+
+Details
+
+Use Case Name Create Supplier Profile
+
+Scenario
+
+The boutique partners with a new vendor for bulk clothing purchases.
+
+Triggering Event The Manager clicks "Add Supplier" in the Supplier Directory.
+
+Brief Description
+
+The Manager inputs the supplier's contact information, company details, and address. The system saves this profile so it can be selected and linked during future Bale Purchases or manual Stock-Ins.
+
+Actors
+
+Admin / Purchasing Manager
+
+Related Use Cases
+
+<<include>> Select Supplier for Transaction (when used in Purchasing)
+
+Preconditions
+
+Manager must be logged in with purchasing privileges.
+
+48
+
+Postconditions
+
+The supplier is added to the directory and becomes a selectable option across the system.
+
+Flow of Activities Actor: (1) Inputs supplier name and contact details. (2) Submits form.
+
+System: (1.1) Validates data format (emails, numbers). (2.1) Saves record to Supplier Database. (3.1) Updates active supplier list.
+
+49
+
+3.7 Category and Type Management System
+
+Field
+
+Details
+
+Use Case Name Manage Product Categories & Types
+
+Scenario
+
+The store introduces a new clothing line and needs to create classifications for it.
+
+Triggering Event The Admin navigates to the Category Management page to add a new classification.
+
+Brief Description The Admin creates a primary Product Category and then creates specific Product Types under it. The system enforces a hierarchy, requiring a category to be loaded before a type can be created or linked to inventory.
+
+Actors
+
+Admin / Inventory Manager
+
+Related Use Cases
+
+<<include>> Load Type Options
+
+Preconditions
+
+User must have Admin or Inventory Manager privileges.
+
+50
+
+Postconditions
+
+New categories and types are available as dropdown options in the Inventory Module.
+
+Flow of Activities Actor: (1) Creates Product Category. (2) Creates Product Type and selects parent Category.
+
+System: (1.1) Saves Category. (2.1) Loads Category options. (3.1) Saves Type and links it to the parent Category.
+
+51
+
+3.8 Customer Management System
+
+Field
+
+Details
+
+Use Case Name View Customer Profile & Purchase History
+
+Scenario
+
+A cashier wants to see a returning customer's past orders or total spending.
+
+Triggering Event The user searches for and opens a specific Customer Profile.
+
+Brief Description The user views the customer's profile details. The system automatically retrieves and aggregates their previous transactions, displaying their Total Orders, Net Spend, and Recent Purchase Lines on the dashboard.
+
+Actors
+
+Admin / Cashier
+
+Related Use Cases
+
+<<include>> Track Purchase History, <<extend>> Search Customer Record
+
+Preconditions
+
+The customer must exist in the database and have prior linked sales transactions.
+
+52
+
+Postconditions The system accurately displays real-time customer metrics on the screen. Flow of Activities Actor: (1) Searches for customer name/number. (2) Clicks to view profile.
+System: (1.1) Queries database for matching records. (2.1) Loads personal profile data. (3.1) Aggregates sales data and displays purchase history UI.
+53
+
+4. Domain Class Diagram
+54
+
+5. UI Interface (Log In Screen) DASHBOARD (HOME)
+55
+
+CATEGORIES (VIEW)
+CATEGORIES (ADD) CATEGORIES (EDIT)
+56
+
+INVENTORY MANAGEMENT (OVERVIEW)
+INVENTORY MANAGEMENT (STOCK IN) INVENTORY MANAGEMENT (STOCK OUT)
+57
+
+INVENTORY MANAGEMENT (PRODUCTS VIEW)
+58
+
+INVENTORY MANAGEMENT (PRODUCTS CREATE)
+INVENTORY MANAGEMENT (TRANSACTIONS)
+59
+
+INVENTORY MANAGEMENT (DAMAGED)
+INVENTORY MANAGEMENT (LOW STOCK ALERT)
+60
+
+INVENTORY MANAGEMENT (SHRINKAGE) INVENTORY MANAGEMENT (REPORTS)
+61
+
+SALES MANAGEMENT (POS) SALES MANAGEMENT (ACCEPT PAYMENT)
+62
+
+SALES MANAGEMENT (PAYMENT RECEIPT) SALES MANAGEMENT (SALES)
+63
+
+SALES MANAGEMENT (SALES VIEW) SALES MANAGEMENT (SALES VIEW MORE)
+64
+
+SALES MANAGEMENT (TRANSACTIONS) SALES MANAGEMENT (RETURNS)
+65
+
+SALES MANAGEMENT (RETURNS LOAD RECEIPT)
+SALES MANAGEMENT (SALES REPORT)
+66
+
+PURCHASING (Purchase Order) PURCHASING (BALE BREAKDOWN)
+67
+
+REPORTS (VIEW) USERS & EMPLOYEES (OVERVIEW)
+68
+
+USERS & EMPLOYEES (CREATE) USERS & EMPLOYEES (DETAILS)
+69
+
+ROLES (VIEW) ROLES (ASSIGNING ROLES)
+70
+
+AUDIT CHANGE PASSWORD
+71
+
+

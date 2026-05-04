@@ -67,10 +67,10 @@ const NAV_ITEMS = [
     children: [
       { to: '/payroll/my-payslips', label: 'My Payslips',        perm: null },
       { to: '/payroll/dtr',         label: 'Daily Time Record',  perm: null },
-      // Admin-only operational pages — non-admin only sees their own statuses.
-      { to: '/payroll/periods',     label: 'Periods',  perm: 'admin.*' },
-      { to: '/payroll/profiles',    label: 'Profiles', perm: 'admin.*' },
-      { to: '/payroll/reports',     label: 'Reports',  perm: 'admin.*' }
+      // Payroll pages handle write actions internally; non-admin users can still open read-only screens.
+      { to: '/payroll/periods',     label: 'Periods',  perm: ['payroll.period.view', 'payroll.period.compute'] },
+      { to: '/payroll/profiles',    label: 'Profiles', perm: ['payroll.profile.view', 'payroll.profile.create', 'payroll.profile.update'] },
+      { to: '/payroll/reports',     label: 'Reports',  perm: 'payroll.report.view' }
     ]
   },
   { section: 'Admin' },

@@ -119,7 +119,7 @@ export default function ChangePassword() {
       error && React.createElement('div', { style: { color: '#721c24', backgroundColor: '#f8d7da', padding: '10px', borderRadius: '4px', marginBottom: '15px', fontSize: '13px' } }, error),
 
       React.createElement('form', { onSubmit: handleSubmit },
-        React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(220px, 1fr))', gap: 12 } },
+        React.createElement('div', { className: 'account-security-grid', style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(220px, 1fr))', gap: 12 } },
           React.createElement('div', { style: { marginBottom: 2 } },
             React.createElement('label', { style: labelStyle }, 'Username'),
             React.createElement('input', {
@@ -148,7 +148,7 @@ export default function ChangePassword() {
           )
         ),
 
-        React.createElement('div', { style: { marginTop: 14 } },
+        React.createElement('div', { className: 'account-security-actions', style: { marginTop: 14 } },
           React.createElement('button', { type: 'submit', className: 'btn btn-primary', style: { marginRight: 8 } }, 'Save'),
           React.createElement('button', { type: 'button', className: 'btn btn-secondary', onClick: () => navigate(-1) }, 'Cancel')
         )

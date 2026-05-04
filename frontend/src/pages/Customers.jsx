@@ -188,7 +188,7 @@ export default function Customers() {
 
       {error ? <div className="error-msg" style={{ marginBottom: 16 }}>{error}</div> : null}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '360px minmax(0,1fr)', gap: 20 }}>
+      <div className="customers-split-layout" style={{ display: 'grid', gridTemplateColumns: '360px minmax(0,1fr)', gap: 20 }}>
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: 16, borderBottom: '1px solid var(--border)' }}>
             <label className="form-label">Search Customers</label>

@@ -430,7 +430,7 @@ export default function Roles() {
                   <label className="form-label" style={{ marginBottom: 0 }}>What this role can do *</label>
                   <div style={{ color: '#64748b', fontSize: 12 }}>Tip: hover a permission to see its system key</div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto', gap: 10, alignItems: 'end', marginBottom: 14 }}>
+                <div className="roles-permission-toolbar" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto', gap: 10, alignItems: 'end', marginBottom: 14 }}>
                   <div style={{ minWidth: 0 }}>
                     <label className="form-label">Find an access rule</label>
                     <input className="form-input" value={permissionSearch} onChange={(e) => setPermissionSearch(e.target.value)} placeholder="Search sales, attendance, customer, inventory..." />
@@ -444,7 +444,7 @@ export default function Roles() {
                 ) : !groupedPermissions.length ? (
                   <div style={{ padding: 24, textAlign: 'center', color: '#64748b', border: '1px solid #e2e8f0', borderRadius: 12, background: '#ffffff' }}>No access rules match your search.</div>
                 ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+                  <div className="roles-permission-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
                     {groupedPermissions.map((group) => {
                       const groupKeys = group.permissions.map((permission) => permission.key)
                       const selectedCount = group.permissions.filter((permission) => selectedSet.has(permission.key)).length

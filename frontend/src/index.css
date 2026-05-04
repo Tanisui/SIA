@@ -10157,3 +10157,82 @@ html, body {
     width: calc(100% - 32px);
   }
 }
+
+/* Mobile compatibility hardening: keeps desktop visuals, fixes phone/tablet overflow. */
+@media (max-width: 991.98px) {
+  .layout,
+  .layout.sidebar-is-collapsed {
+    --mobile-sidebar-width: min(86vw, 292px);
+    --sidebar-width: var(--mobile-sidebar-width);
+  }
+
+  .layout .main-content,
+  .layout.sidebar-is-collapsed .main-content {
+    width: 100%;
+    min-width: 0;
+    margin-left: 0 !important;
+  }
+
+  .layout .sidebar,
+  .layout.sidebar-is-collapsed .sidebar {
+    width: var(--mobile-sidebar-width) !important;
+    max-width: calc(100vw - 40px);
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  .sidebar-collapse-btn {
+    display: none;
+  }
+
+  .sidebar-overlay {
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+  }
+}
+
+@media (max-width: 768px) {
+  .customers-split-layout,
+  .category-form-grid,
+  .account-security-grid,
+  .entity-form-grid,
+  .inventory-bale-selector-grid,
+  .inventory-manual-stock-grid,
+  .inventory-label-controls-grid,
+  .roles-permission-toolbar,
+  .roles-permission-grid,
+  .sales-report-filter-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .customers-split-layout {
+    gap: 16px !important;
+  }
+
+  .inventory-label-controls-grid .btn,
+  .roles-permission-toolbar .btn,
+  .sales-report-filter-grid .btn {
+    width: 100%;
+  }
+
+  .category-form-actions,
+  .account-security-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .category-form-actions .btn,
+  .account-security-actions .btn {
+    width: 100%;
+    margin-right: 0 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .layout,
+  .layout.sidebar-is-collapsed {
+    --mobile-sidebar-width: min(88vw, 292px);
+  }
+}
