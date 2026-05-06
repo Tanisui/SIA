@@ -163,11 +163,8 @@ function sanitizeReferenceToken(value, maxLength = 80) {
 
 function normalizeStockInSourceType(value) {
   const normalized = String(value || '').trim().toLowerCase()
-  if (normalized === 'bale' || normalized === 'manual') return normalized
-  if (normalized === 'supplier') {
-    throw createHttpError(400, 'Supplier Delivery is not available for existing-product stock-in. Use Bale Batch or Manual Correction.')
-  }
-  throw createHttpError(400, 'receiving source must be Bale Batch or Manual Correction')
+  if (normalized === 'bale' || normalized === 'manual' || normalized === 'supplier') return normalized
+  throw createHttpError(400, 'receiving source must be Supplier Delivery or Bale Batch')
 }
 
 function stockInReasonForSource(sourceType) {
@@ -761,6 +758,9 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
       if (supplier_id && Number(supplier_id) !== Number(supplier.id)) {
         throw createHttpError(400, 'selected supplier does not match the selected bale batch')
       }
+    } else if (normalizedSourceType === 'supplier') {
+      supplier = await resolveSupplierForStockIn(conn, supplier_id)
+      if (!supplier) throw createHttpError(400, 'supplier is required for supplier delivery stock-in')
     } else {
       if (supplier_id) {
         supplier = await resolveSupplierForStockIn(conn, supplier_id)
