@@ -34,7 +34,7 @@ export default function Users(){
       const res = await api.get('/users')
       setUsers(res.data || [])
     } catch (err) {
-      setError('Failed to fetch users')
+      setError('Failed to load users.')
     }
     setLoading(false)
   }
@@ -45,12 +45,12 @@ export default function Users(){
     setSuccess(null)
     try {
       await api.post('/users', formData)
-      setSuccess('User created successfully')
+      setSuccess('User account created.')
       setFormData({})
       setShowCreate(false)
       fetchUsers()
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to create user')
+      setError(err.response?.data?.error || 'Failed to create the user account.')
     }
   }
 
@@ -61,24 +61,24 @@ export default function Users(){
     try {
       const { id, ...data } = formData
       await api.put(`/users/${id}`, data)
-      setSuccess('User updated successfully')
+      setSuccess('User account updated.')
       setFormData({})
       setShowEdit(false)
       fetchUsers()
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to update user')
+      setError(err.response?.data?.error || 'Failed to update the user account.')
     }
   }
 
   const handleDelete = async (id) => {
-    if (!confirm('Delete this user? Related employee data will also be deleted.')) return
+    if (!confirm('Delete this user account? The associated employee record will also be removed. This action cannot be undone.')) return
     setError(null)
     try {
       await api.delete(`/users/${id}`)
-      setSuccess('User deleted successfully')
+      setSuccess('User account deleted.')
       fetchUsers()
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to delete user')
+      setError(err.response?.data?.error || 'Failed to delete the user account.')
     }
   }
 

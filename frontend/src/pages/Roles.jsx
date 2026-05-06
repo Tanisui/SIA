@@ -208,7 +208,7 @@ export default function Roles() {
         setRoles(rolesRes.data || [])
         setPermissions(permsRes.data?.permissions || permsRes.data || [])
       } catch (loadError) {
-        setError('Failed to load roles or permissions')
+        setError('Failed to load roles and permissions.')
       }
       setLoading(false)
     }
@@ -269,23 +269,23 @@ export default function Roles() {
 
   const save = async (e) => {
     e.preventDefault()
-    if (!name.trim()) return setError('Role name is required')
-    if (!perms.length) return setError('Please select at least one permission')
+    if (!name.trim()) return setError('Role name is required.')
+    if (!perms.length) return setError('Select at least one permission for this role.')
 
     try {
       if (editing) {
         await api.put(`/roles/${editing}`, { name, description: desc, permissions: perms })
-        setSuccess('Role updated successfully')
+        setSuccess('Role updated.')
       } else {
         await api.post('/roles', { name, description: desc, permissions: perms })
-        setSuccess('New role created successfully')
+        setSuccess('Role created.')
       }
       setTimeout(async () => {
         resetForm()
         await reloadRoles()
       }, 500)
     } catch (saveError) {
-      setError(saveError?.response?.data?.error || 'Failed to save role')
+      setError(saveError?.response?.data?.error || 'Failed to save the role.')
     }
   }
 
@@ -312,13 +312,13 @@ export default function Roles() {
   }
 
   const deleteRole = async (id) => {
-    if (!confirm('Are you sure you want to delete this role?')) return
+    if (!confirm('Delete this role? Users assigned to it will lose their associated access.')) return
     try {
       await api.delete(`/roles/${id}`)
-      setSuccess('Role deleted')
+      setSuccess('Role deleted.')
       await reloadRoles()
     } catch (deleteError) {
-      setError('Delete failed')
+      setError('Failed to delete the role.')
     }
   }
 

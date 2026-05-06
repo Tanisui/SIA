@@ -133,6 +133,107 @@ async function resolveSupplierForStockIn(conn, supplierId) {
   return rows[0]
 }
 
+function parseReferenceMeta(rawValue) {
+  const value = String(rawValue || '').trim()
+  if (!value) return null
+  const normalized = value.replace(/^([A-Z_]+):/, '$1|')
+  const parts = normalized.split('|').filter(Boolean)
+  if (!parts.length) return null
+  const tag = parts[0]
+  const meta = {}
+  for (const part of parts.slice(1)) {
+    const idx = part.indexOf('=')
+    if (idx <= 0) continue
+    const key = part.slice(0, idx)
+    const val = part.slice(idx + 1)
+    if (key) meta[key] = val
+  }
+  return { tag, meta }
+}
+
+function sanitizeReferenceToken(value, maxLength = 80) {
+  return String(value || '')
+    .trim()
+    .replace(/[|=]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength)
+    .trim()
+}
+
+function normalizeStockInSourceType(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'bale' || normalized === 'manual') return normalized
+  if (normalized === 'supplier') {
+    throw createHttpError(400, 'Supplier Delivery is not available for existing-product stock-in. Use Bale Batch or Manual Correction.')
+  }
+  throw createHttpError(400, 'receiving source must be Bale Batch or Manual Correction')
+}
+
+function stockInReasonForSource(sourceType) {
+  if (sourceType === 'bale') return 'Stock in from bale source'
+  if (sourceType === 'supplier') return 'Stock in from supplier'
+  return 'Manual stock correction'
+}
+
+async function resolveBaleForStockIn(conn, balePurchaseId) {
+  const normalizedBalePurchaseId = Number(balePurchaseId)
+  if (!Number.isInteger(normalizedBalePurchaseId) || normalizedBalePurchaseId <= 0) {
+    throw createHttpError(400, 'bale_purchase_id must be a valid bale record')
+  }
+
+  const [rows] = await conn.query(`
+    SELECT
+      bp.id AS bale_purchase_id,
+      bp.supplier_id,
+      bp.supplier_name,
+      bp.bale_batch_no,
+      bp.bale_category,
+      bb.id AS breakdown_id
+    FROM bale_purchases bp
+    LEFT JOIN bale_breakdowns bb ON bb.bale_purchase_id = bp.id
+    WHERE bp.id = ?
+    ORDER BY bb.id DESC
+    LIMIT 1
+  `, [normalizedBalePurchaseId])
+
+  if (!rows.length) throw createHttpError(400, 'bale record not found')
+  return rows[0]
+}
+
+async function loadExistingStockInProduct(conn, productId) {
+  const [rows] = await conn.query(`
+    SELECT id, name, sku, stock_quantity, cost, product_source, bale_purchase_id
+    FROM products
+    WHERE id = ?
+    LIMIT 1
+    FOR UPDATE
+  `, [Number(productId)])
+
+  return rows[0] || null
+}
+
+function buildStockInReference({ sourceType, supplier, bale, reference }) {
+  const parts = ['STOCK_IN', `source=${String(sourceType || 'manual').toUpperCase()}`]
+
+  if (sourceType === 'supplier' && supplier?.id) {
+    parts.push(`supplier_id=${Number(supplier.id)}`)
+  }
+
+  if (sourceType === 'bale' && bale) {
+    parts.push(`bale_purchase_id=${Number(bale.bale_purchase_id)}`)
+    if (bale.breakdown_id) parts.push(`breakdown_id=${Number(bale.breakdown_id)}`)
+    const batch = sanitizeReferenceToken(bale.bale_batch_no, 40)
+    if (batch) parts.push(`batch=${batch}`)
+    const supplierName = sanitizeReferenceToken(bale.supplier_name, 40)
+    if (supplierName) parts.push(`supplier=${supplierName}`)
+  }
+
+  const note = sanitizeReferenceToken(reference, 50)
+  if (note) parts.push(`note=${note}`)
+  return parts.join('|')
+}
+
 async function createInventoryProductRecord(conn, options) {
   let normalizedSku = String(options?.sku || '').trim() || null
   if (!normalizedSku) {
@@ -225,11 +326,21 @@ function getInventoryTransactionSourceMeta(row) {
   const reason = String(row?.reason || '').trim()
 
   if (transactionType === 'IN') {
+    const parsedReference = parseReferenceMeta(reference)
+    if (parsedReference?.tag === 'STOCK_IN') {
+      const source = String(parsedReference.meta?.source || '').trim().toUpperCase()
+      if (source === 'BALE') return { source_type: 'bale_stock_in', source_label: 'Bale Batch' }
+      if (source === 'SUPPLIER') return { source_type: 'supplier_stock_in', source_label: 'Supplier Delivery' }
+      if (source === 'MANUAL') return { source_type: 'manual_correction', source_label: 'Manual Correction' }
+    }
     if (/^BALE_BREAKDOWN\|/i.test(reference)) {
       return { source_type: 'bale_breakdown', source_label: 'Bale Breakdown' }
     }
     if (/^DAMAGE_REPAIR\|/i.test(reference)) {
       return { source_type: 'damage_repair', source_label: 'Damage Repair' }
+    }
+    if (row?.supplier_id) {
+      return { source_type: 'supplier_stock_in', source_label: 'Supplier Delivery' }
     }
     return { source_type: 'manual_stock_in', source_label: 'Manual Stock In' }
   }
@@ -489,6 +600,7 @@ router.get('/stock-in/bale-options', verifyToken, authorize('inventory.receive')
         bb.id AS breakdown_id,
         bb.bale_purchase_id,
         bp.bale_batch_no,
+        bp.supplier_id,
         bp.supplier_name,
         bp.purchase_date,
         bp.bale_category,
@@ -620,31 +732,64 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
   try {
     await ensureAutomatedReportsSchema()
     await conn.beginTransaction()
-    const { product_id, quantity, cost, reference, supplier_id, date } = req.body
-    if (!product_id || !quantity || quantity <= 0) throw createHttpError(400, 'product_id and positive quantity required')
+    const { product_id, quantity, cost, reference, date, source_type, bale_purchase_id } = req.body
+    const normalizedProductId = Number(product_id)
+    const normalizedQuantity = Number(quantity)
+    if (
+      !Number.isInteger(normalizedProductId) ||
+      normalizedProductId <= 0 ||
+      !Number.isInteger(normalizedQuantity) ||
+      normalizedQuantity <= 0
+    ) {
+      throw createHttpError(400, 'valid product_id and positive whole quantity required')
+    }
 
-    const supplier = await resolveSupplierForStockIn(conn, supplier_id)
+    const normalizedSourceType = normalizeStockInSourceType(source_type)
+    const normalizedReference = String(reference || '').trim()
+    if (normalizedSourceType === 'manual' && !sanitizeReferenceToken(normalizedReference, 50)) {
+      throw createHttpError(400, 'reference is required for manual correction')
+    }
+
+    const lockedProduct = await loadExistingStockInProduct(conn, normalizedProductId)
+    if (!lockedProduct) throw createHttpError(404, 'product not found')
+
+    let bale = null
+    let supplier = null
+
+    if (normalizedSourceType === 'bale') {
+      bale = await resolveBaleForStockIn(conn, bale_purchase_id)
+      if (Number(lockedProduct.bale_purchase_id || 0) !== Number(bale.bale_purchase_id)) {
+        throw createHttpError(400, 'selected product is not linked to the selected bale batch')
+      }
+      supplier = await resolveSupplierForStockIn(conn, bale.supplier_id)
+    }
+
     const createdAt = resolveTransactionTimestamp(date, 'date')
+    const stockInReference = buildStockInReference({
+      sourceType: normalizedSourceType,
+      supplier,
+      bale,
+      reference
+    })
 
     const stockResult = await applyProductStockDelta(conn, {
-      productId: product_id,
-      deltaQuantity: quantity,
+      productId: normalizedProductId,
+      deltaQuantity: normalizedQuantity,
       cost,
+      lockedProduct,
       supplierId: supplier?.id || null,
       userId: req.auth.id,
-      reference: reference || null,
-      reason: 'Manual stock in',
+      reference: stockInReference,
+      reason: stockInReasonForSource(normalizedSourceType),
       createdAt,
-      transactionType: 'IN',
-      disallowedProductSources: ['bale_breakdown', 'repaired_damage'],
-      disallowedSourceMessage: 'Stock for bale breakdown and repaired-damage products is managed through their dedicated creation flow.'
+      transactionType: 'IN'
     })
 
     await logAuditEventSafe(conn, {
       userId: req.auth.id,
       action: 'INVENTORY_STOCK_IN',
       resourceType: 'Product',
-      resourceId: product_id,
+      resourceId: normalizedProductId,
       details: {
         module: 'inventory',
         severity: 'low',
@@ -652,11 +797,15 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
         summary: `Recorded stock in for ${stockResult.product.name}`,
         before: { stock_quantity: stockResult.beforeQuantity, cost: stockResult.beforeCost },
         after: { stock_quantity: stockResult.afterQuantity, cost: stockResult.afterCost },
-        metrics: { quantity_received: Number(quantity) || 0 },
+        metrics: { quantity_received: normalizedQuantity },
         references: {
-          reference: reference || null,
+          reference: stockInReference,
+          user_reference: reference || null,
+          stock_source: normalizedSourceType,
+          bale_purchase_id: bale?.bale_purchase_id || null,
+          bale_batch_no: bale?.bale_batch_no || null,
           supplier_id: supplier?.id || null,
-          supplier_name: supplier?.name || null
+          supplier_name: supplier?.name || bale?.supplier_name || null
         }
       }
     })

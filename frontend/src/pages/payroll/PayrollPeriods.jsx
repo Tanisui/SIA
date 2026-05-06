@@ -59,7 +59,7 @@ export default function PayrollPeriods() {
 
   async function loadPeriods() {
     try { setLoading(true); setError(null); const r = await api.get('/api/payroll/periods'); setPeriods(r.data || []) }
-    catch (err) { setError(getErrorMessage(err, 'Failed to load payroll periods')) }
+    catch (err) { setError(getErrorMessage(err, 'Failed to load payroll periods.')) }
     finally { setLoading(false) }
   }
 
@@ -71,7 +71,7 @@ export default function PayrollPeriods() {
       await api.post('/api/payroll/periods', { code: form.code || undefined, start_date: form.start_date, end_date: form.end_date, payout_date: form.payout_date, frequency: form.frequency, notes: form.notes || null })
       setForm(defaultPeriodForm()); showMsg('Payroll period created.')
       await loadPeriods()
-    } catch (err) { setError(getErrorMessage(err, 'Failed to create payroll period')) }
+    } catch (err) { setError(getErrorMessage(err, 'Failed to create the payroll period.')) }
     finally { setSaving(false) }
   }
 
@@ -89,7 +89,7 @@ export default function PayrollPeriods() {
         await loadPeriods()
       }
     }
-    catch (err) { setError(getErrorMessage(err, 'Failed to load payroll inputs')) }
+    catch (err) { setError(getErrorMessage(err, 'Failed to load payroll inputs.')) }
     finally { setActionId(null) }
   }
 
@@ -101,7 +101,7 @@ export default function PayrollPeriods() {
       if (feedback.isError) setError(feedback.message)
       else showMsg(feedback.message)
       await loadPeriods()
-    } catch (err) { setError(getErrorMessage(err, 'Attendance sync failed')) }
+    } catch (err) { setError(getErrorMessage(err, 'Attendance sync failed.')) }
     finally { setSyncingId(null) }
   }
 
@@ -116,7 +116,7 @@ export default function PayrollPeriods() {
           : { flashSuccess: feedback.message }
       })
     }
-    catch (err) { setError(getErrorMessage(err, 'Failed to compute payroll')) }
+    catch (err) { setError(getErrorMessage(err, 'Failed to compute the payroll.')) }
     finally { setActionId(null) }
   }
 

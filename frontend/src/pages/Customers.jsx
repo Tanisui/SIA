@@ -126,7 +126,7 @@ export default function Customers() {
         setSelectedCustomerId(nextCustomers[0]?.id || null)
       }
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to load customers')
+      setError(err?.response?.data?.error || 'Failed to load customers.')
     } finally {
       setLoadingList(false)
     }
@@ -145,7 +145,7 @@ export default function Customers() {
       setSelectedCustomer(detail)
     } catch (err) {
       setSelectedCustomer(null)
-      setError(err?.response?.data?.error || 'Failed to load customer details')
+      setError(err?.response?.data?.error || 'Failed to load the customer profile.')
     } finally {
       setLoadingDetail(false)
     }

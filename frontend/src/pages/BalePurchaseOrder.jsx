@@ -344,7 +344,7 @@ export default function BalePurchaseOrder() {
       setLoading(true)
       await Promise.all([fetchOrders(), fetchReturns(), fetchSuppliers(), fetchCompanyInfo()])
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to load bale purchase order data.')
+      setError(err?.response?.data?.error || 'Failed to load purchase order data.')
     } finally {
       setLoading(false)
     }
@@ -542,7 +542,7 @@ export default function BalePurchaseOrder() {
       }
     }
     if (!basePoNumber) {
-      setError('PO No. is not ready yet. Please refresh and try again.')
+      setError('The purchase order number could not be generated. Please refresh and try again.')
       return
     }
     const formForSave = { ...orderForm, bale_batch_no: basePoNumber }
@@ -552,7 +552,7 @@ export default function BalePurchaseOrder() {
       return
     }
     if (!formForSave.supplier_id && !supplierName) {
-      setError('Supplier is required. Select a supplier or provide supplier name.')
+      setError('A supplier is required. Select one from the list or enter a supplier name.')
       return
     }
 
@@ -573,7 +573,7 @@ export default function BalePurchaseOrder() {
       .filter((item) => item.quantity_ordered > 0 || item.bale_cost > 0 || item.bale_category || item.item_code)
 
     if (!lines.length) {
-      setError('Add at least one order line.')
+      setError('Add at least one order line before saving.')
       return
     }
 
@@ -668,7 +668,7 @@ export default function BalePurchaseOrder() {
 
   async function deleteOrder(order) {
     clearMessages()
-    const confirmed = window.confirm(`Delete purchase order ${order?.bale_batch_no || ''}? This also removes its bale breakdown and supplier-return history.`)
+    const confirmed = window.confirm(`Delete purchase order ${order?.bale_batch_no || ''}? This will also remove the associated bale breakdown and any recorded supplier returns.`)
     if (!confirmed) return
 
     try {
@@ -688,7 +688,7 @@ export default function BalePurchaseOrder() {
     clearMessages()
     const quantity = toWholeNumber(receiveQuantities[order.id])
     if (quantity <= 0) {
-      setError('Enter a positive received quantity.')
+      setError('Enter a received quantity greater than zero.')
       return
     }
 
@@ -699,7 +699,7 @@ export default function BalePurchaseOrder() {
       setReceiveQuantities((prev) => ({ ...prev, [order.id]: '' }))
       showMsg(response?.data?.message || 'Purchase order received.')
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to receive purchase order.')
+      setError(err?.response?.data?.error || 'Failed to record the received quantity.')
     } finally {
       setSubmitting(false)
     }
@@ -710,7 +710,7 @@ export default function BalePurchaseOrder() {
     clearMessages()
 
     if (!returnForm.bale_purchase_id) {
-      setError('Select a PO reference before saving the return.')
+      setError('Select a purchase order reference before saving the return.')
       return
     }
     if (!returnForm.return_date) {
@@ -718,7 +718,7 @@ export default function BalePurchaseOrder() {
       return
     }
     if (returnItemsTotal <= 0) {
-      setError('Return quantity must be greater than 0.')
+      setError('Return quantity must be greater than zero.')
       return
     }
     if (returnItemsTotal > selectedOrderReturnable) {
@@ -754,7 +754,7 @@ export default function BalePurchaseOrder() {
       await api.post('/bale-purchases/returns', payload)
       await Promise.all([fetchOrders(), fetchReturns()])
       resetReturnForm()
-      showMsg('Bales returned to supplier.')
+      showMsg('Supplier return recorded.')
     } catch (err) {
       setError(err?.response?.data?.error || 'Failed to record supplier return.')
     } finally {

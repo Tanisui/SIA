@@ -148,7 +148,7 @@ function isBackendUnavailableError(err) {
 }
 
 function backendUnavailableMessage() {
-  return `Backend is unreachable at ${SALES_API_BASE}. Start the backend server and refresh this page.`
+  return 'The server is currently unavailable. Please refresh the page or contact your system administrator.'
 }
 
 function readStoredPosDraftId() {
@@ -1082,7 +1082,7 @@ export default function Sales() {
         if (configRes.status === 'fulfilled') setConfig({ ...DEFAULT_SALES_CONFIG, ...(configRes.value?.data || {}) })
         else issues.push('Sales settings could not be loaded.')
         if (productsRes.status === 'fulfilled') setProducts(Array.isArray(productsRes.value) ? productsRes.value : [])
-        else issues.push('Products could not be loaded for POS.')
+        else issues.push('The product catalog could not be loaded for the POS screen.')
         if (issues.length) setError(issues.join(' '))
       } catch (err) {
         if (active) setError(salesErrorMessage(err, 'Failed to load sales data'))
@@ -1820,7 +1820,7 @@ export default function Sales() {
   }
 
   async function clearAllCart() {
-    if (!window.confirm('Clear entire cart? This action cannot be undone.')) return
+    if (!window.confirm('Clear the entire cart? All items will be removed. This action cannot be undone.')) return
     clearMsg()
     if (draftSaleId) {
       try {
@@ -2040,11 +2040,11 @@ export default function Sales() {
 
   function startPayment() {
     clearMsg()
-    if (!cart.length) return setError('Add items to cart first')
-    if (cart.some((item, index) => !!qtyError(item.quantity, item.product_id, index))) return setError('Resolve cart stock issues first')
-    if (cartHasLockedPriceOverride) return setError('This draft contains price overrides that require manager permission before checkout')
-    if (!draftSaleId) return setError('Draft sale was not prepared. Add an item again.')
-    if (total <= 0) return setError('Total must be greater than 0')
+    if (!cart.length) return setError('Add at least one item to the cart before proceeding to payment.')
+    if (cart.some((item, index) => !!qtyError(item.quantity, item.product_id, index))) return setError('Resolve the stock issues in the cart before proceeding.')
+    if (cartHasLockedPriceOverride) return setError('This sale contains price overrides that require manager approval before checkout.')
+    if (!draftSaleId) return setError('The sale draft was not created. Remove and re-add an item to retry.')
+    if (total <= 0) return setError('The sale total must be greater than zero.')
     const nextPendingOrder = buildPendingOrderSnapshot({
       cart,
       draftSaleId,
@@ -2061,7 +2061,7 @@ export default function Sales() {
       total,
       invoiceType: liveTaxSummary.invoiceType
     })
-    if (!nextPendingOrder) return setError('Add items to cart first')
+    if (!nextPendingOrder) return setError('Add at least one item to the cart before proceeding to payment.')
 
     setPendingOrder(nextPendingOrder)
     setPaymentAmount((currentValue) => (
@@ -2188,7 +2188,7 @@ export default function Sales() {
   async function completeSale() {
     clearMsg()
     if (!pendingOrder) return setError('No pending order')
-    if (!isAmountValid) return setError('Payment must be greater than or equal to the total amount')
+    if (!isAmountValid) return setError('The payment amount must equal or exceed the sale total.')
     try {
       setLoading(true)
       const res = await api.post('/sales', {
@@ -2203,7 +2203,7 @@ export default function Sales() {
       await refreshProducts()
       flash(`Sale ${res.data.sale_number} completed. Invoice ${res.data.receipt_no} generated.`)
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to complete sale')
+      setError(err?.response?.data?.error || 'Failed to complete the sale.')
     } finally { setLoading(false) }
   }
 
@@ -2215,7 +2215,7 @@ export default function Sales() {
   }
 
   async function refundSale(id) {
-    if (!window.confirm('Process a full refund for this sale?')) return
+    if (!window.confirm('Process a full refund for this sale? This action cannot be undone.')) return
     clearMsg()
     setOpenSaleMenuId(null)
     try {
@@ -2225,7 +2225,7 @@ export default function Sales() {
       await refreshProducts()
       flash('Full refund processed successfully')
     } catch (err) {
-      setError(err?.response?.data?.error || 'Refund failed')
+      setError(err?.response?.data?.error || 'Failed to process the refund.')
     } finally { setLoading(false) }
   }
 
@@ -2339,14 +2339,14 @@ export default function Sales() {
       } else {
         setReturnLookup(null)
         setReturnQuantities({})
-        setError(err?.response?.data?.error || 'Receipt No. not found. Check the receipt and try again.')
+        setError(err?.response?.data?.error || 'Receipt number not found. Verify the receipt number and try again.')
       }
     } finally { setLoading(false) }
   }
 
   async function submitReturn() {
     clearMsg()
-    if (!returnLookup) return setError('Load a Receipt No. first.')
+    if (!returnLookup) return setError('Load a receipt first before submitting a return.')
     if (!hasReturnableItems) return setError('All items in this receipt are already fully returned.')
     const items = (returnLookup.items || [])
       .map((item) => {
@@ -2355,7 +2355,7 @@ export default function Sales() {
         return { sale_item_id: item.id, quantity: requestedQty }
       })
       .filter((item) => item.quantity > 0)
-    if (!items.length) return setError('Enter Qty to Return for at least one item.')
+    if (!items.length) return setError('Enter a return quantity for at least one item.')
     try {
       setLoading(true)
       const res = await api.post('/sales/returns', { receipt_no: returnLookup.receipt_no, items, reason: returnReason || undefined, return_disposition: returnDisposition })
@@ -2367,7 +2367,7 @@ export default function Sales() {
       await Promise.all([fetchSales(), fetchTransactions(), fetchReport()])
       flash(`Return completed for Receipt No. ${res.data.sale.receipt_no}`)
     } catch (err) {
-      setError(err?.response?.data?.error || 'Return failed')
+      setError(err?.response?.data?.error || 'Failed to process the return.')
     } finally { setLoading(false) }
   }
 

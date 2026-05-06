@@ -51,7 +51,7 @@ export function ViewOnlyBadge({ label = 'View only' }) {
     'span',
     {
       className: 'payroll-view-only-badge',
-      title: 'You have read-only access. Ask an admin to make changes.'
+      title: 'You have read-only access. Contact an administrator to make changes.'
     },
     label
   )
@@ -130,7 +130,7 @@ export function buildAttendanceSyncFeedback(result = {}) {
   const synced = Number(result.synced || 0)
   const skipped = Number(result.skipped_count || 0)
   const profileSkipped = Number(result.profile_skipped_count || 0)
-  const message = result.message || 'Attendance sync finished.'
+  const message = result.message || 'Attendance sync completed.'
   return {
     message,
     isError: synced === 0,
@@ -143,7 +143,7 @@ export function buildComputeSyncFeedback(result = {}) {
   const attendanceRecordsFound = Number(result.attendance_records_found || 0)
   const skipped = Number(result.skipped_count || 0)
   const profileSkipped = Number(result.profile_skipped_count || 0)
-  const baseMessage = result.message || 'Attendance refresh finished before payroll compute.'
+  const baseMessage = result.message || 'Attendance records were refreshed before the payroll run.'
   return {
     message: `Payroll computed. ${baseMessage}`,
     isWarning: attendanceRecordsFound === 0 || synced === 0 || skipped > 0 || profileSkipped > 0

@@ -18,7 +18,7 @@ const MODULE_OPTIONS = [
 const LIMIT_OPTIONS = [25, 50, 100]
 
 const SEVERITY_OPTIONS = [
-  { value: '', label: 'All priority' },
+  { value: '', label: 'All priorities' },
   { value: 'info', label: 'Low' },
   { value: 'warning', label: 'Medium' },
   { value: 'critical', label: 'High' }
@@ -47,12 +47,12 @@ const ACTION_OPTIONS = [
   { value: 'USER_UPDATED', label: 'User Updated' },
   { value: 'USER_DELETED', label: 'User Deleted' },
   { value: 'ROLE_CHANGED', label: 'Role Changed' },
-  { value: 'ROLE_UPDATED', label: 'Role Changed' },
+  { value: 'ROLE_UPDATED', label: 'Role Updated' },
   { value: 'CONFIG_UPDATED', label: 'System Setting Changed' },
   { value: 'AUTH_LOGIN', label: 'Login' },
   { value: 'AUTH_LOGIN_FAILED', label: 'Failed Login' },
   { value: 'AUTH_LOGOUT', label: 'Logout' },
-  { value: 'AUTH_PASSWORD_CHANGED', label: 'Password Reset' }
+  { value: 'AUTH_PASSWORD_CHANGED', label: 'Password Changed' }
 ]
 
 const RESOURCE_TYPE_OPTIONS = [

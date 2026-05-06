@@ -56,7 +56,7 @@ export default function ChangePassword() {
     setError('')
 
     if (!usernameChanged && !passwordChanged) {
-      setError('Change the username or enter a new password before saving.')
+      setError('No changes were made. Update the username or enter a new password before saving.')
       return
     }
 
@@ -104,8 +104,8 @@ export default function ChangePassword() {
       const statusCode = err.response?.status
       const rawErrorMessage = err.response?.data?.error || err.response?.data?.message || ''
       const errorMessage = rawErrorMessage === 'Both old and new passwords are required' || statusCode === 404
-        ? 'The backend server is still using the old account-security code. Restart the backend, then try again.'
-        : (rawErrorMessage || 'Failed to update account security.')
+        ? 'Your account could not be updated. Please contact your system administrator.'
+        : (rawErrorMessage || 'Failed to update account settings. Please try again.')
       setError(errorMessage)
     }
   }
@@ -144,7 +144,7 @@ export default function ChangePassword() {
             React.createElement(PasswordInput, { value: confirmPassword, onChange: setConfirmPassword, placeholder: 'Confirm New Password' })
           ),
           React.createElement('div', { style: { gridColumn: '1 / -1', color: '#666', fontSize: '13px' } },
-            'Current password is required before username or password changes are saved. Leave New Password blank if you only want to update the username.'
+            'Your current password is required to save any changes. Leave the New Password field blank to update only the username.'
           )
         ),
 

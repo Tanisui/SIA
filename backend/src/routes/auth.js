@@ -99,7 +99,7 @@ router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body || {}
     if (!username || !password) {
-      return res.status(400).json({ error: 'username and password required' })
+      return res.status(400).json({ error: 'Username and password are required.' })
     }
 
     const [rows] = await db.pool.query(
@@ -120,7 +120,7 @@ router.post('/login', async (req, res) => {
           metadata: { username: username || null, failure_reason: 'user_not_found' }
         }
       })
-      return res.status(401).json({ error: 'invalid credentials' })
+      return res.status(401).json({ error: 'Invalid username or password.' })
     }
 
     const user = rows[0]
@@ -139,7 +139,7 @@ router.post('/login', async (req, res) => {
           metadata: { username: user.username, failure_reason: 'inactive_account' }
         }
       })
-      return res.status(403).json({ error: 'Account inactive - contact the administrator to activate your account' })
+      return res.status(403).json({ error: 'Your account is inactive. Contact your administrator to regain access.' })
     }
 
     if (!(await verifyPassword(user.password_hash, password))) {
@@ -156,7 +156,7 @@ router.post('/login', async (req, res) => {
           metadata: { username: user.username, failure_reason: 'invalid_password' }
         }
       })
-      return res.status(401).json({ error: 'invalid credentials' })
+      return res.status(401).json({ error: 'Invalid username or password.' })
     }
 
     const session = await buildAuthSession(user)
@@ -178,7 +178,7 @@ router.post('/login', async (req, res) => {
     res.json(session)
   } catch (err) {
     console.error('Login error:', err)
-    res.status(500).json({ error: 'login failed' })
+    res.status(500).json({ error: 'Sign-in failed. Please try again.' })
   }
 })
 
@@ -187,7 +187,7 @@ router.get('/me', async (req, res) => {
     const auth = req.headers.authorization || ''
     const parts = auth.split(' ')
     if (parts.length !== 2 || parts[0] !== 'Bearer') {
-      return res.status(401).json({ error: 'missing token' })
+      return res.status(401).json({ error: 'Authentication required. Please sign in again.' })
     }
 
     const token = parts[1]
@@ -195,7 +195,7 @@ router.get('/me', async (req, res) => {
     try {
       payload = jwt.verify(token, getJwtSecret())
     } catch (err) {
-      return res.status(401).json({ error: 'invalid token' })
+      return res.status(401).json({ error: 'Your session has expired. Please sign in again.' })
     }
 
     const info = await getUserPermissions(payload.id)
@@ -207,7 +207,7 @@ router.get('/me', async (req, res) => {
     })
   } catch (err) {
     console.error('me route error', err)
-    res.status(500).json({ error: 'failed' })
+    res.status(500).json({ error: 'Failed to retrieve account information.' })
   }
 })
 
@@ -216,14 +216,14 @@ router.post('/logout', async (req, res) => {
     const auth = req.headers.authorization || ''
     const parts = auth.split(' ')
     if (parts.length !== 2 || parts[0] !== 'Bearer') {
-      return res.status(401).json({ error: 'missing token' })
+      return res.status(401).json({ error: 'Authentication required. Please sign in again.' })
     }
 
     let payload
     try {
       payload = jwt.verify(parts[1], getJwtSecret())
     } catch (err) {
-      return res.status(401).json({ error: 'invalid token' })
+      return res.status(401).json({ error: 'Your session has expired. Please sign in again.' })
     }
 
     await logAuditEventSafe(db.pool, {
@@ -244,7 +244,7 @@ router.post('/logout', async (req, res) => {
     return res.json({ success: true })
   } catch (err) {
     console.error('logout route error', err)
-    return res.status(500).json({ error: 'failed to logout' })
+    return res.status(500).json({ error: 'Sign-out failed. Please try again.' })
   }
 })
 
@@ -252,14 +252,14 @@ async function handleAccountSecurityUpdate(req, res) {
   try {
     const auth = req.headers.authorization || ''
     const parts = auth.split(' ')
-    if (parts.length !== 2 || parts[0] !== 'Bearer') return res.status(401).json({ error: 'missing token' })
+    if (parts.length !== 2 || parts[0] !== 'Bearer') return res.status(401).json({ error: 'Authentication required. Please sign in again.' })
 
     const token = parts[1]
     let payload
     try {
       payload = jwt.verify(token, getJwtSecret())
     } catch (err) {
-      return res.status(401).json({ error: 'Session expired. Please log in again.' })
+      return res.status(401).json({ error: 'Your session has expired. Please sign in again.' })
     }
 
     const body = req.body || {}
@@ -276,25 +276,25 @@ async function handleAccountSecurityUpdate(req, res) {
       'SELECT id, username, email, full_name, password_hash FROM users WHERE id = ? LIMIT 1',
       [userId]
     )
-    if (!rows.length) return res.status(404).json({ error: 'User not found' })
+    if (!rows.length) return res.status(404).json({ error: 'User account not found.' })
 
     const user = rows[0]
     const usernameChanged = Boolean(wantsUsernameChange && nextUsername && nextUsername !== String(user.username || '').trim().toLowerCase())
 
     if (!usernameChanged && !wantsPasswordChange) {
-      return res.status(400).json({ error: 'No account changes were submitted' })
+      return res.status(400).json({ error: 'No changes were submitted. Update at least one field before saving.' })
     }
 
     if (wantsUsernameChange && !nextUsername) {
-      return res.status(400).json({ error: 'Username is required' })
+      return res.status(400).json({ error: 'Username is required.' })
     }
 
     if (!currentPassword) {
-      return res.status(400).json({ error: 'Current password is required' })
+      return res.status(400).json({ error: 'Current password is required.' })
     }
 
     const isValid = await verifyPassword(user.password_hash, currentPassword)
-    if (!isValid) return res.status(401).json({ error: 'Incorrect current password' })
+    if (!isValid) return res.status(401).json({ error: 'The current password entered is incorrect.' })
 
     if (usernameChanged) {
       const [existingRows] = await db.pool.query(
@@ -302,7 +302,7 @@ async function handleAccountSecurityUpdate(req, res) {
         [nextUsername, userId]
       )
       if (existingRows.length) {
-        return res.status(400).json({ error: 'Username already exists' })
+        return res.status(400).json({ error: 'That username is already in use. Please choose a different one.' })
       }
     }
 
@@ -380,7 +380,7 @@ async function handleAccountSecurityUpdate(req, res) {
     if (err?.code === 'ER_DUP_ENTRY') {
       return res.status(400).json({ error: 'Username already exists' })
     }
-    res.status(500).json({ error: 'Failed to update account security' })
+    res.status(500).json({ error: 'Failed to update account settings. Please try again.' })
   }
 }
 
@@ -390,27 +390,27 @@ router.post('/change-password', handleAccountSecurityUpdate)
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body || {}
-    if (!email) return res.status(400).json({ error: 'email required' })
+    if (!email) return res.status(400).json({ error: 'Email address is required.' })
     return res.json({ message: 'If the email exists, a reset link was sent' })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ error: 'failed' })
+    res.status(500).json({ error: 'Request failed. Please try again.' })
   }
 })
 
 router.post('/forgot-email', async (req, res) => {
   try {
     const { username } = req.body || {}
-    if (!username) return res.status(400).json({ error: 'username required' })
+    if (!username) return res.status(400).json({ error: 'Username is required.' })
     const [rows] = await db.pool.query('SELECT email FROM users WHERE username = ? LIMIT 1', [username])
-    if (!rows.length) return res.status(404).json({ error: 'user not found' })
+    if (!rows.length) return res.status(404).json({ error: 'No account was found for that username.' })
 
     const email = rows[0].email || ''
     const masked = email.replace(/(.{2}).+(@.+)/, '$1***$2')
     return res.json({ message: 'Email found', email: masked })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ error: 'failed' })
+    res.status(500).json({ error: 'Request failed. Please try again.' })
   }
 })
 

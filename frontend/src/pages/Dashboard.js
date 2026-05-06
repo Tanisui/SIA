@@ -64,7 +64,7 @@ export default function Dashboard() {
       } catch (err) {
         if (active) {
           console.error('dashboard stats error:', err)
-          setStatsError('Failed to load dashboard data. Please refresh the page.')
+          setStatsError('Failed to load dashboard statistics. Please refresh the page.')
         }
       } finally {
         if (active && withLoader) setLoading(false)

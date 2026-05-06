@@ -228,7 +228,7 @@ export default function CustomerFormPage({ mode = 'create' }) {
         setTouched({})
         setAttemptedSubmit(false)
         setDuplicateState({ loading: false, matches: [], message: '' })
-        setSuccess('Customer saved. You can add another profile.')
+        setSuccess('Customer saved. Add another profile below.')
         return
       }
 
@@ -243,7 +243,7 @@ export default function CustomerFormPage({ mode = 'create' }) {
           message: buildDuplicateMessage(duplicates)
         })
       }
-      setError(apiMessage || 'Failed to save customer')
+      setError(apiMessage || 'Failed to save the customer profile.')
     } finally {
       setSaving(false)
     }
@@ -265,7 +265,7 @@ export default function CustomerFormPage({ mode = 'create' }) {
         setForm(toFormModel(res?.data || {}))
       } catch (err) {
         if (!active) return
-        setError(err?.response?.data?.error || 'Failed to load customer profile')
+        setError(err?.response?.data?.error || 'Failed to load the customer profile.')
       } finally {
         if (active) setLoading(false)
       }

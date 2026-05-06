@@ -92,7 +92,7 @@ export default function PayrollInputSheet() {
       if (Number(r.data?.period?.inputs?.length || 0) > 0) showMsg(message)
       else setError(message)
     }
-    catch (err) { setError(getErrorMessage(err, 'Failed to load payroll inputs')) }
+    catch (err) { setError(getErrorMessage(err, 'Failed to load payroll inputs.')) }
     finally { setActionLoading(false) }
   }
 
@@ -104,7 +104,7 @@ export default function PayrollInputSheet() {
       if (feedback.isError) setError(feedback.message)
       else showMsg(feedback.message)
       await loadPeriod()
-    } catch (err) { setError(getErrorMessage(err, 'Attendance sync failed')) }
+    } catch (err) { setError(getErrorMessage(err, 'Attendance sync failed.')) }
     finally { setSyncing(false) }
   }
 
@@ -129,7 +129,7 @@ export default function PayrollInputSheet() {
           : { flashSuccess: feedback.message }
       })
     }
-    catch (err) { setError(getErrorMessage(err, 'Failed to compute payroll')) }
+    catch (err) { setError(getErrorMessage(err, 'Failed to compute the payroll.')) }
     finally { setActionLoading(false) }
   }
 

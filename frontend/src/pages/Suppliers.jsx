@@ -28,7 +28,7 @@ export default function Suppliers() {
       const res = await api.get('/suppliers')
       setSuppliers(res.data || [])
     } catch {
-      setError('Failed to load suppliers')
+      setError('Failed to load suppliers.')
     } finally {
       setLoading(false)
     }
@@ -45,17 +45,17 @@ export default function Suppliers() {
     try {
       if (editing) {
         await api.put(`/suppliers/${editing}`, form)
-        showMsg('Supplier updated')
+        showMsg('Supplier updated.')
       } else {
         await api.post('/suppliers', form)
-        showMsg('Supplier created')
+        showMsg('Supplier created.')
       }
       setForm(emptyForm)
       setEditing(null)
       setShowForm(false)
       fetchSuppliers()
     } catch (err) {
-      setError(err?.response?.data?.error || 'Save failed')
+      setError(err?.response?.data?.error || 'Failed to save the supplier.')
     }
   }
 
@@ -73,14 +73,14 @@ export default function Suppliers() {
   }
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Delete this supplier? Bale purchases using it will have their supplier cleared.')) return
+    if (!window.confirm('Delete this supplier? Existing purchase orders linked to this supplier will have their supplier reference removed.')) return
     clearMessages()
     try {
       await api.delete(`/suppliers/${id}`)
-      showMsg('Supplier deleted')
+      showMsg('Supplier deleted.')
       fetchSuppliers()
     } catch (err) {
-      setError(err?.response?.data?.error || 'Delete failed')
+      setError(err?.response?.data?.error || 'Failed to delete the supplier.')
     }
   }
 

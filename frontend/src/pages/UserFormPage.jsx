@@ -480,7 +480,7 @@ export default function UserFormPage({ mode = 'create' }) {
     if (file.size > MAX_DOCUMENT_FILE_SIZE_BYTES) {
       const definition = DOCUMENT_TYPES.find((item) => item.type === documentType)
       const label = definition?.label || 'Selected file'
-      const message = `${label} exceeds the ${MAX_DOCUMENT_FILE_SIZE_LABEL} upload limit`
+      const message = `${label}: the uploaded file exceeds the ${MAX_DOCUMENT_FILE_SIZE_LABEL} size limit.`
       setFieldErrors((prev) => ({ ...prev, [`document:${documentType}`]: message }))
       setError(message)
       setSuccess(null)
@@ -535,22 +535,22 @@ export default function UserFormPage({ mode = 'create' }) {
     const nextErrors = {}
     const governmentIdPattern = /^[0-9-]+$/
 
-    if (!hasText(formData.email)) nextErrors.email = 'Email is required'
-    if (!hasText(formData.first_name)) nextErrors.first_name = 'First name is required'
-    if (!hasText(formData.last_name)) nextErrors.last_name = 'Last name is required'
-    if (!Array.isArray(formData.roles) || !formData.roles.length) nextErrors.roles = 'Select an access role'
-    if (!hasText(formData.position_title)) nextErrors.position_title = 'Position title is required'
-    if (!hasText(formData.hire_date)) nextErrors.hire_date = 'Hire date is required'
-    if (!hasText(formData.employment_status)) nextErrors.employment_status = 'Employment status is required'
+    if (!hasText(formData.email)) nextErrors.email = 'Email address is required.'
+    if (!hasText(formData.first_name)) nextErrors.first_name = 'First name is required.'
+    if (!hasText(formData.last_name)) nextErrors.last_name = 'Last name is required.'
+    if (!Array.isArray(formData.roles) || !formData.roles.length) nextErrors.roles = 'An access role is required.'
+    if (!hasText(formData.position_title)) nextErrors.position_title = 'Position title is required.'
+    if (!hasText(formData.hire_date)) nextErrors.hire_date = 'Hire date is required.'
+    if (!hasText(formData.employment_status)) nextErrors.employment_status = 'Employment status is required.'
 
     if (hasText(formData.mobile_number) && !isValidMobileNumber(formData.mobile_number)) {
-      nextErrors.mobile_number = 'Use 09xxxxxxxxx or +639xxxxxxxxx'
+      nextErrors.mobile_number = 'Enter a valid mobile number (e.g. 09171234567 or +639171234567).'
     }
 
     for (const fieldName of ['tin', 'sss_number', 'philhealth_pin', 'pagibig_mid']) {
       const raw = String(formData[fieldName] || '').trim()
       if (raw && !governmentIdPattern.test(raw)) {
-        nextErrors[fieldName] = 'Use digits and hyphens only'
+        nextErrors[fieldName] = 'Use digits and hyphens only.'
       }
     }
 
@@ -666,19 +666,19 @@ export default function UserFormPage({ mode = 'create' }) {
         await api.put(`/users/${id}`, payload)
         navigate('/users', {
           replace: true,
-          state: { flashSuccess: 'Profile saved successfully.' }
+          state: { flashSuccess: 'Employee profile saved.' }
         })
         return
       } else {
         await api.post('/users', payload)
         navigate('/users', {
           replace: true,
-          state: { flashSuccess: 'Profile created successfully.' }
+          state: { flashSuccess: 'Employee profile created.' }
         })
         return
       }
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to save profile')
+      setError(err?.response?.data?.error || 'Failed to save the employee profile.')
     } finally {
       setSaving(false)
       setOpenSaveConfirm(false)
@@ -707,9 +707,9 @@ export default function UserFormPage({ mode = 'create' }) {
     try {
       const changed = await syncDocuments(id)
       await reloadDocuments(id)
-      setSuccess(changed ? 'Documents saved.' : 'No document changes to save.')
+      setSuccess(changed ? 'Documents saved.' : 'No document changes were detected.')
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to save documents')
+      setError(err?.response?.data?.error || 'Failed to save the document records.')
     } finally {
       setSaving(false)
       setOpenSaveConfirm(false)
@@ -725,7 +725,7 @@ export default function UserFormPage({ mode = 'create' }) {
       await api.delete(`/users/${id}`)
       navigate('/users')
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to delete user')
+      setError(err?.response?.data?.error || 'Failed to delete the user account.')
     } finally {
       setSaving(false)
       setOpenDeleteConfirm(false)

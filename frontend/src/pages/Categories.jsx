@@ -20,7 +20,7 @@ export default function Categories() {
       const res = await api.get('/categories')
       setCategories(res.data || [])
     } catch {
-      setError('Failed to load categories')
+      setError('Failed to load categories.')
     } finally {
       setLoading(false)
     }
@@ -37,17 +37,17 @@ export default function Categories() {
     try {
       if (editing) {
         await api.put(`/categories/${editing}`, form)
-        showMsg('Category updated')
+        showMsg('Category updated.')
       } else {
         await api.post('/categories', form)
-        showMsg('Category created')
+        showMsg('Category created.')
       }
       setForm(emptyForm)
       setEditing(null)
       setShowForm(false)
       fetchCategories()
     } catch (err) {
-      setError(err?.response?.data?.error || 'Save failed')
+      setError(err?.response?.data?.error || 'Failed to save the category.')
     }
   }
 
@@ -59,14 +59,14 @@ export default function Categories() {
   }
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Delete this category? Products using it will have their category cleared.')) return
+    if (!window.confirm('Delete this category? Products assigned to it will no longer have a category.')) return
     clearMessages()
     try {
       await api.delete(`/categories/${id}`)
-      showMsg('Category deleted')
+      showMsg('Category deleted.')
       fetchCategories()
     } catch (err) {
-      setError(err?.response?.data?.error || 'Delete failed')
+      setError(err?.response?.data?.error || 'Failed to delete the category.')
     }
   }
 

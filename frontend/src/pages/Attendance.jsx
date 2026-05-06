@@ -188,7 +188,7 @@ export default function Attendance() {
       setRecords(Array.isArray(res.data?.data) ? res.data.data : (Array.isArray(res.data) ? res.data : []))
       setTotal(res.data?.total || 0)
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to load attendance records')
+      setError(err?.response?.data?.error || 'Failed to load attendance records.')
     } finally {
       setLoading(false)
     }
@@ -245,8 +245,8 @@ export default function Attendance() {
 
   async function handleSubmit(e) {
     e.preventDefault(); clearMsg()
-    if (!form.employee_id) return setError('Employee is required')
-    if (!form.date)        return setError('Date is required')
+    if (!form.employee_id) return setError('Employee is required.')
+    if (!form.date)        return setError('Date is required.')
 
     const payload = {
       employee_id:        Number(form.employee_id),
@@ -274,7 +274,7 @@ export default function Attendance() {
       resetForm()
       await loadRecords(filters)
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to save attendance record')
+      setError(err?.response?.data?.error || 'Failed to save the attendance record.')
     } finally {
       setSubmitting(false)
     }
@@ -285,10 +285,10 @@ export default function Attendance() {
     clearMsg()
     try {
       await api.delete(`/attendance/${row.id}`)
-      showMsg('Record deleted.')
+      showMsg('Attendance record deleted.')
       await loadRecords(filters)
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to delete record')
+      setError(err?.response?.data?.error || 'Failed to delete the attendance record.')
     }
   }
 
@@ -303,7 +303,7 @@ export default function Attendance() {
       if (feedback.isError) setError(feedback.message)
       else showMsg(feedback.message)
     } catch (err) {
-      setError(err?.response?.data?.error || 'Sync failed')
+      setError(err?.response?.data?.error || 'Attendance sync failed. Please try again.')
     } finally {
       setSyncing(false)
     }
