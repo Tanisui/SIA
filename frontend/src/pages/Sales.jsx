@@ -2586,11 +2586,7 @@ export default function Sales() {
               <input className="form-input" type="number" min="0" max="100" step="0.01" value={allowDiscount ? discountPercentage : '0'} disabled={!allowDiscount} onChange={(e) => setDiscountPercentage(e.target.value)} />
             </div>
             <div className="pos-summary-divider" />
-            <TaxBreakdownSummary summary={liveTaxSummary} fmt={fmt} subtotal={subtotal} discountAmount={discountAmount} totalLabel="Total" />
-            <div className="pos-summary-grand">
-              <span className="pos-summary-grand-label">Grand Total (After Tax)</span>
-              <span className="pos-summary-grand-value">{fmt(liveTaxSummary.total)}</span>
-            </div>
+            <TaxBreakdownSummary summary={liveTaxSummary} fmt={fmt} subtotal={subtotal} discountAmount={discountAmount} totalLabel="Amount Due" />
             {!invoiceRequirementsComplete && (
               <div className="warning-msg pos-summary-note">
                 BIR invoice seller details are incomplete. Fill in Settings before using printed invoices for compliance.

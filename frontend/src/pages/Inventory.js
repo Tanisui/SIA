@@ -276,6 +276,7 @@ function createEmptyStockInForm(overrides = {}) {
     source_type: 'bale',
     product_id: '',
     bale_purchase_id: '',
+    supplier_id: '',
     quantity: '',
     reference: '',
     date: '',
@@ -1742,14 +1743,13 @@ export default function Inventory() {
                 React.createElement('th', null, 'Receiving Source'),
                 React.createElement('th', null, 'Supplier'),
                 React.createElement('th', null, 'Bale Batch'),
-                React.createElement('th', null, 'Reference'),
                 React.createElement('th', null, 'Running Balance'),
                 React.createElement('th', null, 'User')
               )
             ),
             React.createElement('tbody', null,
               stockInRecords.length === 0
-                ? React.createElement('tr', null, React.createElement('td', { colSpan: 9, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No stock-in records found for this filter.'))
+                ? React.createElement('tr', null, React.createElement('td', { colSpan: 8, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No stock-in records found for this filter.'))
                 : stockInRecords.map((record) => React.createElement('tr', { key: `stock-in-record-${record.id}` },
                     React.createElement('td', null, fmtDate(record.created_at)),
                     React.createElement('td', null,
@@ -1760,7 +1760,6 @@ export default function Inventory() {
                     React.createElement('td', null, getStockInReportSource(record)),
                     React.createElement('td', null, getStockInReportSupplier(record)),
                     React.createElement('td', null, getStockInReportBaleBatch(record)),
-                    React.createElement('td', null, getStockInReportReference(record)),
                     React.createElement('td', null, record.balance_after ?? '—'),
                     React.createElement('td', null, record.user_name || '—')
                   ))
@@ -2133,8 +2132,17 @@ export default function Inventory() {
     if (sourceType === 'bale' && String(selectedProduct.bale_purchase_id || '') !== String(selectedBale.bale_purchase_id)) {
       return setError('Select a product linked to the chosen bale batch.')
     }
-    if (sourceType === 'manual' && !String(stockInForm.reference || '').trim()) {
-      return setError('Enter a reference or note for the manual correction.')
+
+    const supplierId = Number(stockInForm.supplier_id)
+    if (sourceType === 'bale') {
+      if (!Number.isInteger(supplierId) || supplierId <= 0) return setError('Select a supplier.')
+      if (selectedBale?.supplier_id && supplierId !== Number(selectedBale.supplier_id)) {
+        return setError('Supplier must match the selected bale batch.')
+      }
+    }
+    if (sourceType === 'manual') {
+      const ref = String(stockInForm.reference || '').trim()
+      if (!ref) return setError('Enter a reason for this manual correction.')
     }
 
     try {
@@ -2143,7 +2151,8 @@ export default function Inventory() {
         quantity,
         source_type: sourceType,
         bale_purchase_id: sourceType === 'bale' ? Number(stockInForm.bale_purchase_id) : null,
-        reference: stockInForm.reference,
+        supplier_id: sourceType === 'bale' ? supplierId : null,
+        reference: sourceType === 'manual' ? String(stockInForm.reference || '').trim() : undefined,
         date: buildStockInTimestamp(stockInForm.date)
       })
       setStockInForm(createEmptyStockInForm())
@@ -2901,6 +2910,9 @@ export default function Inventory() {
   const selectedStockInBaleOption = useMemo(() => (
     baleStockOptions.find((row) => String(row.bale_purchase_id) === String(stockInForm.bale_purchase_id)) || null
   ), [baleStockOptions, stockInForm.bale_purchase_id])
+  const selectedStockInSupplier = useMemo(() => (
+    suppliers.find((supplier) => String(supplier.id) === String(stockInForm.supplier_id)) || null
+  ), [stockInForm.supplier_id, suppliers])
   const selectedStockInProduct = useMemo(() => (
     activeProducts.find((product) => String(product.id) === String(stockInForm.product_id)) || null
   ), [activeProducts, stockInForm.product_id])
@@ -2921,6 +2933,17 @@ export default function Inventory() {
     if (sourceKey === 'repaired_damage') return { type: 'repaired' }
     return { type: 'manual' }
   }, [selectedStockInProduct, baleOptionByPurchaseId])
+
+  useEffect(() => {
+    if (stockInSourceType !== 'bale') return
+    const baleSupplierId = String(selectedStockInBaleOption?.supplier_id || '').trim()
+    if (!baleSupplierId || String(stockInForm.supplier_id || '') === baleSupplierId) return
+    setStockInForm((form) => {
+      if (String(form.bale_purchase_id || '') !== String(selectedStockInBaleOption?.bale_purchase_id || '')) return form
+      return { ...form, supplier_id: baleSupplierId }
+    })
+  }, [selectedStockInBaleOption, stockInForm.supplier_id, stockInSourceType])
+
   const stockInQuantityValue = Number(stockInForm.quantity)
   const stockInSummaryQuantity = Number.isInteger(stockInQuantityValue) && stockInQuantityValue > 0 ? stockInQuantityValue : 0
   const stockInCurrentStock = Number(selectedStockInProduct?.stock_quantity || 0)
@@ -3337,19 +3360,17 @@ export default function Inventory() {
                 React.createElement('th', null, 'Source'),
                 React.createElement('th', null, 'Product'),
                 React.createElement('th', null, 'Qty'),
-                React.createElement('th', null, 'Reference'),
                 React.createElement('th', null, 'User')
               )
             ),
             React.createElement('tbody', null,
               stockInRecords.length === 0
-                ? React.createElement('tr', null, React.createElement('td', { colSpan: 6, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No stock-in records found for this filter.'))
+                ? React.createElement('tr', null, React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No stock-in records found for this filter.'))
                 : stockInRecords.map((record) => React.createElement('tr', { key: `stock-in-record-${record.id}` },
                     React.createElement('td', null, fmtDate(record.created_at)),
                     React.createElement('td', null, record.source_label || 'Inventory'),
                     React.createElement('td', null, `${record.sku ? `${record.sku} â€” ` : ''}${record.product_name || ''}`),
                     React.createElement('td', { style: { fontWeight: 600, color: 'var(--success)' } }, `+${record.quantity}`),
-                    React.createElement('td', null, formatTransactionReference(record.reference)),
                     React.createElement('td', null, record.user_name || 'â€”')
                   ))
             )
@@ -3548,7 +3569,7 @@ export default function Inventory() {
                 ),
                 selectedStockInProduct && selectedStockInProductOrigin && React.createElement('div', {
                   style: {
-                    order: 4,
+                    order: 5,
                     gridColumn: '1 / -1',
                     padding: '10px 14px',
                     borderRadius: 6,
@@ -3614,7 +3635,11 @@ export default function Inventory() {
                         ...f,
                         source_type: nextSource,
                         product_id: '',
-                        bale_purchase_id: nextSource === 'bale' ? f.bale_purchase_id : ''
+                        bale_purchase_id: nextSource === 'bale' ? f.bale_purchase_id : '',
+                        supplier_id: nextSource === 'bale'
+                          ? String(baleStockOptions.find((row) => String(row.bale_purchase_id) === String(f.bale_purchase_id))?.supplier_id || '')
+                          : '',
+                        reference: nextSource === 'manual' ? f.reference : ''
                       }))
                     },
                     required: true
@@ -3634,6 +3659,7 @@ export default function Inventory() {
                       setStockInForm((f) => ({
                         ...f,
                         bale_purchase_id: nextBalePurchaseId,
+                        supplier_id: selectedBale?.supplier_id ? String(selectedBale.supplier_id) : '',
                         product_id: selectedBale && String(selectedStockInProduct?.bale_purchase_id || '') === String(nextBalePurchaseId)
                           ? f.product_id
                           : ''
@@ -3660,19 +3686,36 @@ export default function Inventory() {
                     placeholder: 'Choose a bale batch to confirm source'
                   })
                 ),
-                React.createElement('div', { className: 'form-group', style: { order: 5 } },
-                  React.createElement('label', { className: 'form-label' }, 'Quantity *'),
-                  React.createElement('input', { className: 'form-input', type: 'number', min: 1, value: stockInForm.quantity, onChange: e => setStockInForm(f => ({ ...f, quantity: e.target.value })), required: true })
+                stockInSourceType === 'bale' && React.createElement('div', { className: 'form-group', style: { order: 4 } },
+                  React.createElement('label', { className: 'form-label' }, 'Supplier *'),
+                  React.createElement('select', {
+                    className: 'form-input',
+                    value: stockInForm.supplier_id || '',
+                    onChange: (e) => setStockInForm((f) => ({ ...f, supplier_id: e.target.value })),
+                    disabled: suppliers.length === 0 || Boolean(selectedStockInBaleOption?.supplier_id),
+                    required: true
+                  },
+                    React.createElement('option', { value: '' }, suppliers.length ? '-- Select supplier --' : 'No suppliers available'),
+                    ...suppliers.map((supplier) => React.createElement('option', {
+                      key: `stock-in-supplier-${supplier.id}`,
+                      value: supplier.id
+                    }, supplier.name))
+                  )
                 ),
-                React.createElement('div', { className: 'form-group', style: { order: 6 } },
-                  React.createElement('label', { className: 'form-label' }, stockInSourceType === 'manual' ? 'Reference *' : 'Reference'),
+                stockInSourceType === 'manual' && React.createElement('div', { className: 'form-group', style: { order: 4 } },
+                  React.createElement('label', { className: 'form-label' }, 'Reason *'),
                   React.createElement('input', {
                     className: 'form-input',
-                    value: stockInForm.reference,
-                    onChange: e => setStockInForm(f => ({ ...f, reference: e.target.value })),
-                    placeholder: stockInSourceType === 'manual' ? 'Required reason / note' : 'Optional note / receipt no.',
-                    required: stockInSourceType === 'manual'
+                    type: 'text',
+                    value: stockInForm.reference || '',
+                    onChange: (e) => setStockInForm((f) => ({ ...f, reference: e.target.value })),
+                    placeholder: 'e.g. Found during stock count, Damage correction...',
+                    required: true
                   })
+                ),
+                React.createElement('div', { className: 'form-group', style: { order: 6 } },
+                  React.createElement('label', { className: 'form-label' }, 'Quantity *'),
+                  React.createElement('input', { className: 'form-input', type: 'number', min: 1, value: stockInForm.quantity, onChange: e => setStockInForm(f => ({ ...f, quantity: e.target.value })), required: true })
                 ),
                 React.createElement('div', { className: 'form-group', style: { order: 7 } },
                   React.createElement('label', { className: 'form-label' }, 'Date'),
@@ -3701,7 +3744,13 @@ export default function Inventory() {
                     ['Product', selectedStockInProduct ? `${selectedStockInProduct.sku ? `${selectedStockInProduct.sku} - ` : ''}${selectedStockInProduct.name}` : '—'],
                     ['Quantity to add', stockInSummaryQuantity || '—'],
                     ['Receiving source', stockInSourceLabel(stockInSourceType)],
-                    ['Bale batch', stockInSourceType === 'bale' ? (selectedStockInBaleOption?.bale_batch_no || '—') : '—'],
+                    ...(stockInSourceType === 'manual'
+                      ? [['Reason', String(stockInForm.reference || '').trim() || '—']]
+                      : [
+                          ['Supplier', selectedStockInSupplier?.name || selectedStockInBaleOption?.supplier_name || '—'],
+                          ['Bale batch', selectedStockInBaleOption?.bale_batch_no || '—']
+                        ]
+                    ),
                     ['Current stock', selectedStockInProduct ? stockInCurrentStock : '—'],
                     ['New stock after receiving', selectedStockInProduct ? stockInProjectedStock : '—']
                   ].map(([label, value]) => React.createElement('div', { key: `stock-in-summary-${label}` },
@@ -3747,14 +3796,13 @@ export default function Inventory() {
                 React.createElement('th', null, 'Receiving Source'),
                 React.createElement('th', null, 'Supplier'),
                 React.createElement('th', null, 'Bale Batch'),
-                React.createElement('th', null, 'Reference'),
                 React.createElement('th', null, 'Running Balance'),
                 React.createElement('th', null, 'User')
               )
             ),
             React.createElement('tbody', null,
               stockInRecords.length === 0
-                ? React.createElement('tr', null, React.createElement('td', { colSpan: 9, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No stock-in records found for this filter.'))
+                ? React.createElement('tr', null, React.createElement('td', { colSpan: 8, style: { textAlign: 'center', color: 'var(--text-light)', padding: 24 } }, 'No stock-in records found for this filter.'))
                 : stockInRecords.map((record) => React.createElement('tr', { key: `stock-in-record-${record.id}` },
                     React.createElement('td', null, fmtDate(record.created_at)),
                     React.createElement('td', null,
@@ -3765,7 +3813,6 @@ export default function Inventory() {
                     React.createElement('td', null, getStockInReportSource(record)),
                     React.createElement('td', null, getStockInReportSupplier(record)),
                     React.createElement('td', null, getStockInReportBaleBatch(record)),
-                    React.createElement('td', null, getStockInReportReference(record)),
                     React.createElement('td', null, record.balance_after ?? '—'),
                     React.createElement('td', null, record.user_name || '—')
                   ))

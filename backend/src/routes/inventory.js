@@ -732,7 +732,7 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
   try {
     await ensureAutomatedReportsSchema()
     await conn.beginTransaction()
-    const { product_id, quantity, cost, reference, date, source_type, bale_purchase_id } = req.body
+    const { product_id, quantity, cost, reference, date, source_type, bale_purchase_id, supplier_id } = req.body
     const normalizedProductId = Number(product_id)
     const normalizedQuantity = Number(quantity)
     if (
@@ -745,10 +745,6 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
     }
 
     const normalizedSourceType = normalizeStockInSourceType(source_type)
-    const normalizedReference = String(reference || '').trim()
-    if (normalizedSourceType === 'manual' && !sanitizeReferenceToken(normalizedReference, 50)) {
-      throw createHttpError(400, 'reference is required for manual correction')
-    }
 
     const lockedProduct = await loadExistingStockInProduct(conn, normalizedProductId)
     if (!lockedProduct) throw createHttpError(404, 'product not found')
@@ -762,6 +758,13 @@ router.post('/stock-in', express.json(), verifyToken, authorize('inventory.recei
         throw createHttpError(400, 'selected product is not linked to the selected bale batch')
       }
       supplier = await resolveSupplierForStockIn(conn, bale.supplier_id)
+      if (supplier_id && Number(supplier_id) !== Number(supplier.id)) {
+        throw createHttpError(400, 'selected supplier does not match the selected bale batch')
+      }
+    } else {
+      if (supplier_id) {
+        supplier = await resolveSupplierForStockIn(conn, supplier_id)
+      }
     }
 
     const createdAt = resolveTransactionTimestamp(date, 'date')
