@@ -744,6 +744,8 @@ export default function Sales() {
   const [cartItems, setCartItems] = useState([])
   const [draftSaleId, setDraftSaleId] = useState(null)
   const [scanValue, setScanValue] = useState('')
+  const [scanFeedback, setScanFeedback] = useState(null)
+  const [scanErrorMessage, setScanErrorMessage] = useState('')
   const [, setScannerDebug] = useState({
     raw: '',
     normalized: '',
@@ -1864,14 +1866,24 @@ export default function Sales() {
       lastScanRef.current = { code: normalizedCode, at: Date.now() }
       if (response?.duplicate_scan || response?.ignored) {
         updateScannerDebug(rawValue, source, 'Duplicate scan ignored by server')
+        setScanFeedback('success')
         flash('Duplicate scan ignored.')
       } else {
         updateScannerDebug(rawValue, source, 'Product added to cart')
+        setScanFeedback('success')
         flash('Product scanned and saved to current sale.')
       }
+      setTimeout(() => setScanFeedback(null), 600)
     } catch (err) {
-      updateScannerDebug(rawValue, source, salesErrorMessage(err, 'Failed to scan product'))
-      setError(salesErrorMessage(err, 'Failed to scan product'))
+      const msg = salesErrorMessage(err, 'Failed to scan product')
+      updateScannerDebug(rawValue, source, msg)
+      setScanErrorMessage(msg)
+      setScanFeedback('error')
+      setError(msg)
+      setTimeout(() => {
+        setScanFeedback(null)
+        setScanErrorMessage('')
+      }, 3000)
     } finally {
       focusScanInput()
     }
@@ -2420,7 +2432,7 @@ export default function Sales() {
                   <label className="form-label">Scan Barcode / QR</label>
                   <input
                     ref={scanInputRef}
-                    className="form-input pos-scan-input"
+                    className={`form-input pos-scan-input ${scanFeedback ? `pos-scan-input--${scanFeedback}` : ''}`}
                     value={scanValue}
                     onChange={(e) => {
                       const nextValue = e.target.value
@@ -2434,8 +2446,13 @@ export default function Sales() {
                       e.stopPropagation()
                       handleScanSubmit(e.currentTarget.value, 'Scan input field')
                     }}
-                    placeholder="Scan barcode or QR, then press Enter"
+                    placeholder="Ready to scan — or type barcode and press Enter"
                   />
+                  {scanErrorMessage && (
+                    <div style={{ marginTop: 6, color: 'var(--danger, #ef4444)', fontSize: 12 }}>
+                      {scanErrorMessage}
+                    </div>
+                  )}
                 </div>
                 <div className="form-group" style={{ marginBottom: 0, flex: '1 1 260px' }}>
                   <label className="form-label">Search Products</label>
@@ -2465,6 +2482,7 @@ export default function Sales() {
               {filteredProducts.length === 0 ? (
                 <div className="pos-tile-empty">No matching products.</div>
               ) : (
+                <>
                 <div className="pos-tile-grid">
                   {filteredProducts.slice(0, 60).map((product) => {
                     const stock = num(product.stock_quantity)
@@ -2491,6 +2509,20 @@ export default function Sales() {
                     )
                   })}
                 </div>
+                {filteredProducts.length > 60 && (
+                  <div style={{
+                    marginTop: 12,
+                    padding: '8px 12px',
+                    background: 'var(--gold-light, #fef3c7)',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    color: 'var(--text-mid)',
+                    textAlign: 'center'
+                  }}>
+                    +{filteredProducts.length - 60} more product{filteredProducts.length - 60 === 1 ? '' : 's'} — refine your search to find more
+                  </div>
+                )}
+                </>
               )}
             </div>
 
@@ -2556,8 +2588,8 @@ export default function Sales() {
             <div className="pos-summary-divider" />
             <TaxBreakdownSummary summary={liveTaxSummary} fmt={fmt} subtotal={subtotal} discountAmount={discountAmount} totalLabel="Total" />
             <div className="pos-summary-grand">
-              <span className="pos-summary-grand-label">Grand Total</span>
-              <span className="pos-summary-grand-value">{fmt((Number(subtotal) || 0) - (Number(discountAmount) || 0))}</span>
+              <span className="pos-summary-grand-label">Grand Total (After Tax)</span>
+              <span className="pos-summary-grand-value">{fmt(liveTaxSummary.total)}</span>
             </div>
             {!invoiceRequirementsComplete && (
               <div className="warning-msg pos-summary-note">

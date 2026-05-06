@@ -2194,7 +2194,6 @@ export default function Inventory() {
       bale_purchase_id: String(selectedBaleStockOptionId),
       condition_grade: defaultGrade
     })
-    navigate('/inventory?tab=products')
   }
 
   // ── Adjustment ──
@@ -3370,8 +3369,13 @@ export default function Inventory() {
             value: stockInMode,
             onChange: (e) => setStockInMode(e.target.value)
           },
-            React.createElement('option', { value: 'manual' }, 'Add to Existing Product'),
-            React.createElement('option', { value: 'bale' }, 'Create New Product From Bale')
+            React.createElement('option', { value: 'manual' }, 'Restock Existing Product'),
+            React.createElement('option', { value: 'bale' }, 'Stock In New Items from Bale')
+          ),
+          React.createElement('div', { style: { marginTop: 8, color: 'var(--text-light)', fontSize: 12, lineHeight: 1.5 } },
+            stockInMode === 'manual'
+              ? 'Add stock to a product that already exists in your inventory.'
+              : 'Create new products directly from a bale record and assign them quantities.'
           )
         ),
 
@@ -3709,7 +3713,7 @@ export default function Inventory() {
               React.createElement('button', { type: 'submit', className: 'btn btn-primary', style: { marginTop: 12 } }, 'Record Stock In')
             )
       ),
-      false && React.createElement('div', { className: 'card', style: { marginTop: 20 } },
+      React.createElement('div', { className: 'card', style: { marginTop: 20 } },
         React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12, flexWrap: 'wrap' } },
           React.createElement('h3', { style: { margin: 0 } }, `Stock In Records (${stockInRecords.length})`),
           React.createElement('button', { className: 'btn btn-secondary btn-sm', type: 'button', onClick: fetchStockInRecords }, 'Refresh')

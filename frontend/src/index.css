@@ -8000,6 +8000,33 @@ body {
   font-family: 'Nunito', sans-serif;
   font-weight: 700;
   letter-spacing: 0.04em;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.pos-scan-input:focus {
+  border-color: var(--brand, #dd9933);
+  box-shadow: 0 0 0 3px rgba(221, 153, 51, 0.1);
+  outline: none;
+}
+
+.pos-scan-input--success {
+  border-color: var(--success, #10b981) !important;
+  animation: pos-scan-flash-success 0.6s ease-out;
+}
+
+.pos-scan-input--error {
+  border-color: var(--danger, #ef4444) !important;
+  animation: pos-scan-flash-error 0.6s ease-out;
+}
+
+@keyframes pos-scan-flash-success {
+  0% { box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.4); }
+  100% { box-shadow: 0 0 0 0px rgba(16, 185, 129, 0); }
+}
+
+@keyframes pos-scan-flash-error {
+  0% { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.4); }
+  100% { box-shadow: 0 0 0 0px rgba(239, 68, 68, 0); }
 }
 
 .pos-tilepicker { margin-bottom: 14px; }
