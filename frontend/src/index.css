@@ -7938,6 +7938,100 @@ body {
   border-bottom-color: var(--gold);
 }
 
+.sales-transactions-filter-card {
+  padding: 26px 30px;
+  display: grid;
+  gap: 16px;
+}
+
+.sales-transactions-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.5fr) minmax(180px, 0.75fr) minmax(180px, 0.75fr) auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.sales-transactions-filter-grid .form-group {
+  margin-bottom: 0;
+}
+
+.sales-transactions-filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: max-content;
+}
+
+.sales-transactions-filter-actions .btn {
+  min-height: 48px;
+}
+
+.sales-transactions-filter-helper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--gray-600);
+  line-height: 1.4;
+}
+
+.sales-transactions-filter-helper span {
+  min-width: min(100%, 280px);
+}
+
+.sales-transactions-range-toggle {
+  min-height: 42px;
+}
+
+.sales-transactions-range-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.sales-transactions-range-grid .form-group {
+  margin-bottom: 0;
+}
+
+@media (max-width: 1180px) {
+  .sales-transactions-filter-grid {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+  }
+
+  .sales-transactions-filter-receipt {
+    grid-column: 1 / -1;
+  }
+
+  .sales-transactions-filter-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 720px) {
+  .sales-transactions-filter-card {
+    padding: 20px;
+  }
+
+  .sales-transactions-filter-grid,
+  .sales-transactions-range-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sales-transactions-filter-receipt {
+    grid-column: auto;
+  }
+
+  .sales-transactions-filter-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .sales-transactions-filter-actions .btn,
+  .sales-transactions-range-toggle {
+    flex: 1 1 150px;
+  }
+}
+
 /* Two-pane layout: product pane left, sticky summary right. */
 .pos-twopane {
   display: grid;

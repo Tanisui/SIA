@@ -229,7 +229,7 @@ test('bale stock-in rejects an existing product from another bale', async (t) =>
   assert.equal(harness.connectionState.rollbackCount, 1)
 })
 
-test('manual correction stock-in succeeds with a required reference note', async (t) => {
+test('manual correction stock-in succeeds with an optional reference note', async (t) => {
   const harness = createStockInHarness({
     product: {
       product_source: 'manual',
@@ -245,6 +245,7 @@ test('manual correction stock-in succeeds with a required reference note', async
       product_id: 5,
       quantity: 3,
       source_type: 'manual',
+      supplier_id: 8,
       reference: 'Count correction after shelf recount',
       date: '2026-05-05'
     }
@@ -252,12 +253,12 @@ test('manual correction stock-in succeeds with a required reference note', async
 
   assert.equal(res.statusCode, 200)
   assert.equal(harness.applyStockCalls.length, 1)
-  assert.equal(harness.applyStockCalls[0].supplierId, null)
+  assert.equal(harness.applyStockCalls[0].supplierId, 8)
   assert.equal(harness.applyStockCalls[0].reason, 'Manual stock correction')
   assert.match(harness.applyStockCalls[0].reference, /^STOCK_IN\|source=MANUAL\|note=Count correction after shelf recount$/)
 })
 
-test('manual correction stock-in rejects missing reference note', async (t) => {
+test('manual correction stock-in succeeds without a reference note', async (t) => {
   const harness = createStockInHarness()
   t.after(() => harness.cleanup())
 
@@ -268,17 +269,42 @@ test('manual correction stock-in rejects missing reference note', async (t) => {
       product_id: 7,
       quantity: 1,
       source_type: 'manual',
+      supplier_id: 8,
       reference: '   '
     }
   }, res)
 
-  assert.equal(res.statusCode, 400)
-  assert.match(res.body.error, /reference is required/)
-  assert.equal(harness.applyStockCalls.length, 0)
-  assert.equal(harness.connectionState.rollbackCount, 1)
+  assert.equal(res.statusCode, 200)
+  assert.equal(harness.applyStockCalls.length, 1)
+  assert.equal(harness.applyStockCalls[0].supplierId, 8)
+  assert.equal(harness.applyStockCalls[0].reference, 'STOCK_IN|source=MANUAL')
+  assert.equal(harness.connectionState.commitCount, 1)
+  assert.equal(harness.connectionState.rollbackCount, 0)
 })
 
-test('existing-product stock-in rejects supplier source', async (t) => {
+test('manual correction stock-in succeeds without a supplier', async (t) => {
+  const harness = createStockInHarness()
+  t.after(() => harness.cleanup())
+
+  const res = createMockResponse()
+  await harness.handler({
+    auth: { id: 42 },
+    body: {
+      product_id: 7,
+      quantity: 1,
+      source_type: 'manual'
+    }
+  }, res)
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(harness.applyStockCalls.length, 1)
+  assert.equal(harness.applyStockCalls[0].supplierId, null)
+  assert.equal(harness.applyStockCalls[0].reference, 'STOCK_IN|source=MANUAL')
+  assert.equal(harness.connectionState.commitCount, 1)
+  assert.equal(harness.connectionState.rollbackCount, 0)
+})
+
+test('existing-product stock-in succeeds with supplier source', async (t) => {
   const harness = createStockInHarness()
   t.after(() => harness.cleanup())
 
@@ -294,8 +320,32 @@ test('existing-product stock-in rejects supplier source', async (t) => {
     }
   }, res)
 
+  assert.equal(res.statusCode, 200)
+  assert.equal(harness.applyStockCalls.length, 1)
+  assert.equal(harness.applyStockCalls[0].supplierId, 8)
+  assert.equal(harness.applyStockCalls[0].reason, 'Stock in from supplier')
+  assert.match(harness.applyStockCalls[0].reference, /^STOCK_IN\|source=SUPPLIER\|supplier_id=8\|note=RCPT-1$/)
+  assert.equal(harness.connectionState.commitCount, 1)
+  assert.equal(harness.connectionState.rollbackCount, 0)
+})
+
+test('supplier stock-in rejects missing supplier', async (t) => {
+  const harness = createStockInHarness()
+  t.after(() => harness.cleanup())
+
+  const res = createMockResponse()
+  await harness.handler({
+    auth: { id: 42 },
+    body: {
+      product_id: 7,
+      quantity: 1,
+      source_type: 'supplier',
+      reference: 'RCPT-1'
+    }
+  }, res)
+
   assert.equal(res.statusCode, 400)
-  assert.match(res.body.error, /Supplier Delivery is not available/)
+  assert.match(res.body.error, /supplier is required/)
   assert.equal(harness.applyStockCalls.length, 0)
   assert.equal(harness.connectionState.rollbackCount, 1)
 })

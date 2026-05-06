@@ -707,6 +707,7 @@ export default function Sales() {
   const receiptRef = useRef(null)
   const scanInputRef = useRef(null)
   const scanSubmitTimerRef = useRef(null)
+  const scanFeedbackTimerRef = useRef(null)
   const globalScanTimerRef = useRef(null)
   const globalScanBufferRef = useRef('')
   const globalScanLastKeyAtRef = useRef(0)
@@ -1873,14 +1874,16 @@ export default function Sales() {
         setScanFeedback('success')
         flash('Product scanned and saved to current sale.')
       }
-      setTimeout(() => setScanFeedback(null), 600)
+      if (scanFeedbackTimerRef.current) clearTimeout(scanFeedbackTimerRef.current)
+      scanFeedbackTimerRef.current = setTimeout(() => setScanFeedback(null), 600)
     } catch (err) {
       const msg = salesErrorMessage(err, 'Failed to scan product')
       updateScannerDebug(rawValue, source, msg)
       setScanErrorMessage(msg)
       setScanFeedback('error')
       setError(msg)
-      setTimeout(() => {
+      if (scanFeedbackTimerRef.current) clearTimeout(scanFeedbackTimerRef.current)
+      scanFeedbackTimerRef.current = setTimeout(() => {
         setScanFeedback(null)
         setScanErrorMessage('')
       }, 3000)
@@ -3048,7 +3051,7 @@ export default function Sales() {
         <div>
           <div className="card sales-transactions-filter-card">
             <div className="sales-transactions-filter-grid">
-              <div className="form-group" style={{ marginBottom: 0 }}>
+              <div className="form-group sales-transactions-filter-receipt">
                 <label className="form-label">Receipt</label>
                 <input
                   className="form-input"
@@ -3057,7 +3060,7 @@ export default function Sales() {
                   placeholder="Search receipt number"
                 />
               </div>
-              <div className="form-group" style={{ marginBottom: 0 }}>
+              <div className="form-group sales-transactions-filter-type">
                 <label className="form-label">Type</label>
                 <select className="form-input" value={transactionType} onChange={(e) => setTransactionType(e.target.value)}>
                   <option value="">All transactions</option>
@@ -3065,7 +3068,7 @@ export default function Sales() {
                   <option value="SALE_RETURN">Returns</option>
                 </select>
               </div>
-              <div className="form-group" style={{ marginBottom: 0 }}>
+              <div className="form-group sales-transactions-filter-date">
                 <label className="form-label">Date</label>
                 <input
                   className="form-input"
@@ -3082,8 +3085,10 @@ export default function Sales() {
                   }}
                 />
               </div>
-              <button type="button" className="btn btn-primary" onClick={fetchTransactions}>Refresh</button>
-              <button type="button" className="btn btn-secondary" onClick={clearTransactionFilters}>Clear</button>
+              <div className="sales-transactions-filter-actions">
+                <button type="button" className="btn btn-primary" onClick={fetchTransactions}>Refresh</button>
+                <button type="button" className="btn btn-secondary" onClick={clearTransactionFilters}>Clear</button>
+              </div>
             </div>
             <div className="sales-transactions-filter-helper">
               <button

@@ -215,9 +215,8 @@ function formatBaleStockOptionLabel(row) {
   const batch = String(row?.bale_batch_no || '').trim() || 'No batch no.'
   const supplier = String(row?.supplier_name || '').trim() || 'Unknown supplier'
   const category = String(row?.bale_category || '').trim() || 'No category'
-  const date = fmtDate(row?.breakdown_date || row?.purchase_date)
   const available = Number(row?.left_to_stock_in ?? row?.pending_total ?? 0)
-  return `${batch} | ${supplier} | ${category} | ${date} | Available ${available}`
+  return `Batch ${batch} — ${supplier} (${category}) · ${available} avail.`
 }
 
 function parseStockInReference(reference) {
@@ -3454,7 +3453,7 @@ export default function Inventory() {
                     className: 'form-input',
                     readOnly: true,
                     value: selectedBaleStockOption
-                      ? `Breakdown #${selectedBaleStockOption.breakdown_id || '-'} — ${fmtDate(selectedBaleStockOption.breakdown_date || selectedBaleStockOption.purchase_date)}`
+                      ? `Breakdown #${selectedBaleStockOption.breakdown_id || '-'} — ${(() => { const d = selectedBaleStockOption.breakdown_date || selectedBaleStockOption.purchase_date; const p = parseInventoryDateTime(d); return p && !Number.isNaN(p.getTime()) ? p.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '' })()} `
                       : '',
                     placeholder: 'Choose a bale record to see its breakdown'
                   })
@@ -3674,16 +3673,43 @@ export default function Inventory() {
                     }, formatBaleStockOptionLabel(row)))
                   )
                 ),
-                stockInSourceType === 'bale' && React.createElement('div', { className: 'form-group', style: { order: 2 } },
-                  React.createElement('label', { className: 'form-label' }, 'Selected Bale Details'),
-                  React.createElement('input', {
-                    className: 'form-input',
-                    readOnly: true,
-                    value: selectedStockInBaleOption
-                      ? `${formatBaleStockOptionLabel(selectedStockInBaleOption)}`
-                      : '',
-                    placeholder: 'Choose a bale batch to confirm source'
-                  })
+                stockInSourceType === 'bale' && selectedStockInBaleOption && React.createElement('div', {
+                  style: {
+                    order: 2,
+                    gridColumn: '1 / -1',
+                    padding: '10px 16px',
+                    borderRadius: 6,
+                    border: '1px solid var(--border)',
+                    background: 'var(--bg-alt, #f8fafc)',
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 20,
+                    fontSize: 13,
+                    alignItems: 'flex-start'
+                  }
+                },
+                  React.createElement('div', null,
+                    React.createElement('div', { style: { fontSize: 11, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 } }, 'Supplier'),
+                    React.createElement('div', { style: { fontWeight: 600 } }, String(selectedStockInBaleOption.supplier_name || '').trim() || '—')
+                  ),
+                  React.createElement('div', null,
+                    React.createElement('div', { style: { fontSize: 11, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 } }, 'Category'),
+                    React.createElement('div', { style: { fontWeight: 600 } }, String(selectedStockInBaleOption.bale_category || '').trim() || '—')
+                  ),
+                  React.createElement('div', null,
+                    React.createElement('div', { style: { fontSize: 11, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 } }, 'Items Available'),
+                    React.createElement('div', { style: { fontWeight: 600 } }, String(Number(selectedStockInBaleOption.left_to_stock_in ?? selectedStockInBaleOption.pending_total ?? 0)))
+                  ),
+                  React.createElement('div', null,
+                    React.createElement('div', { style: { fontSize: 11, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 } }, 'Breakdown Date'),
+                    React.createElement('div', { style: { fontWeight: 600 } }, (() => {
+                      const d = selectedStockInBaleOption.breakdown_date || selectedStockInBaleOption.purchase_date
+                      const parsed = parseInventoryDateTime(d)
+                      return parsed && !Number.isNaN(parsed.getTime())
+                        ? parsed.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })
+                        : '—'
+                    })())
+                  )
                 ),
                 React.createElement('div', { className: 'form-group', style: { order: 4 } },
                   React.createElement('label', { className: 'form-label' }, 'Supplier *'),
