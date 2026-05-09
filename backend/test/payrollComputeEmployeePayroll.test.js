@@ -194,3 +194,96 @@ test('computeEmployeePayroll does not deduct statutory contributions for zero-ea
   assert.equal(result.total_deductions, 0)
   assert.equal(result.net_pay, 0)
 })
+
+test('computeEmployeePayroll supports monthly-paid daily periods using an annual salary divisor', () => {
+  const result = computeEmployeePayroll({
+    profile: {
+      user_id: 66,
+      pay_basis: 'monthly',
+      pay_rate: 31300,
+      payroll_frequency: 'daily',
+      standard_hours_per_day: 8,
+      standard_work_days_per_month: 22,
+      salary_divisor: 313,
+      overtime_eligible: 1,
+      late_deduction_enabled: 1,
+      undertime_deduction_enabled: 1,
+      tax_enabled: 0,
+      sss_enabled: 0,
+      philhealth_enabled: 0,
+      pagibig_enabled: 0
+    },
+    input: {
+      days_worked: 1
+    },
+    settings: {
+      overtime_multiplier: 1.25,
+      night_differential_multiplier: 0.1,
+      regular_holiday_multiplier: 2,
+      special_holiday_multiplier: 1.3,
+      rest_day_multiplier: 1.3
+    },
+    period: {
+      code: 'PAY-2026-05-09',
+      frequency: 'daily',
+      start_date: '2026-05-09',
+      end_date: '2026-05-09',
+      payout_date: '2026-05-09'
+    }
+  })
+
+  assert.equal(result.gross_basic_pay, 1200)
+  assert.equal(result.monthly_basic_equivalent, 31300)
+  assert.equal(result.payslip_view.employee.daily_rate, 1200)
+  assert.equal(result.payslip_view.employee.salary_divisor, 313)
+})
+
+test('computeEmployeePayroll applies the BIR daily withholding tax table', () => {
+  const result = computeEmployeePayroll({
+    profile: {
+      user_id: 77,
+      pay_basis: 'daily',
+      pay_rate: 1000,
+      payroll_frequency: 'daily',
+      standard_hours_per_day: 8,
+      standard_work_days_per_month: 22,
+      overtime_eligible: 1,
+      late_deduction_enabled: 1,
+      undertime_deduction_enabled: 1,
+      tax_enabled: 1,
+      sss_enabled: 0,
+      philhealth_enabled: 0,
+      pagibig_enabled: 0
+    },
+    input: {
+      days_worked: 1
+    },
+    settings: {
+      overtime_multiplier: 1.25,
+      night_differential_multiplier: 0.1,
+      regular_holiday_multiplier: 2,
+      special_holiday_multiplier: 1.3,
+      rest_day_multiplier: 1.3,
+      withholding_tax: {
+        enabled: true,
+        brackets: {
+          daily: [
+            { from: 0, to: 685, base_tax: 0, excess_over: 0, rate: 0 },
+            { from: 685, to: 1095, base_tax: 0, excess_over: 685, rate: 0.15 }
+          ]
+        }
+      }
+    },
+    period: {
+      code: 'PAY-2026-05-09',
+      frequency: 'daily',
+      start_date: '2026-05-09',
+      end_date: '2026-05-09',
+      payout_date: '2026-05-09'
+    }
+  })
+
+  assert.equal(result.gross_basic_pay, 1000)
+  assert.equal(result.withholding_tax, 47.25)
+  assert.equal(result.net_pay, 952.75)
+})

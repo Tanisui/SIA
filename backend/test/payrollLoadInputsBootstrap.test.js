@@ -76,6 +76,7 @@ test('loadInputsForPeriod bootstraps payroll profiles from active employee recor
           pay_rate,
           payroll_frequency,
           standard_work_days_per_month,
+          salary_divisor,
           standard_hours_per_day,
           overtime_eligible,
           late_deduction_enabled,
@@ -99,6 +100,7 @@ test('loadInputsForPeriod bootstraps payroll profiles from active employee recor
           pay_rate,
           payroll_frequency,
           standard_work_days_per_month,
+          salary_divisor,
           standard_hours_per_day,
           overtime_eligible,
           late_deduction_enabled,
@@ -156,6 +158,7 @@ test('loadInputsForPeriod bootstraps payroll profiles from active employee recor
   assert.equal(result.skipped_count, 0)
   assert.equal(insertedProfile.pay_basis, 'daily')
   assert.equal(insertedProfile.payroll_frequency, 'weekly')
+  assert.equal(insertedProfile.salary_divisor, null)
   assert.equal(insertedProfile.payroll_method, 'cash')
   assert.equal(insertedProfile.status, 'active')
   assert.deepEqual(insertedInputs, [[7, 11, 99, 99]])

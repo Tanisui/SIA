@@ -11,6 +11,7 @@ const emptyForm = {
   pay_rate: '',
   payroll_frequency: 'semi_monthly',
   standard_work_days_per_month: '22',
+  salary_divisor: '',
   standard_hours_per_day: '8',
   overtime_eligible: true,
   late_deduction_enabled: true,
@@ -36,6 +37,7 @@ function normalizeForm(profile) {
     pay_rate:                     toInputNumber(profile.pay_rate),
     payroll_frequency:            profile.payroll_frequency || 'semi_monthly',
     standard_work_days_per_month: toInputNumber(profile.standard_work_days_per_month),
+    salary_divisor:               toInputNumber(profile.salary_divisor),
     standard_hours_per_day:       toInputNumber(profile.standard_hours_per_day),
     overtime_eligible:            Number(profile.overtime_eligible) === 1,
     late_deduction_enabled:       Number(profile.late_deduction_enabled) === 1,
@@ -61,6 +63,7 @@ function toPayload(form) {
     pay_rate:                     Number(form.pay_rate || 0),
     payroll_frequency:            form.payroll_frequency,
     standard_work_days_per_month: form.standard_work_days_per_month === '' ? null : Number(form.standard_work_days_per_month),
+    salary_divisor:               form.salary_divisor === '' ? null : Number(form.salary_divisor),
     standard_hours_per_day:       form.standard_hours_per_day === '' ? null : Number(form.standard_hours_per_day),
     overtime_eligible:            form.overtime_eligible,
     late_deduction_enabled:       form.late_deduction_enabled,
@@ -313,7 +316,7 @@ export default function PayrollProfiles() {
                     onChange={(e) => set('payroll_frequency', e.target.value)}>
                     <option value="daily">Daily</option>
                     <option value="weekly">Weekly</option>
-                    <option value="semi_monthly">Bi-Monthly (Semi-Monthly)</option>
+                    <option value="semi_monthly">Semi-Monthly</option>
                     <option value="monthly">Monthly</option>
                   </select>
                 </div>
@@ -322,6 +325,18 @@ export default function PayrollProfiles() {
                   <input className="form-input" type="number" min="0" step="0.5"
                     value={form.standard_work_days_per_month}
                     onChange={(e) => set('standard_work_days_per_month', e.target.value)} />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Annual Salary Divisor</label>
+                  <select className="form-input" value={form.salary_divisor}
+                    onChange={(e) => set('salary_divisor', e.target.value)}>
+                    <option value="">Use work days/month</option>
+                    <option value="365">365 - Monthly-paid</option>
+                    <option value="313">313 - 6-day schedule</option>
+                    <option value="310">310 - 6-day, special days unpaid</option>
+                    <option value="261">261 - 5-day schedule</option>
+                    <option value="258">258 - 5-day, special days unpaid</option>
+                  </select>
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label">Hours / Day</label>
@@ -481,6 +496,12 @@ export default function PayrollProfiles() {
                         <>
                           <span style={{ margin: '0 6px', color: 'var(--border-mid)' }}>·</span>
                           {profile.standard_work_days_per_month} days/mo
+                        </>
+                      )}
+                      {profile.salary_divisor && (
+                        <>
+                          <span style={{ margin: '0 6px', color: 'var(--border-mid)' }}>·</span>
+                          divisor {profile.salary_divisor}
                         </>
                       )}
                       {profile.standard_hours_per_day && (

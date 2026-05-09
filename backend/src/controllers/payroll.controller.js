@@ -23,7 +23,7 @@ const { computePayrollRun,
   releaseRun,
   voidRun
 } = require('../services/payroll/computePayrollRun')
-const { buildPayslipView } = require('../services/payroll/computeEmployeePayroll')
+const { buildPayslipView, getDailyRate, getHourlyRate, roundMoney } = require('../services/payroll/computeEmployeePayroll')
 
 function parseJson(value, fallback = null) {
   if (value === null || value === undefined || value === '') return fallback
@@ -50,6 +50,28 @@ function handleControllerError(res, err, fallbackMessage) {
   if (err?.statusCode) return res.status(err.statusCode).json({ error: err.message })
   if (err?.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'duplicate payroll record' })
   return res.status(500).json({ error: fallbackMessage })
+}
+
+function num(value, fallback = 0) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function computeThirteenthMonthBasicEarned(item = {}) {
+  const profile = parseJson(item.payroll_profile_snapshot_json, {})
+  const input = parseJson(item.input_snapshot_json, {})
+  const grossBasicPay = roundMoney(item.gross_basic_pay)
+
+  if (String(profile.pay_basis || '').toLowerCase() !== 'monthly') {
+    return grossBasicPay
+  }
+
+  const dailyRate = getDailyRate(profile)
+  const hourlyRate = getHourlyRate(profile)
+  const absenceDeduction = roundMoney((num(input.absent_days) + num(input.unpaid_leave_days)) * dailyRate)
+  const lateDeduction = roundMoney((num(input.late_minutes) / 60) * hourlyRate)
+  const undertimeDeduction = roundMoney((num(input.undertime_minutes) / 60) * hourlyRate)
+  return Math.max(roundMoney(grossBasicPay - absenceDeduction - lateDeduction - undertimeDeduction), 0)
 }
 
 function buildSetClause(payload, allowedColumns) {
@@ -199,6 +221,7 @@ async function updateProfile(req, res) {
       'pay_rate',
       'payroll_frequency',
       'standard_work_days_per_month',
+      'salary_divisor',
       'standard_hours_per_day',
       'overtime_eligible',
       'late_deduction_enabled',
@@ -294,7 +317,7 @@ async function createPeriod(req, res) {
     const [overlapping] = await conn.query(
       `SELECT id, code, start_date, end_date FROM payroll_periods
        WHERE frequency = ? AND status NOT IN ('void')
-         AND start_date < ? AND end_date > ?`,
+         AND start_date <= ? AND end_date >= ?`,
       [period.frequency, period.end_date, period.start_date]
     )
     if (overlapping.length > 0) {
@@ -959,9 +982,10 @@ async function getThirteenthMonthReport(req, res) {
          u.full_name,
          u.username,
          pp.employee_number,
-         SUM(items.gross_basic_pay)        AS total_basic_pay,
-         SUM(items.gross_basic_pay) / 12   AS thirteenth_month_pay,
-         COUNT(DISTINCT periods.id)        AS period_count
+         items.gross_basic_pay,
+         items.payroll_profile_snapshot_json,
+         items.input_snapshot_json,
+         periods.id AS payroll_period_id
        FROM payroll_run_items items
        JOIN payroll_runs runs        ON runs.id = items.payroll_run_id
        JOIN payroll_periods periods  ON periods.id = runs.payroll_period_id
@@ -969,22 +993,39 @@ async function getThirteenthMonthReport(req, res) {
        LEFT JOIN payroll_profiles pp ON pp.user_id = items.user_id
        WHERE runs.status IN ('finalized', 'released')
          AND YEAR(periods.start_date) = ?
-       GROUP BY items.user_id, u.full_name, u.username, pp.employee_number
        ORDER BY COALESCE(u.full_name, u.username)`,
       [year]
     )
-    const total = rows.reduce((sum, row) => sum + Number(row.thirteenth_month_pay || 0), 0)
+    const grouped = new Map()
+    for (const row of rows) {
+      const userId = Number(row.user_id)
+      if (!grouped.has(userId)) {
+        grouped.set(userId, {
+          user_id: userId,
+          full_name: row.full_name,
+          username: row.username,
+          employee_number: row.employee_number || null,
+          total_basic_pay: 0,
+          period_ids: new Set()
+        })
+      }
+      const entry = grouped.get(userId)
+      entry.total_basic_pay = roundMoney(entry.total_basic_pay + computeThirteenthMonthBasicEarned(row))
+      if (row.payroll_period_id) entry.period_ids.add(Number(row.payroll_period_id))
+    }
+    const reportRows = Array.from(grouped.values()).map((row) => ({
+      user_id: row.user_id,
+      full_name: row.full_name,
+      username: row.username,
+      employee_number: row.employee_number,
+      total_basic_pay: roundMoney(row.total_basic_pay),
+      thirteenth_month_pay: roundMoney(row.total_basic_pay / 12),
+      period_count: row.period_ids.size
+    }))
+    const total = reportRows.reduce((sum, row) => sum + Number(row.thirteenth_month_pay || 0), 0)
     res.json({
       year,
-      rows: rows.map((row) => ({
-        user_id: row.user_id,
-        full_name: row.full_name,
-        username: row.username,
-        employee_number: row.employee_number || null,
-        total_basic_pay: Number(row.total_basic_pay || 0),
-        thirteenth_month_pay: Number(row.thirteenth_month_pay || 0),
-        period_count: Number(row.period_count || 0)
-      })),
+      rows: reportRows,
       total_thirteenth_month_pay: Math.round(total * 100) / 100
     })
   } catch (err) {

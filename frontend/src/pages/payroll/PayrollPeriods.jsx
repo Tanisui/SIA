@@ -13,7 +13,7 @@ import {
   ViewOnlyBadge
 } from './payrollUtils.js'
 
-const FREQ_LABEL = { weekly: 'Weekly', semi_monthly: 'Semi-Monthly', monthly: 'Monthly' }
+const FREQ_LABEL = { daily: 'Daily', weekly: 'Weekly', semi_monthly: 'Semi-Monthly', monthly: 'Monthly' }
 const STATUS_STYLES = {
   draft:     { bg: '#F1F5F9', color: '#64748B' },
   computed:  { bg: '#DBEAFE', color: '#1D4ED8' },
@@ -22,6 +22,42 @@ const STATUS_STYLES = {
   void:      { bg: '#FEE2E2', color: '#DC2626' }
 }
 const STATUS_FILTER_OPTIONS = ['all', 'draft', 'computed', 'finalized', 'released', 'void']
+
+function toDateInput(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function parseDateInput(value) {
+  const [year, month, day] = String(value || '').split('-').map(Number)
+  return new Date(year, month - 1, day || 1)
+}
+
+function endOfMonth(date) {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0)
+}
+
+function buildCutoffRange(frequency, startValue) {
+  const base = parseDateInput(startValue || toDateInput(new Date()))
+  if (frequency === 'daily') {
+    return { start_date: toDateInput(base), end_date: toDateInput(base), payout_date: toDateInput(base) }
+  }
+  if (frequency === 'weekly') {
+    const end = new Date(base)
+    end.setDate(base.getDate() + 6)
+    return { start_date: toDateInput(base), end_date: toDateInput(end), payout_date: toDateInput(end) }
+  }
+  if (frequency === 'monthly') {
+    const start = new Date(base.getFullYear(), base.getMonth(), 1)
+    const end = endOfMonth(base)
+    return { start_date: toDateInput(start), end_date: toDateInput(end), payout_date: toDateInput(end) }
+  }
+  const start = new Date(base.getFullYear(), base.getMonth(), base.getDate() <= 15 ? 1 : 16)
+  const end = base.getDate() <= 15 ? new Date(base.getFullYear(), base.getMonth(), 15) : endOfMonth(base)
+  return { start_date: toDateInput(start), end_date: toDateInput(end), payout_date: toDateInput(end) }
+}
 
 function PeriodBadge({ status }) {
   const s = STATUS_STYLES[status?.toLowerCase()] || STATUS_STYLES.draft
@@ -34,11 +70,10 @@ function PeriodBadge({ status }) {
 
 function defaultPeriodForm() {
   const today = new Date()
-  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() <= 15 ? 1 : 16)
-  const end   = new Date(today.getFullYear(), today.getMonth() + (today.getDate() <= 15 ? 0 : 1), today.getDate() <= 15 ? 15 : 0)
+  const range = buildCutoffRange('semi_monthly', toDateInput(today))
   return {
-    code: '', start_date: start.toISOString().slice(0, 10),
-    end_date: end.toISOString().slice(0, 10), payout_date: end.toISOString().slice(0, 10),
+    code: '',
+    ...range,
     frequency: 'semi_monthly', notes: ''
   }
 }
@@ -166,7 +201,7 @@ export default function PayrollPeriods() {
     for (let i = 0; i < active.length; i++) {
       for (let j = i + 1; j < active.length; j++) {
         const a = active[i], b = active[j]
-        if (a.frequency === b.frequency && a.start_date < b.end_date && a.end_date > b.start_date) {
+        if (a.frequency === b.frequency && a.start_date <= b.end_date && a.end_date >= b.start_date) {
           ids.add(a.id); ids.add(b.id)
         }
       }
@@ -233,11 +268,12 @@ export default function PayrollPeriods() {
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Start Date *</label>
-                    <input className="form-input" type="date" required value={form.start_date} onChange={(e) => setForm((p) => ({ ...p, start_date: e.target.value }))} />
+                    <input className="form-input" type="date" required value={form.start_date}
+                      onChange={(e) => setForm((p) => ({ ...p, ...buildCutoffRange(p.frequency, e.target.value) }))} />
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">End Date *</label>
-                    <input className="form-input" type="date" required value={form.end_date} onChange={(e) => setForm((p) => ({ ...p, end_date: e.target.value }))} />
+                    <input className="form-input" type="date" required readOnly value={form.end_date} />
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Payout Date *</label>
@@ -245,11 +281,18 @@ export default function PayrollPeriods() {
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Frequency</label>
-                    <select className="form-input" value={form.frequency} onChange={(e) => setForm((p) => ({ ...p, frequency: e.target.value }))}>
+                    <select className="form-input" value={form.frequency}
+                      onChange={(e) => setForm((p) => ({ ...p, frequency: e.target.value, ...buildCutoffRange(e.target.value, p.start_date) }))}>
+                      <option value="daily">Daily</option>
                       <option value="weekly">Weekly</option>
                       <option value="semi_monthly">Semi-Monthly</option>
                       <option value="monthly">Monthly</option>
                     </select>
+                    {form.frequency === 'monthly' && (
+                      <div style={{ marginTop: 6, fontSize: 12, color: 'var(--warning-dark, #B45309)' }}>
+                        Monthly payroll is only for employees whose policy permits a full-month payout. Semi-monthly is the safer default.
+                      </div>
+                    )}
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Notes</label>

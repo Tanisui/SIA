@@ -6,6 +6,7 @@ const PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS = Object.freeze({
   pay_basis: 'monthly',
   payroll_method: 'cash',
   standard_work_days_per_month: 22,
+  salary_divisor: null,
   standard_hours_per_day: 8,
   overtime_eligible: 1,
   late_deduction_enabled: 1,
@@ -94,6 +95,7 @@ function buildBootstrapProfileSeed(candidate, period = null) {
       pay_rate: payRate,
       payroll_frequency: period?.frequency || 'semi_monthly',
       standard_work_days_per_month: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.standard_work_days_per_month,
+      salary_divisor: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.salary_divisor,
       standard_hours_per_day: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.standard_hours_per_day,
       overtime_eligible: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.overtime_eligible,
       late_deduction_enabled: PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.late_deduction_enabled,
@@ -156,6 +158,9 @@ function normalizeProfileForCompute(profile = {}, period = null) {
 
   if (!hasPositiveRate(normalized.standard_work_days_per_month)) {
     normalized.standard_work_days_per_month = PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.standard_work_days_per_month
+  }
+  if (!hasPositiveRate(normalized.salary_divisor)) {
+    normalized.salary_divisor = PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.salary_divisor
   }
   if (!hasPositiveRate(normalized.standard_hours_per_day)) {
     normalized.standard_hours_per_day = PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.standard_hours_per_day
