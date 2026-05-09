@@ -44,6 +44,12 @@ router.get(
   authorize(['payroll.view', 'payroll.period.view']),
   payroll.getPeriod
 )
+router.delete(
+  '/periods/:id',
+  verifyToken,
+  authorize(['payroll.period.create']),
+  payroll.deletePeriod
+)
 router.post(
   '/periods/:id/load-inputs',
   verifyToken,
@@ -140,6 +146,12 @@ router.get(
   verifyToken,
   authorize(['payroll.report.view']),
   payroll.getStatutoryReport
+)
+router.get(
+  '/reports/thirteenth-month',
+  verifyToken,
+  authorize(['payroll.report.view']),
+  payroll.getThirteenthMonthReport
 )
 router.get(
   '/reports/employee-history',

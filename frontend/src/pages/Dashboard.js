@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { useSelector } from 'react-redux'
+import { useSelector, useDispatch } from 'react-redux'
+import { refreshPermissions } from '../store/authSlice.js'
 import api from '../api/api.js'
 import Icon from '../components/Icons.js'
 import BrandedChart, { ChartCard, BRAND_COLORS, formatCurrency as fmtPeso } from '../components/Chart.jsx'
@@ -40,17 +41,38 @@ function Sparkbar({ values = [] }) {
 }
 
 export default function Dashboard() {
+  const dispatch = useDispatch()
   const user = useSelector((s) => s.auth.user)
+  const permissions = useSelector((s) => s.auth.permissions) || []
   const name = user ? (user.full_name || user.username) : 'Administrator'
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const [statsError, setStatsError] = useState(null)
-  const userRoles = Array.isArray(user?.roles) ? user.roles : []
-  const isSalesClerk = (stats?.dashboard_profile === 'sales_clerk')
-    || userRoles.some((roleName) => String(roleName || '').trim().toLowerCase() === 'sales clerk')
+
+  // Determine dashboard tier based on permissions
+  const hasFinanceReports = permissions.includes('finance.reports.view') || permissions.includes('admin.*')
+  const hasSalesCreate = permissions.includes('sales.create') || permissions.includes('admin.*')
+  const hasInventoryView = permissions.includes('inventory.view') || permissions.includes('admin.*')
+
+  let dashboardTier = 'fallback'
+  if (hasFinanceReports) {
+    dashboardTier = 'full'
+  } else if (hasSalesCreate && !hasFinanceReports) {
+    dashboardTier = 'sales'
+  } else if (hasInventoryView && !hasSalesCreate && !hasFinanceReports) {
+    dashboardTier = 'inventory'
+  }
+
+  const isSalesClerk = dashboardTier === 'sales'
+  const isInventoryTier = dashboardTier === 'inventory'
 
   const now = new Date()
   const dateStr = now.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+
+  useEffect(() => {
+    // Refresh permissions so role changes are reflected without re-login
+    dispatch(refreshPermissions())
+  }, [dispatch])
 
   useEffect(() => {
     let active = true
@@ -88,11 +110,19 @@ export default function Dashboard() {
   const monthlyBaleSpend  = stats ? (stats.bale_spend_month  ?? stats.bale_spend_30d)  : 0
 
   const cards = useMemo(() => {
-    if (isSalesClerk) {
+    if (dashboardTier === 'sales') {
       return [
         { icon: 'sales',     tone: 'gold',    label: "Today's Sales",    value: fmtMoney(stats?.today_sales),       delta: `${fmtNumber(stats?.today_orders)} orders today` },
         { icon: 'inventory', tone: 'neutral', label: 'Active Products',  value: fmtNumber(stats?.products_count),    delta: 'In catalog' },
         { icon: 'reports',   tone: 'warning', label: 'Low Stock',        value: fmtNumber(stats?.low_stock_count),   delta: 'Needs restock' }
+      ]
+    }
+    if (dashboardTier === 'inventory') {
+      return [
+        { icon: 'inventory', tone: 'neutral', label: 'Total Products',      value: fmtNumber(stats?.total_products),              delta: 'In inventory' },
+        { icon: 'reports',   tone: 'warning', label: 'Low Stock Items',     value: fmtNumber(stats?.low_stock_items),            delta: 'Needs restock' },
+        { icon: 'purchasing', tone: 'neutral', label: 'Pending POs',        value: fmtNumber(stats?.pending_purchase_orders),    delta: 'Waiting to receive' },
+        { icon: 'reports',   tone: 'gold',    label: 'Total Stock Value',   value: fmtMoney(stats?.stock_value),                 delta: 'Current inventory worth' }
       ]
     }
     return [
@@ -105,7 +135,7 @@ export default function Dashboard() {
       { icon: 'purchasing',  tone: 'neutral', label: 'Bales Purchased (Month)',    value: fmtNumber(monthlyBalesCount),         delta: 'Auto resets monthly' },
       { icon: 'purchasing',  tone: 'gold',    label: 'Bale Spend (Month)',         value: fmtMoney(monthlyBaleSpend),           delta: 'From bale purchases' }
     ]
-  }, [isSalesClerk, stats, monthlyBalesCount, monthlyBaleSpend])
+  }, [dashboardTier, stats, monthlyBalesCount, monthlyBaleSpend])
 
   const recentSales = Array.isArray(stats?.recent_sales) ? stats.recent_sales : []
   const topProducts = Array.isArray(stats?.top_products) ? stats.top_products : []
@@ -157,7 +187,7 @@ export default function Dashboard() {
 
   // Bale spend vs payroll (admin-only summary card).
   const monthMix = useMemo(() => {
-    if (isSalesClerk) return null
+    if (dashboardTier !== 'full') return null
     return {
       labels: ['Bale Spend', 'Payroll', "Today's Sales"],
       values: [
@@ -166,7 +196,7 @@ export default function Dashboard() {
         Math.round(Number(stats?.today_sales) || 0)
       ]
     }
-  }, [isSalesClerk, monthlyBaleSpend, stats])
+  }, [dashboardTier, monthlyBaleSpend, stats])
 
   return React.createElement('div', { className: 'dash-page' },
     React.createElement('div', { className: 'dash-hero' },
@@ -174,8 +204,10 @@ export default function Dashboard() {
         React.createElement('div', { className: 'dash-hero-greeting' }, `Good day, ${name}`),
         React.createElement('div', { className: 'dash-hero-date' }, dateStr),
         React.createElement('div', { className: 'dash-hero-subtitle' },
-          isSalesClerk
+          dashboardTier === 'sales'
             ? 'Your live sales pulse and what to keep an eye on today.'
+            : dashboardTier === 'inventory'
+            ? "Inventory status and what's pending."
             : "Here's what's happening at Cecille's N'Style today."
         )
       ),
@@ -191,8 +223,8 @@ export default function Dashboard() {
       cards.map((c, i) => React.createElement(StatCard, { key: i, ...c }))
     ),
 
-    // ── Charts row ──────────────────────────────────────────────────
-    React.createElement('div', { className: 'chart-grid-2' },
+    // ── Charts row (shown for full and sales tiers) ──────────────────────────────────────────────────
+    (dashboardTier === 'full' || dashboardTier === 'sales') && React.createElement('div', { className: 'chart-grid-2' },
       React.createElement(ChartCard, {
         title: 'Sales Trend',
         subtitle: 'Daily POS revenue over the most recent two weeks. Higher line = better day.',
@@ -234,7 +266,7 @@ export default function Dashboard() {
       )
     ),
 
-    !isSalesClerk && monthMix && React.createElement('div', { className: 'chart-grid-2' },
+    dashboardTier === 'full' && monthMix && React.createElement('div', { className: 'chart-grid-2' },
       React.createElement(ChartCard, {
         title: 'Bestseller Performance',
         subtitle: 'Top 8 products by revenue (last 30 days). Hover a bar to see the exact peso value and units sold.',
@@ -316,7 +348,7 @@ export default function Dashboard() {
 
       React.createElement('div', { className: 'card dash-section' },
         React.createElement('div', { className: 'card-header' },
-          React.createElement('h3', null, isSalesClerk ? 'Top Products' : 'Top Products (Last 30 Days)'),
+          React.createElement('h3', null, dashboardTier === 'sales' ? 'Top Products' : 'Top Products (Last 30 Days)'),
           React.createElement('span', { className: 'badge badge-primary' }, 'Bestsellers')
         ),
         topProducts.length === 0 ?

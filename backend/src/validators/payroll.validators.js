@@ -83,6 +83,50 @@ function asDateOnly(value, fieldName, options = {}) {
   return normalized
 }
 
+function toUtcDate(dateOnly) {
+  const [year, month, day] = String(dateOnly).split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, day))
+}
+
+function daysBetweenInclusive(startDate, endDate) {
+  const start = toUtcDate(startDate)
+  const end = toUtcDate(endDate)
+  return Math.round((end.getTime() - start.getTime()) / 86400000) + 1
+}
+
+function lastDayOfMonth(year, month) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate()
+}
+
+function validatePeriodCutoff(frequency, startDate, endDate) {
+  const [startYear, startMonth, startDay] = startDate.split('-').map(Number)
+  const [endYear, endMonth, endDay] = endDate.split('-').map(Number)
+  const sameMonth = startYear === endYear && startMonth === endMonth
+  const monthLastDay = lastDayOfMonth(startYear, startMonth)
+
+  if (frequency === 'daily' && startDate !== endDate) {
+    throw validationError('daily payroll periods must start and end on the same date')
+  }
+
+  if (frequency === 'weekly' && daysBetweenInclusive(startDate, endDate) !== 7) {
+    throw validationError('weekly payroll periods must cover exactly 7 calendar days')
+  }
+
+  if (frequency === 'semi_monthly') {
+    const firstHalf = sameMonth && startDay === 1 && endDay === 15
+    const secondHalf = sameMonth && startDay === 16 && endDay === monthLastDay
+    if (!firstHalf && !secondHalf) {
+      throw validationError('semi-monthly payroll periods must be either day 1-15 or day 16 through the last day of the same month')
+    }
+  }
+
+  if (frequency === 'monthly') {
+    if (!sameMonth || startDay !== 1 || endDay !== monthLastDay) {
+      throw validationError('monthly payroll periods must cover one full calendar month')
+    }
+  }
+}
+
 function asPositiveId(value, fieldName = 'id') {
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed <= 0) throw validationError(`${fieldName} must be a valid positive integer`)
@@ -101,6 +145,7 @@ function validateProfilePayload(payload = {}, options = {}) {
   if (!partial || hasOwn(body, 'pay_rate')) profile.pay_rate = asNumber(body.pay_rate, 'pay_rate', { required: !partial, min: 0 })
   if (!partial || hasOwn(body, 'payroll_frequency')) profile.payroll_frequency = asEnum(body.payroll_frequency, 'payroll_frequency', PAYROLL_FREQUENCIES, { defaultValue: 'semi_monthly' })
   if (hasOwn(body, 'standard_work_days_per_month')) profile.standard_work_days_per_month = asOptionalNumber(body.standard_work_days_per_month, 'standard_work_days_per_month', { min: 0 })
+  if (hasOwn(body, 'salary_divisor')) profile.salary_divisor = asOptionalNumber(body.salary_divisor, 'salary_divisor', { min: 1 })
   if (hasOwn(body, 'standard_hours_per_day')) profile.standard_hours_per_day = asOptionalNumber(body.standard_hours_per_day, 'standard_hours_per_day', { min: 0 })
 
   for (const key of ['overtime_eligible', 'late_deduction_enabled', 'undertime_deduction_enabled', 'tax_enabled', 'sss_enabled', 'philhealth_enabled', 'pagibig_enabled']) {
@@ -112,6 +157,7 @@ function validateProfilePayload(payload = {}, options = {}) {
   if (hasOwn(body, 'bank_account_name')) profile.bank_account_name = asText(body.bank_account_name, 'bank_account_name', { maxLength: 180, defaultValue: null })
   if (hasOwn(body, 'bank_account_number')) profile.bank_account_number = asText(body.bank_account_number, 'bank_account_number', { maxLength: 80, defaultValue: null })
   if (!partial || hasOwn(body, 'status')) profile.status = asEnum(body.status, 'status', PROFILE_STATUSES, { defaultValue: 'active' })
+  if (hasOwn(body, 'employee_number')) profile.employee_number = asText(body.employee_number, 'employee_number', { maxLength: 32, defaultValue: null })
 
   return profile
 }
@@ -122,13 +168,16 @@ function validatePeriodPayload(payload = {}) {
   const endDate = asDateOnly(body.end_date, 'end_date', { required: true })
   if (startDate > endDate) throw validationError('start_date must be earlier than or equal to end_date')
 
+  const frequency = asEnum(body.frequency, 'frequency', PAYROLL_FREQUENCIES, { defaultValue: 'semi_monthly' })
+  validatePeriodCutoff(frequency, startDate, endDate)
+
   return {
     branch_id: body.branch_id ? asPositiveId(body.branch_id, 'branch_id') : null,
     code: asText(body.code || `PAY-${startDate}-${endDate}`, 'code', { required: true, maxLength: 80 }),
     start_date: startDate,
     end_date: endDate,
     payout_date: asDateOnly(body.payout_date, 'payout_date', { required: true }),
-    frequency: asEnum(body.frequency, 'frequency', ['weekly', 'semi_monthly', 'monthly'], { defaultValue: 'semi_monthly' }),
+    frequency,
     notes: asText(body.notes, 'notes', { defaultValue: null })
   }
 }

@@ -5,9 +5,16 @@ const api = Axios.create({
   headers: { 'Content-Type': 'application/json' }
 })
 
+// Kept in module memory so each browser tab has its own token.
+// Reads localStorage once at page load; after that only setApiToken() updates it.
+let _token = localStorage.getItem('token') || null
+
+export function setApiToken(token) {
+  _token = token || null
+}
+
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
+  if (_token) config.headers.Authorization = `Bearer ${_token}`
   return config
 })
 

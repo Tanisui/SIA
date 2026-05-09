@@ -23,7 +23,7 @@ const { computePayrollRun,
   releaseRun,
   voidRun
 } = require('../services/payroll/computePayrollRun')
-const { buildPayslipView } = require('../services/payroll/computeEmployeePayroll')
+const { buildPayslipView, getDailyRate, getHourlyRate, roundMoney } = require('../services/payroll/computeEmployeePayroll')
 
 function parseJson(value, fallback = null) {
   if (value === null || value === undefined || value === '') return fallback
@@ -50,6 +50,28 @@ function handleControllerError(res, err, fallbackMessage) {
   if (err?.statusCode) return res.status(err.statusCode).json({ error: err.message })
   if (err?.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'duplicate payroll record' })
   return res.status(500).json({ error: fallbackMessage })
+}
+
+function num(value, fallback = 0) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function computeThirteenthMonthBasicEarned(item = {}) {
+  const profile = parseJson(item.payroll_profile_snapshot_json, {})
+  const input = parseJson(item.input_snapshot_json, {})
+  const grossBasicPay = roundMoney(item.gross_basic_pay)
+
+  if (String(profile.pay_basis || '').toLowerCase() !== 'monthly') {
+    return grossBasicPay
+  }
+
+  const dailyRate = getDailyRate(profile)
+  const hourlyRate = getHourlyRate(profile)
+  const absenceDeduction = roundMoney((num(input.absent_days) + num(input.unpaid_leave_days)) * dailyRate)
+  const lateDeduction = roundMoney((num(input.late_minutes) / 60) * hourlyRate)
+  const undertimeDeduction = roundMoney((num(input.undertime_minutes) / 60) * hourlyRate)
+  return Math.max(roundMoney(grossBasicPay - absenceDeduction - lateDeduction - undertimeDeduction), 0)
 }
 
 function buildSetClause(payload, allowedColumns) {
@@ -192,12 +214,14 @@ async function updateProfile(req, res) {
     delete profile.user_id
 
     const allowedColumns = [
+      'employee_number',
       'branch_id',
       'employment_type',
       'pay_basis',
       'pay_rate',
       'payroll_frequency',
       'standard_work_days_per_month',
+      'salary_divisor',
       'standard_hours_per_day',
       'overtime_eligible',
       'late_deduction_enabled',
@@ -288,6 +312,21 @@ async function createPeriod(req, res) {
   try {
     const period = validatePeriodPayload(req.body || {})
     await conn.beginTransaction()
+
+    // Block same-frequency periods that overlap in date range
+    const [overlapping] = await conn.query(
+      `SELECT id, code, start_date, end_date FROM payroll_periods
+       WHERE frequency = ? AND status NOT IN ('void')
+         AND start_date <= ? AND end_date >= ?`,
+      [period.frequency, period.end_date, period.start_date]
+    )
+    if (overlapping.length > 0) {
+      const names = overlapping.map((p) => `${p.code} (${p.start_date} – ${p.end_date})`).join(', ')
+      const err = new Error(`This ${period.frequency} period overlaps with existing period(s): ${names}. Overlapping same-frequency periods would double-pay employees. Void the existing period first or adjust the dates.`)
+      err.statusCode = 409
+      throw err
+    }
+
     const [result] = await conn.query(
       `INSERT INTO payroll_periods (
          branch_id, code, start_date, end_date, payout_date, frequency, notes, created_by
@@ -322,6 +361,60 @@ async function createPeriod(req, res) {
   } catch (err) {
     await conn.rollback().catch(() => {})
     handleControllerError(res, err, 'failed to create payroll period')
+  } finally {
+    conn.release()
+  }
+}
+
+async function deletePeriod(req, res) {
+  const conn = await db.pool.getConnection()
+  try {
+    const periodId = asPositiveId(req.params.id, 'period id')
+    await conn.beginTransaction()
+    const period = await getPayrollPeriodState(conn, periodId)
+    if (!period) {
+      await conn.rollback()
+      return res.status(404).json({ error: 'payroll period not found' })
+    }
+    if (String(period.status || '').toLowerCase() !== 'draft') {
+      await conn.rollback()
+      return res.status(400).json({ error: 'only draft periods can be deleted' })
+    }
+    const [nonDraftRuns] = await conn.query(
+      `SELECT id FROM payroll_runs WHERE payroll_period_id = ? AND status NOT IN ('draft') LIMIT 1`,
+      [periodId]
+    )
+    if (nonDraftRuns.length > 0) {
+      await conn.rollback()
+      return res.status(400).json({ error: 'cannot delete a period with computed or finalized runs — void the run first' })
+    }
+    await conn.query('DELETE FROM payroll_inputs WHERE payroll_period_id = ?', [periodId])
+    await conn.query(
+      `DELETE items FROM payroll_run_items items
+       JOIN payroll_runs r ON r.id = items.payroll_run_id
+       WHERE r.payroll_period_id = ?`,
+      [periodId]
+    )
+    await conn.query('DELETE FROM payroll_runs WHERE payroll_period_id = ?', [periodId])
+    await conn.query('DELETE FROM payroll_periods WHERE id = ?', [periodId])
+    await logAuditEventSafe(conn, {
+      userId: req.auth.id,
+      action: 'PAYROLL_PERIOD_DELETED',
+      resourceType: 'PayrollPeriod',
+      resourceId: periodId,
+      details: {
+        module: 'finance',
+        severity: 'high',
+        target_label: period.code,
+        summary: `Deleted draft payroll period ${period.code}`,
+        before: period
+      }
+    })
+    await conn.commit()
+    res.json({ success: true, deleted_id: periodId, code: period.code })
+  } catch (err) {
+    await conn.rollback().catch(() => {})
+    handleControllerError(res, err, 'failed to delete payroll period')
   } finally {
     conn.release()
   }
@@ -623,11 +716,17 @@ async function getPayslip(req, res) {
          periods.frequency AS period_frequency,
          users.username,
          users.full_name,
-         users.email
+         users.email,
+         emp.tin            AS employee_tin,
+         emp.sss_number     AS employee_sss_number,
+         emp.philhealth_pin AS employee_philhealth_pin,
+         emp.pagibig_mid    AS employee_pagibig_mid,
+         emp.id             AS employee_record_id
        FROM payroll_run_items items
        JOIN payroll_runs runs ON runs.id = items.payroll_run_id
        JOIN payroll_periods periods ON periods.id = runs.payroll_period_id
        JOIN users ON users.id = items.user_id
+       LEFT JOIN employees emp ON emp.user_id = items.user_id
        WHERE items.payroll_run_id = ? AND items.id = ?
        LIMIT 1`,
       [runId, itemId]
@@ -638,7 +737,8 @@ async function getPayslip(req, res) {
     const canViewAll = hasPermission(req, 'payroll.payslip.view')
     const isOwnPayslip = Number(item.user_id) === Number(req.auth.id)
     if (!canViewAll && !isOwnPayslip) return res.status(403).json({ error: 'forbidden' })
-    if (!canViewAll && !['finalized', 'released'].includes(String(item.status))) {
+    const effectiveStatus = String(item.run_status || item.status || '').toLowerCase()
+    if (!canViewAll && !['finalized', 'released'].includes(effectiveStatus)) {
       return res.status(403).json({ error: 'own payslip is only available after finalization' })
     }
 
@@ -653,12 +753,22 @@ async function getPayslip(req, res) {
       ...entry,
       metadata_json: parseJson(entry.metadata_json, null)
     }))
-    const payrollProfileSnapshot = parseJson(item.payroll_profile_snapshot_json, {})
+    let payrollProfileSnapshot = parseJson(item.payroll_profile_snapshot_json, {})
+
+    // Fall back to live profile when snapshot is empty (run computed before profile was set up)
+    if (!payrollProfileSnapshot.pay_basis) {
+      const [liveProfileRows] = await db.pool.query(
+        'SELECT * FROM payroll_profiles WHERE user_id = ? LIMIT 1',
+        [item.user_id]
+      )
+      if (liveProfileRows[0]) payrollProfileSnapshot = liveProfileRows[0]
+    }
+
     const inputSnapshot = parseJson(item.input_snapshot_json, {})
     const settingsSnapshot = parseJson(item.settings_snapshot_json, {})
     res.json({
       ...item,
-      payroll_profile_snapshot_json: payrollProfileSnapshot,
+      payroll_profile_snapshot_json: parseJson(item.payroll_profile_snapshot_json, {}),
       input_snapshot_json: inputSnapshot,
       settings_snapshot_json: settingsSnapshot,
       payslip_view: buildPayslipView({
@@ -668,10 +778,15 @@ async function getPayslip(req, res) {
         settings: settingsSnapshot,
         lines: normalizedLines,
         employee: {
-          full_name: item.full_name,
-          username: item.username,
-          email: item.email,
-          user_id: item.user_id
+          full_name:          item.full_name,
+          username:           item.username,
+          email:              item.email,
+          user_id:            item.user_id,
+          employee_record_id: item.employee_record_id,
+          tin:                item.employee_tin,
+          sss_number:         item.employee_sss_number,
+          philhealth_pin:     item.employee_philhealth_pin,
+          pagibig_mid:        item.employee_pagibig_mid
         }
       }),
       lines: normalizedLines
@@ -855,9 +970,73 @@ async function updateSettings(req, res) {
   }
 }
 
+async function getThirteenthMonthReport(req, res) {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear()
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      return res.status(400).json({ error: 'invalid year' })
+    }
+    const [rows] = await db.pool.query(
+      `SELECT
+         items.user_id,
+         u.full_name,
+         u.username,
+         pp.employee_number,
+         items.gross_basic_pay,
+         items.payroll_profile_snapshot_json,
+         items.input_snapshot_json,
+         periods.id AS payroll_period_id
+       FROM payroll_run_items items
+       JOIN payroll_runs runs        ON runs.id = items.payroll_run_id
+       JOIN payroll_periods periods  ON periods.id = runs.payroll_period_id
+       JOIN users u                  ON u.id = items.user_id
+       LEFT JOIN payroll_profiles pp ON pp.user_id = items.user_id
+       WHERE runs.status IN ('finalized', 'released')
+         AND YEAR(periods.start_date) = ?
+       ORDER BY COALESCE(u.full_name, u.username)`,
+      [year]
+    )
+    const grouped = new Map()
+    for (const row of rows) {
+      const userId = Number(row.user_id)
+      if (!grouped.has(userId)) {
+        grouped.set(userId, {
+          user_id: userId,
+          full_name: row.full_name,
+          username: row.username,
+          employee_number: row.employee_number || null,
+          total_basic_pay: 0,
+          period_ids: new Set()
+        })
+      }
+      const entry = grouped.get(userId)
+      entry.total_basic_pay = roundMoney(entry.total_basic_pay + computeThirteenthMonthBasicEarned(row))
+      if (row.payroll_period_id) entry.period_ids.add(Number(row.payroll_period_id))
+    }
+    const reportRows = Array.from(grouped.values()).map((row) => ({
+      user_id: row.user_id,
+      full_name: row.full_name,
+      username: row.username,
+      employee_number: row.employee_number,
+      total_basic_pay: roundMoney(row.total_basic_pay),
+      thirteenth_month_pay: roundMoney(row.total_basic_pay / 12),
+      period_count: row.period_ids.size
+    }))
+    const total = reportRows.reduce((sum, row) => sum + Number(row.thirteenth_month_pay || 0), 0)
+    res.json({
+      year,
+      rows: reportRows,
+      total_thirteenth_month_pay: Math.round(total * 100) / 100
+    })
+  } catch (err) {
+    handleControllerError(res, err, 'failed to generate 13th month pay report')
+  }
+}
+
 module.exports = {
   computePeriod,
   createPeriod,
+  deletePeriod,
   createProfile,
   finalize,
   getBusinessSummaryReport,
@@ -870,6 +1049,7 @@ module.exports = {
   getRunItems,
   getSettings,
   getStatutoryReport,
+  getThirteenthMonthReport,
   listPeriods,
   listProfiles,
   loadInputs,

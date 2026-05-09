@@ -14,7 +14,9 @@ const SQL_MIGRATION_FILES = [
   path.join(__dirname, '..', 'database', 'migrations', '20260424_payroll_frequency_and_attendance_permissions.sql'),
   path.join(__dirname, '..', 'database', 'migrations', '20260426_rbac_payroll_view_only_non_admin.sql'),
   path.join(__dirname, '..', 'database', 'migrations', '20260426_attendance_admin_only_modify.sql'),
-  path.join(__dirname, '..', 'database', 'migrations', '20260426_notifications_read_state.sql')
+  path.join(__dirname, '..', 'database', 'migrations', '20260426_notifications_read_state.sql'),
+  path.join(__dirname, '..', 'database', 'migrations', '20260509_payroll_industry_standard.sql'),
+  path.join(__dirname, '..', 'database', 'migrations', '20260509_payroll_ph_frequency_cutoffs.sql')
 ]
 
 const DUPLICATE_ERROR_CODES = new Set([

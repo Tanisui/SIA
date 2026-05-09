@@ -5,8 +5,9 @@ CREATE TABLE IF NOT EXISTS payroll_profiles (
   employment_type VARCHAR(64) NULL,
   pay_basis ENUM('monthly','daily','hourly') NOT NULL,
   pay_rate DECIMAL(12,2) NOT NULL DEFAULT 0.00,
-  payroll_frequency ENUM('weekly','semi_monthly','monthly') NOT NULL DEFAULT 'semi_monthly',
+  payroll_frequency ENUM('daily','weekly','semi_monthly','monthly') NOT NULL DEFAULT 'semi_monthly',
   standard_work_days_per_month DECIMAL(8,2) NULL,
+  salary_divisor DECIMAL(8,2) NULL,
   standard_hours_per_day DECIMAL(8,2) NULL,
   overtime_eligible TINYINT(1) NOT NULL DEFAULT 1,
   late_deduction_enabled TINYINT(1) NOT NULL DEFAULT 1,
@@ -35,7 +36,7 @@ CREATE TABLE IF NOT EXISTS payroll_periods (
   start_date DATE NOT NULL,
   end_date DATE NOT NULL,
   payout_date DATE NOT NULL,
-  frequency ENUM('weekly','semi_monthly','monthly') NOT NULL DEFAULT 'semi_monthly',
+  frequency ENUM('daily','weekly','semi_monthly','monthly') NOT NULL DEFAULT 'semi_monthly',
   status ENUM('draft','computed','finalized','released','void') NOT NULL DEFAULT 'draft',
   notes TEXT NULL,
   created_by BIGINT UNSIGNED NULL,
@@ -227,6 +228,14 @@ SELECT
       "enabled": true,
       "mode": "bir_rr_11_2018_annex_e_2023_onwards",
       "brackets": {
+        "daily": [
+          { "from": 0, "to": 685, "base_tax": 0, "excess_over": 0, "rate": 0 },
+          { "from": 685, "to": 1095, "base_tax": 0, "excess_over": 685, "rate": 0.15 },
+          { "from": 1096, "to": 2191, "base_tax": 61.65, "excess_over": 1096, "rate": 0.20 },
+          { "from": 2192, "to": 5478, "base_tax": 280.85, "excess_over": 2192, "rate": 0.25 },
+          { "from": 5479, "to": 21917, "base_tax": 1102.60, "excess_over": 5479, "rate": 0.30 },
+          { "from": 21918, "to": null, "base_tax": 6034.30, "excess_over": 21918, "rate": 0.35 }
+        ],
         "weekly": [
           { "from": 0, "to": 4808, "base_tax": 0, "excess_over": 0, "rate": 0 },
           { "from": 4808, "to": 7691, "base_tax": 0, "excess_over": 4808, "rate": 0.15 },

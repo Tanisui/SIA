@@ -6,8 +6,12 @@ const tabs = [
   { key: 'business-summary', label: 'Business Summary' },
   { key: 'register', label: 'Payroll Register' },
   { key: 'statutory-summary', label: 'Statutory Summary' },
-  { key: 'employee-history', label: 'Employee History' }
+  { key: 'employee-history', label: 'Employee History' },
+  { key: 'thirteenth-month', label: '13th Month Pay' }
 ]
+
+const CURRENT_YEAR = new Date().getFullYear()
+const YEAR_OPTIONS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - i)
 
 function toDateOnly(d) {
   return d.toISOString().slice(0, 10)
@@ -33,14 +37,18 @@ function thisYearRange() {
 }
 
 function defaultFilters() {
-  return { ...thisYearRange(), user_id: '' }
+  return { ...thisYearRange(), user_id: '', year: CURRENT_YEAR }
 }
 
-function buildQuery(filters) {
+function buildQuery(filters, tab) {
   const params = new URLSearchParams()
-  if (filters.from) params.set('from', filters.from)
-  if (filters.to) params.set('to', filters.to)
-  if (filters.user_id) params.set('user_id', filters.user_id)
+  if (tab === 'thirteenth-month') {
+    if (filters.year) params.set('year', filters.year)
+  } else {
+    if (filters.from) params.set('from', filters.from)
+    if (filters.to) params.set('to', filters.to)
+    if (filters.user_id) params.set('user_id', filters.user_id)
+  }
   const q = params.toString()
   return q ? `?${q}` : ''
 }
@@ -142,7 +150,7 @@ export default function PayrollReports() {
       setLoading(true)
       setError(null)
       setExpandedRowId(null)
-      const res = await api.get(`/api/payroll/reports/${tab}${buildQuery(currentFilters)}`)
+      const res = await api.get(`/api/payroll/reports/${tab}${buildQuery(currentFilters, tab)}`)
       setReport(res.data || null)
     } catch (err) {
       setError(getErrorMessage(err, 'Failed to load payroll report'))
@@ -557,16 +565,84 @@ export default function PayrollReports() {
     )
   }
 
+  function renderThirteenthMonth() {
+    const thirteenthRows = report?.rows || []
+    const totalPayable = Number(report?.total_thirteenth_month_pay || 0)
+    const reportYear = report?.year || filters.year
+
+    return (
+      <>
+        <div className="reports-summary-grid payroll-summary-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+          <SummaryCard label={`Total 13th Month Payable (${reportYear})`} value={totalPayable} accent="var(--gold-dark)" />
+          <div className="card reports-summary-card">
+            <div className="card-title">Employees Covered</div>
+            <div className="card-value-sm">{thirteenthRows.length}</div>
+          </div>
+        </div>
+
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="table-wrap responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Emp #</th>
+                  <th className="text-right">Periods Counted</th>
+                  <th className="text-right">Total Basic Pay YTD</th>
+                  <th className="text-right">13th Month Pay</th>
+                </tr>
+              </thead>
+              <tbody>
+                {thirteenthRows.length ? thirteenthRows.map((row) => (
+                  <tr key={row.user_id}>
+                    <td>{row.full_name || row.username}</td>
+                    <td style={{ fontFamily: 'monospace', fontSize: 13, color: 'var(--text-mid)' }}>
+                      {row.employee_number || '—'}
+                    </td>
+                    <td className="text-right">{row.period_count}</td>
+                    <td className="text-right">{fmt(row.total_basic_pay)}</td>
+                    <td className="text-right" style={{ fontWeight: 700 }}>{fmt(row.thirteenth_month_pay)}</td>
+                  </tr>
+                )) : (
+                  <tr>
+                    <td colSpan={5} className="text-center text-muted">
+                      No finalized payroll data found for {reportYear}.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+              {thirteenthRows.length > 0 && (
+                <tfoot>
+                  <tr style={{ background: 'var(--cream-white)', fontWeight: 700, borderTop: '2px solid var(--border-light)' }}>
+                    <td colSpan={3}>Totals</td>
+                    <td className="text-right">{fmt(thirteenthRows.reduce((s, r) => s + Number(r.total_basic_pay || 0), 0))}</td>
+                    <td className="text-right">{fmt(totalPayable)}</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+          <div style={{ marginTop: 14, padding: '10px 14px', background: 'var(--cream-white)', borderRadius: 'var(--radius-sm)', fontSize: 12, color: 'var(--text-light)', lineHeight: 1.6 }}>
+            Per <strong>DOLE Labor Advisory No. 09, Series of 2013</strong>: 13th Month Pay = Total Basic Salary Earned During the Calendar Year &divide; 12.
+            Payable on or before <strong>December 24</strong>. Only includes finalized and released payroll runs.
+          </div>
+        </div>
+      </>
+    )
+  }
+
   function renderReport() {
     if (loading) return <div className="card" style={{ marginTop: 16, textAlign: 'center', color: 'var(--text-light)', padding: 32 }}>Loading report...</div>
     if (!report) return null
     if (activeTab === 'business-summary') return renderBusinessSummary()
     if (activeTab === 'register') return renderRegister()
     if (activeTab === 'statutory-summary') return renderStatutory()
+    if (activeTab === 'thirteenth-month') return renderThirteenthMonth()
     return renderEmployeeHistory()
   }
 
-  const showEmployeeFilter = activeTab !== 'business-summary' && activeTab !== 'statutory-summary'
+  const isThirteenthMonth = activeTab === 'thirteenth-month'
+  const showEmployeeFilter = !isThirteenthMonth && activeTab !== 'business-summary' && activeTab !== 'statutory-summary'
 
   return (
     <div className="page payroll-page">
@@ -581,41 +657,60 @@ export default function PayrollReports() {
       {!error && report?.notice ? <div className="card" style={{ marginBottom: 16, color: 'var(--text-light)' }}>{report.notice}</div> : null}
 
       <div className="card reports-filter-card">
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-          {[
-            { label: 'This Month', range: thisMonthRange() },
-            { label: 'Last Month', range: lastMonthRange() },
-            { label: 'This Year', range: thisYearRange() }
-          ].map(({ label, range }) => (
-            <button
-              key={label}
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => applyFilters({ ...filters, ...range })}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        {!isThirteenthMonth && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+            {[
+              { label: 'This Month', range: thisMonthRange() },
+              { label: 'Last Month', range: lastMonthRange() },
+              { label: 'This Year', range: thisYearRange() }
+            ].map(({ label, range }) => (
+              <button
+                key={label}
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => applyFilters({ ...filters, ...range })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="reports-filter-grid payroll-report-filter-grid">
-          <div className="form-group payroll-report-filter-field" style={{ marginBottom: 0 }}>
-            <label className="form-label">From</label>
-            <input
-              className="form-input"
-              type="date"
-              value={filters.from}
-              onChange={(e) => updateFilter('from', e.target.value)}
-            />
-          </div>
-          <div className="form-group payroll-report-filter-field" style={{ marginBottom: 0 }}>
-            <label className="form-label">To</label>
-            <input
-              className="form-input"
-              type="date"
-              value={filters.to}
-              onChange={(e) => updateFilter('to', e.target.value)}
-            />
-          </div>
+          {isThirteenthMonth ? (
+            <div className="form-group payroll-report-filter-field" style={{ marginBottom: 0 }}>
+              <label className="form-label">Year</label>
+              <select
+                className="form-select"
+                value={filters.year}
+                onChange={(e) => updateFilter('year', Number(e.target.value))}
+              >
+                {YEAR_OPTIONS.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <>
+              <div className="form-group payroll-report-filter-field" style={{ marginBottom: 0 }}>
+                <label className="form-label">From</label>
+                <input
+                  className="form-input"
+                  type="date"
+                  value={filters.from}
+                  onChange={(e) => updateFilter('from', e.target.value)}
+                />
+              </div>
+              <div className="form-group payroll-report-filter-field" style={{ marginBottom: 0 }}>
+                <label className="form-label">To</label>
+                <input
+                  className="form-input"
+                  type="date"
+                  value={filters.to}
+                  onChange={(e) => updateFilter('to', e.target.value)}
+                />
+              </div>
+            </>
+          )}
           {showEmployeeFilter && (
             <div className="form-group payroll-report-filter-field payroll-report-filter-field-employee" style={{ marginBottom: 0 }}>
               <label className="form-label">Employee</label>

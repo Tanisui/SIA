@@ -38,10 +38,22 @@ function getStandardHoursPerDay(profile = {}) {
   return num(profile.standard_hours_per_day, 8) || 8
 }
 
+function getStandardWorkDaysPerMonth(profile = {}) {
+  return num(profile.standard_work_days_per_month, 22) || 22
+}
+
+function getSalaryDivisor(profile = {}) {
+  const divisor = num(profile.salary_divisor)
+  return divisor > 0 ? divisor : null
+}
+
 function getDailyRate(profile) {
   const payRate = num(profile.pay_rate)
-  const workDays = num(profile.standard_work_days_per_month, 22) || 22
-  if (profile.pay_basis === 'monthly') return roundMoney(payRate / workDays)
+  const salaryDivisor = getSalaryDivisor(profile)
+  if (profile.pay_basis === 'monthly') {
+    if (salaryDivisor) return roundMoney((payRate * 12) / salaryDivisor)
+    return roundMoney(payRate / getStandardWorkDaysPerMonth(profile))
+  }
   if (profile.pay_basis === 'daily') return roundMoney(payRate)
   return roundMoney(getStandardHoursPerDay(profile) * payRate)
 }
@@ -54,11 +66,12 @@ function getHourlyRate(profile) {
 
 function getMonthlyBasicEquivalent(profile) {
   const payRate = num(profile.pay_rate)
-  const workDays = num(profile.standard_work_days_per_month, 22) || 22
+  const workDays = getStandardWorkDaysPerMonth(profile)
   const hoursPerDay = getStandardHoursPerDay(profile)
+  const salaryDivisor = getSalaryDivisor(profile)
   if (profile.pay_basis === 'monthly') return roundMoney(payRate)
-  if (profile.pay_basis === 'daily') return roundMoney(payRate * workDays)
-  return roundMoney(payRate * workDays * hoursPerDay)
+  if (profile.pay_basis === 'daily') return roundMoney(payRate * (salaryDivisor ? salaryDivisor / 12 : workDays))
+  return roundMoney(payRate * hoursPerDay * (salaryDivisor ? salaryDivisor / 12 : workDays))
 }
 
 function getPayPeriodsPerMonth(frequency) {
@@ -88,6 +101,9 @@ function getStatutoryMonthlyBases({ profile, basicPay, contributionBase, payPeri
 function getBasicPay(profile, input, period) {
   const payRate = num(profile.pay_rate)
   if (profile.pay_basis === 'monthly') {
+    if (period?.frequency === 'daily') {
+      return roundMoney((num(input.days_worked) + num(input.paid_leave_days)) * getDailyRate(profile))
+    }
     if (period?.frequency === 'weekly') return roundMoney((payRate * 12) / 52)
     if (period?.frequency === 'monthly') return roundMoney(payRate)
     return roundMoney(payRate / 2)
@@ -130,17 +146,20 @@ function getLineAmount(lineAmounts, code, fallback = 0) {
 }
 
 function getEmployeeNumber(employee = {}, item = {}) {
-  const rawValue = employee.employee_id
+  const rawValue = employee.employee_number
+    || employee.employee_id
     || employee.id
     || employee.employee_record_id
-    || employee.employee_number
     || item.employee_id
     || item.user_id
+  if (!rawValue) return null
+  // If it's already a formatted string (e.g. EMP-0001), return as-is
+  if (typeof rawValue === 'string' && /\D/.test(rawValue)) return rawValue
   const numericValue = Number(rawValue)
   if (Number.isInteger(numericValue) && numericValue > 0) {
-    return String(numericValue).padStart(4, '0')
+    return `EMP-${String(numericValue).padStart(4, '0')}`
   }
-  return rawValue ? String(rawValue) : null
+  return String(rawValue)
 }
 
 function buildFormulaParts(parts = []) {
@@ -191,6 +210,7 @@ function buildPayslipView({ item = {}, profile = {}, input = {}, settings = {}, 
   const regularHolidayMultiplier = num(effectiveSettings.regular_holiday_multiplier, 2)
   const specialHolidayMultiplier = num(effectiveSettings.special_holiday_multiplier, 1.3)
   const restDayMultiplier = num(effectiveSettings.rest_day_multiplier, 1.3)
+  const salaryDivisor = getSalaryDivisor(profile)
 
   const earnings = [
     { code: 'BASE_AMOUNT', label: 'Base Amount', amount: basicPay },
@@ -213,7 +233,14 @@ function buildPayslipView({ item = {}, profile = {}, input = {}, settings = {}, 
     { code: 'MANUAL_DEDUCTION', label: 'Other Deductions', amount: manualDeduction }
   ]
 
+  const shopInfo = effectiveSettings.shop_info || {}
+
   return {
+    shop: {
+      name:    shopInfo.name    || null,
+      address: shopInfo.address || null,
+      tin:     shopInfo.tin     || null
+    },
     employee: {
       display_name: employee.display_name
         || employee.full_name
@@ -227,7 +254,12 @@ function buildPayslipView({ item = {}, profile = {}, input = {}, settings = {}, 
       daily_rate: dailyRate,
       hourly_rate: hourlyRate,
       standard_hours_per_day: standardHoursPerDay,
-      email: employee.email || item.email || profile.email || null
+      salary_divisor: salaryDivisor,
+      email:          employee.email          || item.email || profile.email || null,
+      tin:            employee.tin            || null,
+      sss_number:     employee.sss_number     || null,
+      philhealth_pin: employee.philhealth_pin || null,
+      pagibig_mid:    employee.pagibig_mid    || null
     },
     period: {
       code: item.period_code || null,
@@ -267,8 +299,12 @@ function buildPayslipView({ item = {}, profile = {}, input = {}, settings = {}, 
         parts: buildFormulaParts([
           {
             label: profile.pay_basis === 'hourly' ? 'Hours Worked' : 'Days Worked',
-            quantity: profile.pay_basis === 'hourly' ? num(input.hours_worked) : daysWorked,
-            rate: profile.pay_basis === 'hourly' ? num(profile.pay_rate) : (profile.pay_basis === 'monthly' ? num(profile.pay_rate) / (item.period_frequency === 'weekly' ? 52 / 12 : (item.period_frequency === 'monthly' ? 1 : 2)) : dailyRate),
+            quantity: profile.pay_basis === 'hourly' ? num(input.hours_worked) : (profile.pay_basis === 'monthly' && item.period_frequency !== 'daily' ? 1 : daysWorked),
+            rate: profile.pay_basis === 'hourly'
+              ? num(profile.pay_rate)
+              : (profile.pay_basis === 'monthly' && item.period_frequency !== 'daily'
+                ? num(profile.pay_rate) / (item.period_frequency === 'weekly' ? 52 / 12 : (item.period_frequency === 'monthly' ? 1 : 2))
+                : dailyRate),
             multiplier: 1,
             amount: basicPay
           }
@@ -358,7 +394,8 @@ function buildPayslipView({ item = {}, profile = {}, input = {}, settings = {}, 
       night_differential_multiplier: nightDifferentialMultiplier,
       regular_holiday_multiplier: regularHolidayMultiplier,
       special_holiday_multiplier: specialHolidayMultiplier,
-      rest_day_multiplier: restDayMultiplier
+      rest_day_multiplier: restDayMultiplier,
+      salary_divisor: salaryDivisor
     }
   }
 }
@@ -505,6 +542,8 @@ function computeEmployeePayroll({ profile, input, settings, period }) {
   line(lines, 'employer_share', 'PHILHEALTH_EMPLOYER', 'PhilHealth Employer Share', philhealth.employer_philhealth, 230)
   line(lines, 'employer_share', 'PAGIBIG_EMPLOYER', 'Pag-IBIG Employer Share', pagibig.employer_pagibig, 240)
   line(lines, 'info', 'MONTHLY_BASIC_EQUIVALENT', 'Monthly Basic Equivalent', monthlyBasicEquivalent, 300, { pay_periods_per_month: payPeriodsPerMonth })
+  const salaryDivisor = getSalaryDivisor(normalizedProfile)
+  if (salaryDivisor) line(lines, 'info', 'SALARY_DIVISOR', 'Annual Salary Divisor', salaryDivisor, 310)
 
   const computed = {
     payroll_profile_snapshot: normalizedProfile,
@@ -563,5 +602,6 @@ module.exports = {
   getDailyRate,
   getHourlyRate,
   getMonthlyBasicEquivalent,
+  getSalaryDivisor,
   roundMoney
 }

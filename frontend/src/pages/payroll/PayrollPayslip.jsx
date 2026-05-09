@@ -73,6 +73,15 @@ function AmountTable({ title, rows, totalLabel, totalAmount }) {
   )
 }
 
+function GovIdRow({ label, value }) {
+  return (
+    <div style={{ display: 'flex', gap: 4, fontSize: 11 }}>
+      <span style={{ color: 'var(--text-light)', minWidth: 80 }}>{label}</span>
+      <span style={{ fontWeight: 600 }}>{value || 'N/A'}</span>
+    </div>
+  )
+}
+
 export default function PayrollPayslip() {
   const { runId, itemId } = useParams()
   const navigate = useNavigate()
@@ -88,7 +97,11 @@ export default function PayrollPayslip() {
         const res = await api.get(`/api/payroll/runs/${runId}/items/${itemId}/payslip`)
         setPayslip(res.data || null)
       } catch (err) {
-        setError(getErrorMessage(err, 'Failed to load payslip'))
+        if (err?.response?.status === 403) {
+          setError('Access denied. If this is your own payslip, please ask your administrator to check your account permissions.')
+        } else {
+          setError(getErrorMessage(err, 'Failed to load payslip'))
+        }
       } finally {
         setLoading(false)
       }
@@ -163,6 +176,10 @@ export default function PayrollPayslip() {
     return null
   }, [payslipView])
 
+  const shop = payslipView?.shop || {}
+  const emp = payslipView?.employee || {}
+  const hasGovIds = emp.sss_number || emp.philhealth_pin || emp.pagibig_mid || emp.tin
+
   return (
     <div className="page payroll-page payroll-slip-page">
       <div className="page-header">
@@ -174,37 +191,88 @@ export default function PayrollPayslip() {
         </div>
         <div className="payroll-header-actions">
           <button className="btn btn-secondary" type="button" onClick={() => navigate(-1)}>Close</button>
-          <button className="btn btn-primary" type="button" onClick={() => window.print()}>Print</button>
+          {payslipView && <button className="btn btn-primary" type="button" onClick={() => window.print()}>Print</button>}
         </div>
       </div>
 
-      {error ? <div className="error-msg" style={{ marginBottom: 16 }}>{error}</div> : null}
-      {loading ? <div className="card">Loading payslip...</div> : null}
+      {error ? (
+        <div className="card" style={{ padding: 24, marginBottom: 16 }}>
+          <div className="error-msg" style={{ marginBottom: 12 }}>{error}</div>
+          <button className="btn btn-secondary" type="button" onClick={() => navigate(-1)}>← Go Back</button>
+        </div>
+      ) : null}
+
+      {loading ? <div className="card" style={{ padding: 24 }}>Loading payslip…</div> : null}
+
+      {!loading && !error && !payslip ? (
+        <div className="card" style={{ padding: 24 }}>
+          <div className="error-msg" style={{ marginBottom: 12 }}>Payslip not found.</div>
+          <button className="btn btn-secondary" type="button" onClick={() => navigate(-1)}>← Go Back</button>
+        </div>
+      ) : null}
 
       {payslip && payslipView ? (
         <div className="payroll-slip-shell">
           <div className="card payroll-slip-paper">
-            <div className="payroll-slip-header">
-              <div>
-                <div className="payroll-slip-run">{payslip.run_number}</div>
+
+            {/* ── Shop Header ──────────────────────────────────── */}
+            {shop.name && (
+              <div className="payroll-slip-shop-header" style={{
+                textAlign: 'center',
+                padding: '16px 20px 12px',
+                borderBottom: '2px solid var(--gold-dark)'
+              }}>
+                <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--gold-dark)', letterSpacing: '-0.02em' }}>
+                  {shop.name}
+                </div>
+                {shop.address && (
+                  <div style={{ fontSize: 12, color: 'var(--text-mid)', marginTop: 2 }}>{shop.address}</div>
+                )}
+                {shop.tin && (
+                  <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>TIN: {shop.tin}</div>
+                )}
+                <div style={{ fontSize: 13, fontWeight: 700, marginTop: 6, color: 'var(--text-dark)' }}>
+                  PAYROLL PAYSLIP
+                </div>
+              </div>
+            )}
+
+            {/* ── Employee + Period Header ─────────────────────── */}
+            <div className="payroll-slip-header" style={{ padding: '14px 20px' }}>
+              <div style={{ flex: 1 }}>
+                <div className="payroll-slip-run" style={{ marginBottom: 4 }}>{payslip.run_number}</div>
                 <div className="payroll-slip-employee-line">
-                  <strong>Employee:</strong> {payslipView.employee.display_name}
+                  <strong>Employee:</strong> {emp.display_name}
                 </div>
                 <div className="payroll-slip-employee-line">
-                  <strong>Emp #:</strong> {payslipView.employee.employee_number || '-'}
+                  <strong>Emp #:</strong> {emp.employee_number || '-'}
                 </div>
+                {hasGovIds && (
+                  <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 16px' }}>
+                    <GovIdRow label="SSS No." value={emp.sss_number} />
+                    <GovIdRow label="PhilHealth" value={emp.philhealth_pin} />
+                    <GovIdRow label="Pag-IBIG" value={emp.pagibig_mid} />
+                    <GovIdRow label="TIN" value={emp.tin} />
+                  </div>
+                )}
               </div>
               <div className="payroll-slip-period-block">
                 <span className={statusBadgeClass(payslip.status)}>{payslip.status}</span>
-                <div className="payroll-slip-employee-line">
-                  <strong>Period:</strong> {formatDate(payslipView.period.start_date)} - {formatDate(payslipView.period.end_date)}
+                <div className="payroll-slip-employee-line" style={{ marginTop: 6 }}>
+                  <strong>Period:</strong> {formatDate(payslipView.period.start_date)} – {formatDate(payslipView.period.end_date)}
                 </div>
+                {payslipView.period.payout_date && (
+                  <div className="payroll-slip-employee-line">
+                    <strong>Payout:</strong> {formatDate(payslipView.period.payout_date)}
+                  </div>
+                )}
                 <div className="payroll-slip-employee-line">
-                  <strong>Rate Type:</strong> {payslipView.employee.rate_type}
+                  <strong>Rate Type:</strong> {emp.rate_type}
                 </div>
               </div>
             </div>
 
+            {/* ── Attendance Summary ───────────────────────────── */}
             <div className="payroll-slip-section">
               <div className="payroll-slip-section-title">Attendance / Time Summary</div>
               {staleRunWarning ? <div className="warning-msg" style={{ marginBottom: 12 }}>{staleRunWarning}</div> : null}
@@ -223,6 +291,7 @@ export default function PayrollPayslip() {
               </table>
             </div>
 
+            {/* ── Earnings & Deductions ────────────────────────── */}
             <div className="payroll-slip-columns">
               <AmountTable
                 title="Earnings"
@@ -231,18 +300,19 @@ export default function PayrollPayslip() {
                 totalAmount={payslipView.totals.gross_earnings}
               />
               <AmountTable
-                title="Deductions (Detailed)"
+                title="Deductions"
                 rows={deductionRows}
                 totalLabel="Total Deductions"
                 totalAmount={payslipView.totals.total_deductions}
               />
             </div>
 
+            {/* ── Net Pay Calculation ──────────────────────────── */}
             <div className="payroll-slip-section payroll-slip-calculation">
               <div className="payroll-slip-section-title">Calculation</div>
-              <div className="payroll-slip-calculation-main">Pay = Gross Earnings - Total Deductions</div>
+              <div className="payroll-slip-calculation-main">Net Pay = Gross Earnings − Total Deductions</div>
               <div className="payroll-slip-calculation-sub">
-                Pay = {formatPeso(payslipView.calculation.gross_earnings)} - {formatPeso(payslipView.calculation.total_deductions)} ={' '}
+                {formatPeso(payslipView.calculation.gross_earnings)} − {formatPeso(payslipView.calculation.total_deductions)} ={' '}
                 <strong className={payslipView.calculation.net_pay < 0 ? 'payroll-slip-negative' : 'payroll-slip-positive'}>
                   {formatPeso(payslipView.calculation.net_pay)}
                 </strong>
@@ -264,6 +334,7 @@ export default function PayrollPayslip() {
               ) : null}
             </div>
 
+            {/* ── Signatures ──────────────────────────────────── */}
             <div className="payroll-slip-signatures">
               <div>
                 <div className="payroll-slip-signature-line" />
