@@ -29,7 +29,7 @@ const NAV_ITEMS = [
   },
   { to: '/sales',      label: 'Sales',      icon: 'sales',      perm: ['sales.view', 'sales.create'] },
   { to: '/customers',  label: 'Customers',  icon: 'customers',  perm: 'customers.view' },
-  { to: '/attendance', label: 'Attendance', icon: 'attendance', perm: null },
+  { to: '/attendance', label: 'Attendance', icon: 'attendance', perm: ['attendance.view', 'attendance.view_own', 'attendance.record', 'attendance.manage'] },
   {
     to: '/purchasing',
     label: 'Purchasing',
@@ -65,8 +65,8 @@ const NAV_ITEMS = [
       'payroll.period.compute', 'payroll.report.view', 'payroll.payslip.view_own'
     ],
     children: [
-      { to: '/payroll/my-payslips', label: 'My Payslips',        perm: null },
-      { to: '/payroll/dtr',         label: 'Daily Time Record',  perm: null },
+      { to: '/payroll/my-payslips', label: 'My Payslips',        perm: ['payroll.payslip.view_own', 'payroll.payslip.view'] },
+      { to: '/payroll/dtr',         label: 'Daily Time Record',  perm: ['attendance.view_own', 'attendance.record'] },
       // Payroll pages handle write actions internally; non-admin users can still open read-only screens.
       { to: '/payroll/periods',     label: 'Periods',  perm: ['payroll.period.view', 'payroll.period.compute'] },
       { to: '/payroll/profiles',    label: 'Profiles', perm: ['payroll.profile.view', 'payroll.profile.create', 'payroll.profile.update'] },

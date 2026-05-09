@@ -1,5 +1,5 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
-import api from '../api/api'
+import api, { setApiToken } from '../api/api'
 
 const initialState = {
   user: JSON.parse(localStorage.getItem('user') || 'null'),
@@ -24,6 +24,16 @@ export const login = createAsyncThunk('auth/login', async ({ username, password 
   }
 })
 
+export const refreshPermissions = createAsyncThunk('auth/refreshPermissions', async (_, thunkAPI) => {
+  try {
+    const res = await api.get('/auth/me')
+    return res.data
+  } catch (err) {
+    // Silently fail — don't force logout, just keep existing permissions
+    return thunkAPI.rejectWithValue(null)
+  }
+})
+
 export const logoutUser = createAsyncThunk('auth/logoutUser', async (_, thunkAPI) => {
   try {
     await api.post('/auth/logout')
@@ -44,6 +54,7 @@ const authSlice = createSlice({
       state.user = user
       state.token = token
       state.permissions = permissions || []
+      setApiToken(token)
       localStorage.setItem('user', JSON.stringify(user))
       localStorage.setItem('token', token)
       localStorage.setItem('permissions', JSON.stringify(permissions || []))
@@ -52,6 +63,7 @@ const authSlice = createSlice({
       state.user = null
       state.token = null
       state.permissions = []
+      setApiToken(null)
       localStorage.removeItem('user')
       localStorage.removeItem('token')
       localStorage.removeItem('permissions')
@@ -70,11 +82,21 @@ const authSlice = createSlice({
         state.user = user
         state.token = token
         state.permissions = user.permissions || []
+        setApiToken(token)
         localStorage.setItem('user', JSON.stringify(user))
         localStorage.setItem('token', token)
         localStorage.setItem('permissions', JSON.stringify(user.permissions || []))
       })
       .addCase(login.rejected, (state, action) => { state.status = 'failed'; state.error = action.payload || action.error })
+      .addCase(refreshPermissions.fulfilled, (state, action) => {
+        const { permissions, roles } = action.payload
+        state.permissions = permissions || []
+        if (state.user) {
+          state.user = { ...state.user, roles: roles || state.user.roles }
+        }
+        localStorage.setItem('permissions', JSON.stringify(permissions || []))
+        localStorage.setItem('user', JSON.stringify(state.user))
+      })
   }
 })
 

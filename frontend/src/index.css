@@ -7822,6 +7822,10 @@ body {
   color: var(--gray-900);
   letter-spacing: 0.005em;
   line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
 }
 
 .period-card-dates {
@@ -7903,6 +7907,51 @@ body {
   gap: 6px;
   padding-top: 10px;
   border-top: 1px solid var(--hairline-soft);
+}
+
+/* ── Payroll period status filter tabs ─────────────────────────── */
+.payroll-period-tabs {
+  display: flex;
+  gap: 0;
+  flex-wrap: wrap;
+  border-bottom: 2px solid var(--border-light);
+  margin-top: 6px;
+}
+.payroll-period-tab {
+  padding: 8px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  background: transparent;
+  color: var(--text-light);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.payroll-period-tab:hover { color: var(--text-mid); }
+.payroll-period-tab-active { color: var(--gold-dark); border-bottom-color: var(--gold); font-weight: 700; }
+.payroll-period-tab-count {
+  background: var(--gold-light);
+  color: var(--gold-dark);
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 10px;
+  line-height: 1.4;
+}
+
+/* ── Payroll period next-step hint line ───────────────────────── */
+.period-card-hint {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-top: 1px solid var(--hairline-soft);
+  padding-top: 6px;
+  margin-top: -4px;
 }
 
 /* ── Sales / POS dedicated layer ────────────────────────────────── */
@@ -10109,6 +10158,7 @@ html, body {
   .tabs,
   .purchase-tabs,
   .reports-tabs,
+  .payroll-period-tabs,
   .sales-tabs {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
@@ -10119,6 +10169,7 @@ html, body {
   .tabs::-webkit-scrollbar,
   .purchase-tabs::-webkit-scrollbar,
   .reports-tabs::-webkit-scrollbar,
+  .payroll-period-tabs::-webkit-scrollbar,
   .sales-tabs::-webkit-scrollbar {
     display: none;
   }

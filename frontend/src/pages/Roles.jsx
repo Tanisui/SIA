@@ -8,16 +8,16 @@ const ROLE_TEMPLATES = {
 }
 
 const GROUPS = {
-  admin: { title: 'Administration', description: 'Users, roles, sign-in, and system-wide controls', accent: '#7c3aed', order: 1 },
-  sales: { title: 'Sales', description: 'POS, receipts, refunds, discounts, and checkout controls', accent: '#db2777', order: 2 },
-  inventory: { title: 'Inventory', description: 'Stock movement, reconciliation, and low-stock management', accent: '#0f766e', order: 3 },
-  catalog: { title: 'Catalog', description: 'Product records, imports, and exports', accent: '#2563eb', order: 4 },
-  customers: { title: 'Customers', description: 'Customer profiles and relationship data', accent: '#ea580c', order: 5 },
-  purchasing: { title: 'Suppliers & Purchasing', description: 'Suppliers and purchase workflow', accent: '#4f46e5', order: 6 },
-  staff: { title: 'Staff & Attendance', description: 'Employee records and attendance tracking', accent: '#059669', order: 7 },
-  finance: { title: 'Finance', description: 'Payroll and finance reporting', accent: '#b45309', order: 8 },
-  reports: { title: 'Reports', description: 'Operational and analytics reports', accent: '#1d4ed8', order: 9 },
-  other: { title: 'Other', description: 'Uncategorized access rules', accent: '#475569', order: 10 }
+  admin:     { title: 'Administration',        description: 'User accounts, roles, sign-in controls, and system-wide settings', accent: '#7c3aed', order: 1 },
+  sales:     { title: 'Sales',                 description: 'POS checkout, receipts, refunds, discounts, and sales history',     accent: '#db2777', order: 2 },
+  inventory: { title: 'Inventory',             description: 'Stock movement, adjustments, reconciliation, and low-stock alerts', accent: '#0f766e', order: 3 },
+  catalog:   { title: 'Catalog',               description: 'Product records, categories, imports, and exports',                 accent: '#2563eb', order: 4 },
+  customers: { title: 'Customers',             description: 'Customer profiles and contact records',                             accent: '#ea580c', order: 5 },
+  purchasing:{ title: 'Suppliers & Purchasing',description: 'Supplier records and purchase order workflow',                      accent: '#4f46e5', order: 6 },
+  staff:     { title: 'Staff & Attendance',    description: 'Employee profiles and daily attendance tracking',                   accent: '#059669', order: 7 },
+  finance:   { title: 'Finance & Payroll',     description: 'Payroll processing, payslips, profiles, periods, and reports',     accent: '#b45309', order: 8 },
+  reports:   { title: 'Reports',               description: 'Operational and analytics reports for the business',                accent: '#1d4ed8', order: 9 },
+  other:     { title: 'Other',                 description: 'Uncategorized access rules',                                       accent: '#475569', order: 10 }
 }
 
 const PREFIX_TO_GROUP = {
@@ -70,35 +70,187 @@ const ACTIONS = {
 }
 
 const OVERRIDES = {
-  'admin.*': { label: 'Full administrator access', hint: 'Gives this role access to every screen, setting, and high-impact action.' },
-  'auth.login': { label: 'Sign in to the system', hint: 'Allows staff to access the app using their account.' },
-  'auth.logout': { label: 'Sign out of the system', hint: 'Allows staff to end their session safely.' },
-  'inventory.receive': { label: 'Receive stock', hint: 'Record incoming stock from purchases or deliveries.' },
-  'inventory.dispatch': { label: 'Dispatch stock', hint: 'Record stock going out for transfers or controlled release.' },
-  'inventory.adjust': { label: 'Adjust stock quantities', hint: 'Correct stock levels when counts or records need changes.' },
-  'inventory.reconcile': { label: 'Reconcile inventory', hint: 'Match physical counts to the system and finalize stock checks.' },
-  'inventory.lowstock_alert_manage': { label: 'Manage low-stock alerts', hint: 'Maintain warning thresholds for low inventory.' },
-  'sales.create': { label: 'Create sales in POS', hint: 'Use the POS screen to build and complete sales.' },
-  'sales.refund': { label: 'Process refunds', hint: 'Handle returns, reversals, and refund transactions.' },
-  'sales.print_receipt': { label: 'Print receipts', hint: 'Print customer receipts from the sales flow.' },
-  'sales.discount': { label: 'Apply discounts', hint: 'Reduce prices during checkout using approved discounts.' },
-  'sales.price_override': { label: 'Override selling prices', hint: 'Change item prices directly during checkout.' },
-  'attendance.record': { label: 'Record attendance', hint: 'Log time in, time out, or attendance entries for staff.' },
-  'payroll.process': { label: 'Process payroll', hint: 'Run payroll calculations and finalize payouts.' },
-  'payroll.adjust': { label: 'Adjust payroll entries', hint: 'Correct payroll values before or after processing.' },
-  'finance.reports.view': { label: 'View finance reports', hint: 'Open finance-focused reports for management review.' },
-  'purchase.view': { label: 'View purchase', hint: 'See purchase records and current delivery status.' },
-  'purchase.create': { label: 'Add purchase', hint: 'Create a new purchase record.' },
-  'purchase.update': { label: 'Edit purchase', hint: 'Update an existing purchase record.' },
-  'purchase.delete': { label: 'Delete purchase', hint: 'Remove a purchase record from the system.' },
-  'purchase.receive': { label: 'Receive purchase', hint: 'Mark a purchase as delivered and ready for stock processing.' },
-  'purchase_orders.create': { label: 'Add purchase', hint: 'Create a new purchase record.' },
-  'system.health': { label: 'View system health', hint: 'Check the status of system operations and services.' },
-  'system.config.update': { label: 'Update system settings', hint: 'Change important configuration values for the system.' },
-  'system.audit.view': { label: 'View audit trail', hint: 'Review activity logs and sensitive system events.' }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // ADMINISTRATION
+  // ════════════════════════════════════════════════════════════════════════
+
+  // — Full Access —
+  'admin.*': { label: 'Full administrator access', hint: 'Gives this role unrestricted access to every screen, setting, and high-impact action in the system.', subgroup: 'Full Access', subgroupOrder: 1 },
+
+  // — Sign-In Controls —
+  'auth.login':  { label: 'Sign in to the system',  hint: 'Allows this role to log in and access the app.',   subgroup: 'Sign-In Controls', subgroupOrder: 2 },
+  'auth.logout': { label: 'Sign out of the system', hint: 'Allows this role to safely end their session.',    subgroup: 'Sign-In Controls', subgroupOrder: 2 },
+
+  // — User Accounts —
+  'users.view':   { label: 'View user accounts',   hint: 'See the list of staff accounts, their roles, and profile details.',      subgroup: 'User Accounts', subgroupOrder: 3 },
+  'users.create': { label: 'Create user accounts', hint: 'Add new staff members and assign their roles.',                          subgroup: 'User Accounts', subgroupOrder: 3 },
+  'users.update': { label: 'Edit user accounts',   hint: 'Update profile details, employment info, and roles for existing staff.', subgroup: 'User Accounts', subgroupOrder: 3 },
+  'users.delete': { label: 'Delete user accounts', hint: 'Permanently remove a staff account. This action cannot be undone.',      subgroup: 'User Accounts', subgroupOrder: 3 },
+
+  // — Roles —
+  'roles.view':   { label: 'View roles',   hint: 'See existing roles and the permissions assigned to each one.',              subgroup: 'Roles', subgroupOrder: 4 },
+  'roles.create': { label: 'Create roles', hint: 'Define new roles and set their permissions. Affects all assigned users.',   subgroup: 'Roles', subgroupOrder: 4 },
+  'roles.update': { label: 'Edit roles',   hint: 'Change the permissions of an existing role. Affects all assigned users.',   subgroup: 'Roles', subgroupOrder: 4 },
+  'roles.delete': { label: 'Delete roles', hint: 'Remove a role from the system. Users assigned to it will lose that access.', subgroup: 'Roles', subgroupOrder: 4 },
+
+  // — System Controls —
+  'system.health':        { label: 'View system health',    hint: 'Check the operational status of system services.',                    subgroup: 'System Controls', subgroupOrder: 5 },
+  'system.config.update': { label: 'Update system settings',hint: 'Change system-wide configuration values like tax rates and branding.',subgroup: 'System Controls', subgroupOrder: 5 },
+  'system.audit.view':    { label: 'View audit trail',      hint: 'Review activity logs and sensitive system events for all users.',     subgroup: 'System Controls', subgroupOrder: 5 },
+
+  // ════════════════════════════════════════════════════════════════════════
+  // SALES
+  // ════════════════════════════════════════════════════════════════════════
+
+  // — POS & Checkout —
+  'sales.create':         { label: 'Create sales in POS',      hint: 'Use the POS screen to build and complete sales transactions.',        subgroup: 'POS & Checkout', subgroupOrder: 1 },
+  'sales.print_receipt':  { label: 'Print receipts',           hint: 'Print or re-print customer receipts for completed sales.',            subgroup: 'POS & Checkout', subgroupOrder: 1 },
+  'sales.discount':       { label: 'Apply discounts',          hint: 'Apply percentage or fixed discounts during POS checkout.',            subgroup: 'POS & Checkout', subgroupOrder: 1 },
+  'sales.price_override': { label: 'Override selling prices',  hint: 'Change an item\'s price directly during checkout. Use with caution.', subgroup: 'POS & Checkout', subgroupOrder: 1 },
+
+  // — Transaction History —
+  'sales.view':   { label: 'View sales history', hint: 'See the list of completed and voided sales transactions.',          subgroup: 'Transaction History', subgroupOrder: 2 },
+  'sales.export': { label: 'Export sales data',  hint: 'Download sales history as a file for reporting or record-keeping.', subgroup: 'Transaction History', subgroupOrder: 2 },
+
+  // — After-Sale Actions —
+  'sales.refund': { label: 'Process refunds', hint: 'Reverse a completed sale and issue a refund to the customer.', subgroup: 'After-Sale Actions', subgroupOrder: 3 },
+
+  // ════════════════════════════════════════════════════════════════════════
+  // INVENTORY
+  // ════════════════════════════════════════════════════════════════════════
+
+  // — Viewing —
+  'inventory.view': { label: 'View inventory', hint: 'See current stock levels, product quantities, and inventory history.', subgroup: 'Viewing', subgroupOrder: 1 },
+
+  // — Stock Movement —
+  'inventory.receive':   { label: 'Receive stock',          hint: 'Record items coming in from a purchase order or delivery.',              subgroup: 'Stock Movement', subgroupOrder: 2 },
+  'inventory.dispatch':  { label: 'Dispatch stock',         hint: 'Record items going out for transfers or controlled release.',            subgroup: 'Stock Movement', subgroupOrder: 2 },
+  'inventory.adjust':    { label: 'Adjust stock quantities',hint: 'Manually correct stock levels when physical counts differ from records.', subgroup: 'Stock Movement', subgroupOrder: 2 },
+  'inventory.reconcile': { label: 'Reconcile inventory',    hint: 'Compare physical stock to system records and finalize the count.',       subgroup: 'Stock Movement', subgroupOrder: 2 },
+
+  // — Management —
+  'inventory.export':               { label: 'Export inventory data',   hint: 'Download the full inventory list for reporting or backup.',             subgroup: 'Management', subgroupOrder: 3 },
+  'inventory.lowstock_alert_manage':{ label: 'Manage low-stock alerts', hint: 'Set and update the minimum stock thresholds that trigger alerts.',      subgroup: 'Management', subgroupOrder: 3 },
+
+  // ════════════════════════════════════════════════════════════════════════
+  // CATALOG (Products)
+  // ════════════════════════════════════════════════════════════════════════
+
+  // — Product Management —
+  'products.view':   { label: 'View products',   hint: 'Browse the product catalog, prices, and stock information.',             subgroup: 'Product Management', subgroupOrder: 1 },
+  'products.create': { label: 'Add products',    hint: 'Create new product entries with pricing, barcodes, and categories.',     subgroup: 'Product Management', subgroupOrder: 1 },
+  'products.update': { label: 'Edit products',   hint: 'Update product names, prices, descriptions, and other details.',         subgroup: 'Product Management', subgroupOrder: 1 },
+  'products.delete': { label: 'Delete products', hint: 'Remove a product from the catalog. Affects sales and inventory records.', subgroup: 'Product Management', subgroupOrder: 1 },
+
+  // — Data Transfer —
+  'products.import': { label: 'Import products', hint: 'Upload a file to create or update multiple products at once.',    subgroup: 'Data Transfer', subgroupOrder: 2 },
+  'products.export': { label: 'Export products', hint: 'Download the product catalog as a file for backup or migration.', subgroup: 'Data Transfer', subgroupOrder: 2 },
+
+  // ════════════════════════════════════════════════════════════════════════
+  // CUSTOMERS
+  // ════════════════════════════════════════════════════════════════════════
+
+  'customers.view':   { label: 'View customers',   hint: 'See customer profiles, contact details, and purchase history.' },
+  'customers.create': { label: 'Add customers',    hint: 'Register a new customer profile in the system.' },
+  'customers.update': { label: 'Edit customers',   hint: 'Update contact information and notes for existing customers.' },
+  'customers.delete': { label: 'Delete customers', hint: 'Remove a customer profile from the system.' },
+
+  // ════════════════════════════════════════════════════════════════════════
+  // SUPPLIERS & PURCHASING
+  // ════════════════════════════════════════════════════════════════════════
+
+  // — Suppliers —
+  'suppliers.view':   { label: 'View suppliers',   hint: 'See supplier profiles, contact details, and purchase history.',     subgroup: 'Suppliers', subgroupOrder: 1 },
+  'suppliers.create': { label: 'Add suppliers',    hint: 'Register a new supplier with contact details and terms.',           subgroup: 'Suppliers', subgroupOrder: 1 },
+  'suppliers.update': { label: 'Edit suppliers',   hint: 'Update supplier contact information, terms, or notes.',             subgroup: 'Suppliers', subgroupOrder: 1 },
+  'suppliers.delete': { label: 'Delete suppliers', hint: 'Remove a supplier from the system.',                                subgroup: 'Suppliers', subgroupOrder: 1 },
+
+  // — Purchase Orders —
+  'purchase.view':          { label: 'View purchase orders',    hint: 'See purchase orders, their items, and current delivery status.',          subgroup: 'Purchase Orders', subgroupOrder: 2 },
+  'purchase.create':        { label: 'Create purchase orders',  hint: 'Raise a new purchase order for a supplier.',                              subgroup: 'Purchase Orders', subgroupOrder: 2 },
+  'purchase.update':        { label: 'Edit purchase orders',    hint: 'Update items, quantities, or details on an existing purchase order.',     subgroup: 'Purchase Orders', subgroupOrder: 2 },
+  'purchase.delete':        { label: 'Delete purchase orders',  hint: 'Remove a purchase order from the system.',                                subgroup: 'Purchase Orders', subgroupOrder: 2 },
+  'purchase.receive':       { label: 'Receive purchase delivery',hint: 'Mark a purchase order as delivered and update stock accordingly.',       subgroup: 'Purchase Orders', subgroupOrder: 2 },
+  'purchase_orders.create': { label: 'Create bale purchase orders', hint: 'Raise a bale purchase order from the purchasing module.',             subgroup: 'Purchase Orders', subgroupOrder: 2 },
+
+  // ════════════════════════════════════════════════════════════════════════
+  // STAFF & ATTENDANCE
+  // ════════════════════════════════════════════════════════════════════════
+
+  // — Employee Records —
+  'employees.view':   { label: 'View employee records',   hint: 'See employee profiles, employment details, and personal information.',         subgroup: 'Employee Records', subgroupOrder: 1 },
+  'employees.create': { label: 'Create employee records', hint: 'Add a new employee profile with employment and personal details.',             subgroup: 'Employee Records', subgroupOrder: 1 },
+  'employees.update': { label: 'Edit employee records',   hint: 'Update employment status, personal information, or job details.',              subgroup: 'Employee Records', subgroupOrder: 1 },
+  'employees.delete': { label: 'Delete employee records', hint: 'Permanently remove an employee record. This cannot be undone.',                subgroup: 'Employee Records', subgroupOrder: 1 },
+
+  // — Attendance —
+  'attendance.view_own': { label: 'View own attendance',     hint: 'See your own time-in, time-out, and attendance history.',                    subgroup: 'Attendance', subgroupOrder: 2 },
+  'attendance.record':   { label: 'Record own attendance',   hint: 'Log your own time-in and time-out entries for the day.',                     subgroup: 'Attendance', subgroupOrder: 2 },
+  'attendance.view':     { label: 'View all staff attendance',hint: 'See attendance records and time logs for all employees.',                   subgroup: 'Attendance', subgroupOrder: 2 },
+  'attendance.manage':   { label: 'Manage staff attendance', hint: 'Edit, correct, or override any employee\'s attendance entries.',             subgroup: 'Attendance', subgroupOrder: 2 },
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FINANCE & PAYROLL
+  // ════════════════════════════════════════════════════════════════════════
+
+  // — Payroll Overview —
+  'payroll.view':        { label: 'View payroll overview',  hint: 'Access the payroll dashboard and see run statuses.',                             subgroup: 'Payroll Overview', subgroupOrder: 1 },
+  'payroll.process':     { label: 'Process payroll',        hint: 'Run payroll calculations and trigger payouts for a period.',                     subgroup: 'Payroll Overview', subgroupOrder: 1 },
+  'payroll.adjust':      { label: 'Adjust payroll entries', hint: 'Correct individual pay values before or after a payroll run.',                   subgroup: 'Payroll Overview', subgroupOrder: 1 },
+  'payroll.export':      { label: 'Export payroll data',    hint: 'Download payroll run data for external filing or archiving.',                    subgroup: 'Payroll Overview', subgroupOrder: 1 },
+  'payroll.input.update':{ label: 'Update payroll inputs',  hint: 'Enter or edit variable pay inputs like overtime hours and bonuses for a period.', subgroup: 'Payroll Overview', subgroupOrder: 1 },
+
+  // — Pay Periods —
+  'payroll.period.view':     { label: 'View pay periods',     hint: 'See payroll periods, their date ranges, and current processing status.',      subgroup: 'Pay Periods', subgroupOrder: 2 },
+  'payroll.period.create':   { label: 'Create pay period',    hint: 'Open a new payroll period for a specific date range.',                        subgroup: 'Pay Periods', subgroupOrder: 2 },
+  'payroll.period.compute':  { label: 'Compute payroll',      hint: 'Calculate gross pay, deductions, and net pay for all employees in a period.', subgroup: 'Pay Periods', subgroupOrder: 2 },
+  'payroll.period.finalize': { label: 'Finalize pay period',  hint: 'Lock the computed payroll and prevent any further edits.',                    subgroup: 'Pay Periods', subgroupOrder: 2 },
+  'payroll.period.release':  { label: 'Release payslips',     hint: 'Publish payslips to employees and mark the period as fully paid.',            subgroup: 'Pay Periods', subgroupOrder: 2 },
+  'payroll.period.void':     { label: 'Void pay period',      hint: 'Cancel a payroll period and reverse all its runs. This cannot be undone.',    subgroup: 'Pay Periods', subgroupOrder: 2 },
+
+  // — Employee Payroll Profiles —
+  'payroll.profile.view':   { label: 'View payroll profiles',   hint: 'See employee salary rates, allowances, and deduction settings.',            subgroup: 'Payroll Profiles', subgroupOrder: 3 },
+  'payroll.profile.create': { label: 'Create payroll profiles', hint: 'Set up a payroll configuration for a new employee.',                        subgroup: 'Payroll Profiles', subgroupOrder: 3 },
+  'payroll.profile.update': { label: 'Edit payroll profiles',   hint: 'Update an employee\'s salary rate, allowances, or deduction rules.',        subgroup: 'Payroll Profiles', subgroupOrder: 3 },
+
+  // — Payslips —
+  'payroll.payslip.view_own': { label: 'View own payslip',   hint: 'See your own payslip and detailed pay breakdown for each period.',             subgroup: 'Payslips', subgroupOrder: 4 },
+  'payroll.payslip.view':     { label: 'View all payslips',  hint: 'See payslips for all employees across any payroll period.',                    subgroup: 'Payslips', subgroupOrder: 4 },
+
+  // — Payroll Settings & Reports —
+  'payroll.settings.view':   { label: 'View payroll settings',   hint: 'See system-wide payroll rules, contribution rates, and deduction configs.', subgroup: 'Settings & Reports', subgroupOrder: 5 },
+  'payroll.settings.update': { label: 'Update payroll settings', hint: 'Change contribution rates, deduction rules, and other payroll config.',     subgroup: 'Settings & Reports', subgroupOrder: 5 },
+  'payroll.report.view':     { label: 'View payroll reports',    hint: 'Access payroll cost summaries, contribution reports, and breakdowns.',      subgroup: 'Settings & Reports', subgroupOrder: 5 },
+  'payroll.report.export':   { label: 'Export payroll reports',  hint: 'Download payroll report data for external filing or auditing.',             subgroup: 'Settings & Reports', subgroupOrder: 5 },
+
+  // — Finance Reports —
+  'finance.reports.view': { label: 'View finance reports', hint: 'Access revenue, expense, and profitability reports for management review.', subgroup: 'Finance Reports', subgroupOrder: 6 },
+
+  // ════════════════════════════════════════════════════════════════════════
+  // REPORTS
+  // ════════════════════════════════════════════════════════════════════════
+
+  'reports.view':     { label: 'View reports',     hint: 'Access operational reports covering sales, inventory, and purchasing.' },
+  'reports.generate': { label: 'Generate reports', hint: 'Create new report snapshots from current business data.' },
+  'reports.export':   { label: 'Export reports',   hint: 'Download report data as a file for external use or archiving.' }
+
 }
 
-const SENSITIVE = new Set(['admin.*', 'users.delete', 'roles.delete', 'sales.refund', 'sales.price_override', 'payroll.process', 'payroll.adjust', 'system.config.update', 'system.audit.view'])
+const SENSITIVE = new Set([
+  'admin.*',
+  // User & role management
+  'users.delete', 'roles.create', 'roles.update', 'roles.delete',
+  // Sales overrides
+  'sales.refund', 'sales.price_override',
+  // Payroll — high-impact processing
+  'payroll.process', 'payroll.adjust',
+  'payroll.period.finalize', 'payroll.period.release', 'payroll.period.void',
+  // Staff
+  'employees.delete',
+  // System
+  'system.config.update', 'system.audit.view'
+])
 
 function titleCase(value) {
   return String(value || '')
@@ -129,8 +281,10 @@ function buildPermissionMeta(permission) {
       groupDescription: group.description,
       groupAccent: group.accent,
       groupOrder: group.order,
+      subgroup: override.subgroup || null,
+      subgroupOrder: override.subgroupOrder ?? 99,
       isSensitive: SENSITIVE.has(key),
-      searchText: `${key} ${override.label} ${override.hint} ${group.title}`.toLowerCase()
+      searchText: `${key} ${override.label} ${override.hint} ${group.title} ${override.subgroup || ''}`.toLowerCase()
     }
   }
 
@@ -149,6 +303,8 @@ function buildPermissionMeta(permission) {
     groupDescription: group.description,
     groupAccent: group.accent,
     groupOrder: group.order,
+    subgroup: null,
+    subgroupOrder: 99,
     isSensitive: SENSITIVE.has(key),
     searchText: `${key} ${actionMeta.label(subject)} ${description || actionMeta.hint(subject)} ${group.title}`.toLowerCase()
   }
@@ -223,6 +379,7 @@ export default function Roles() {
     }, new Map()).values()
   ).sort((left, right) => {
     if (left.groupOrder !== right.groupOrder) return left.groupOrder - right.groupOrder
+    if (left.subgroupOrder !== right.subgroupOrder) return left.subgroupOrder - right.subgroupOrder
     if (left.isSensitive !== right.isSensitive) return left.isSensitive ? -1 : 1
     return left.label.localeCompare(right.label)
   })
@@ -464,7 +621,22 @@ export default function Roles() {
                             </div>
                           </div>
                           <div style={{ display: 'grid', gap: 10 }}>
-                            {group.permissions.map(renderPermissionCard)}
+                            {(() => {
+                              const items = []
+                              let lastSubgroup = null
+                              group.permissions.forEach((permission) => {
+                                if (permission.subgroup && permission.subgroup !== lastSubgroup) {
+                                  lastSubgroup = permission.subgroup
+                                  items.push(
+                                    <div key={`sg-${permission.subgroup}`} style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: group.accent, paddingTop: items.length ? 8 : 0, borderTop: items.length ? `1px solid #f1f5f9` : 'none' }}>
+                                      {permission.subgroup}
+                                    </div>
+                                  )
+                                }
+                                items.push(renderPermissionCard(permission))
+                              })
+                              return items
+                            })()}
                           </div>
                         </div>
                       )

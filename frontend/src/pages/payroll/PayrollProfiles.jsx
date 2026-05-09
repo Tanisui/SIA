@@ -5,6 +5,7 @@ import { formatCurrency, getErrorMessage, toInputNumber, usePermissions, ViewOnl
 
 const emptyForm = {
   user_id: '',
+  employee_number: '',
   employment_type: '',
   pay_basis: 'monthly',
   pay_rate: '',
@@ -29,6 +30,7 @@ function normalizeForm(profile) {
   if (!profile) return emptyForm
   return {
     user_id:                      String(profile.user_id || ''),
+    employee_number:              profile.employee_number || '',
     employment_type:              profile.employment_type || '',
     pay_basis:                    profile.pay_basis || 'monthly',
     pay_rate:                     toInputNumber(profile.pay_rate),
@@ -53,6 +55,7 @@ function normalizeForm(profile) {
 function toPayload(form) {
   return {
     user_id:                      Number(form.user_id),
+    employee_number:              form.employee_number || null,
     employment_type:              form.employment_type || null,
     pay_basis:                    form.pay_basis,
     pay_rate:                     Number(form.pay_rate || 0),
@@ -272,6 +275,15 @@ export default function PayrollProfiles() {
                   </select>
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">
+                    Employee #
+                    <span style={{ fontWeight: 400, color: 'var(--text-light)', marginLeft: 4 }}>(auto-assigned if blank)</span>
+                  </label>
+                  <input className="form-input" value={form.employee_number}
+                    onChange={(e) => set('employee_number', e.target.value)}
+                    placeholder="EMP-0001" maxLength={32} />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label">Employment Type</label>
                   <input className="form-input" value={form.employment_type}
                     onChange={(e) => set('employment_type', e.target.value)}
@@ -447,6 +459,11 @@ export default function PayrollProfiles() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
                       <span style={{ fontWeight: 700, fontSize: 15 }}>{profile.full_name || profile.username}</span>
                       <StatusPill status={profile.status} />
+                      {profile.employee_number && (
+                        <span style={{ fontSize: 11, color: 'var(--gold-dark)', padding: '2px 8px', borderRadius: 10, background: 'var(--cream-white)', fontWeight: 700, fontFamily: 'monospace' }}>
+                          {profile.employee_number}
+                        </span>
+                      )}
                       {profile.employment_type && (
                         <span style={{ fontSize: 11, color: 'var(--text-light)', padding: '2px 8px', borderRadius: 10, background: 'var(--cream-white)' }}>
                           {profile.employment_type}

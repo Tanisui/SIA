@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../api/api.js'
 import {
@@ -21,11 +21,12 @@ const STATUS_STYLES = {
   released:  { bg: '#DCFCE7', color: '#15803D' },
   void:      { bg: '#FEE2E2', color: '#DC2626' }
 }
+const STATUS_FILTER_OPTIONS = ['all', 'draft', 'computed', 'finalized', 'released', 'void']
 
 function PeriodBadge({ status }) {
   const s = STATUS_STYLES[status?.toLowerCase()] || STATUS_STYLES.draft
   return (
-    <span style={{ background: s.bg, color: s.color, padding: '3px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+    <span style={{ background: s.bg, color: s.color, padding: '3px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
       {status || 'draft'}
     </span>
   )
@@ -42,34 +43,60 @@ function defaultPeriodForm() {
   }
 }
 
+function getNextStepHint(period) {
+  const s = String(period.status || 'draft').toLowerCase()
+  const hasEmp = Number(period.employee_count) > 0
+  if (s === 'draft' && !hasEmp)  return { text: 'Start by loading employees', color: '#64748B' }
+  if (s === 'draft' && hasEmp)   return { text: 'Ready to compute payroll', color: '#1D4ED8' }
+  if (s === 'computed')          return { text: 'Review, then finalize', color: '#B45309' }
+  if (s === 'finalized')         return { text: 'Release to notify employees', color: '#B45309' }
+  if (s === 'released')          return { text: 'Payslips visible to employees', color: '#15803D' }
+  if (s === 'void')              return { text: 'This period was voided', color: '#DC2626' }
+  return null
+}
+
 export default function PayrollPeriods() {
   const navigate = useNavigate()
   const { canPayrollWrite } = usePermissions()
   const canWriteAny = canPayrollWrite.period || canPayrollWrite.compute
-  const [periods,   setPeriods]   = useState([])
-  const [form,      setForm]      = useState(defaultPeriodForm)
-  const [loading,   setLoading]   = useState(false)
-  const [saving,    setSaving]    = useState(false)
-  const [actionId,  setActionId]  = useState(null)
-  const [syncingId, setSyncingId] = useState(null)
-  const [error,     setError]     = useState(null)
-  const [success,   setSuccess]   = useState(null)
+  const [periods,        setPeriods]        = useState([])
+  const [form,           setForm]           = useState(defaultPeriodForm)
+  const [showCreateForm, setShowCreateForm] = useState(null)
+  const [statusFilter,   setStatusFilter]   = useState('all')
+  const [loading,        setLoading]        = useState(false)
+  const [saving,         setSaving]         = useState(false)
+  const [actionId,       setActionId]       = useState(null)
+  const [syncingId,      setSyncingId]      = useState(null)
+  const [error,          setError]          = useState(null)
+  const [success,        setSuccess]        = useState(null)
 
   const showMsg = (m) => { setSuccess(m); setTimeout(() => setSuccess(null), 4200) }
 
   async function loadPeriods() {
-    try { setLoading(true); setError(null); const r = await api.get('/api/payroll/periods'); setPeriods(r.data || []) }
-    catch (err) { setError(getErrorMessage(err, 'Failed to load payroll periods.')) }
+    try {
+      setLoading(true); setError(null)
+      const r = await api.get('/api/payroll/periods')
+      setPeriods(r.data || [])
+    } catch (err) { setError(getErrorMessage(err, 'Failed to load payroll periods.')) }
     finally { setLoading(false) }
   }
 
   useEffect(() => { loadPeriods() }, [])
 
+  // Auto-expand form only on first load when no periods exist
+  useEffect(() => {
+    if (showCreateForm === null && !loading) {
+      setShowCreateForm(periods.length === 0 && canPayrollWrite.period)
+    }
+  }, [periods.length, loading]) // eslint-disable-line
+
   async function createPeriod(e) {
     e.preventDefault(); setSaving(true); setError(null); setSuccess(null)
     try {
       await api.post('/api/payroll/periods', { code: form.code || undefined, start_date: form.start_date, end_date: form.end_date, payout_date: form.payout_date, frequency: form.frequency, notes: form.notes || null })
-      setForm(defaultPeriodForm()); showMsg('Payroll period created.')
+      setForm(defaultPeriodForm())
+      setShowCreateForm(false)
+      showMsg('Payroll period created.')
       await loadPeriods()
     } catch (err) { setError(getErrorMessage(err, 'Failed to create the payroll period.')) }
     finally { setSaving(false) }
@@ -120,7 +147,44 @@ export default function PayrollPeriods() {
     finally { setActionId(null) }
   }
 
+  async function deletePeriod(period) {
+    if (!window.confirm(`Delete draft period "${period.code}"? This cannot be undone.`)) return
+    setActionId(period.id); setError(null)
+    try {
+      await api.delete(`/api/payroll/periods/${period.id}`)
+      showMsg(`Period "${period.code}" deleted.`)
+      await loadPeriods()
+    } catch (err) { setError(getErrorMessage(err, 'Failed to delete the payroll period.')) }
+    finally { setActionId(null) }
+  }
+
   const locked = (p) => ['finalized', 'released', 'void'].includes(String(p.status || '').toLowerCase())
+
+  const overlappingIds = useMemo(() => {
+    const active = periods.filter((p) => String(p.status || '').toLowerCase() !== 'void')
+    const ids = new Set()
+    for (let i = 0; i < active.length; i++) {
+      for (let j = i + 1; j < active.length; j++) {
+        const a = active[i], b = active[j]
+        if (a.frequency === b.frequency && a.start_date < b.end_date && a.end_date > b.start_date) {
+          ids.add(a.id); ids.add(b.id)
+        }
+      }
+    }
+    return ids
+  }, [periods])
+
+  const filteredPeriods = useMemo(() =>
+    statusFilter === 'all' ? periods : periods.filter((p) => String(p.status || 'draft').toLowerCase() === statusFilter),
+    [periods, statusFilter]
+  )
+
+  const statusCounts = useMemo(() => {
+    const counts = { all: periods.length }
+    for (const s of ['draft', 'computed', 'finalized', 'released', 'void'])
+      counts[s] = periods.filter((p) => String(p.status || 'draft').toLowerCase() === s).length
+    return counts
+  }, [periods])
 
   return (
     <div className="page">
@@ -132,7 +196,7 @@ export default function PayrollPeriods() {
           </h1>
           <p className="page-subtitle">
             {canWriteAny
-              ? 'Create payroll cutoffs, load profiles, and compute payroll. Compute refreshes attendance before deductions are applied.'
+              ? 'Create payroll cutoffs, load employees, and compute payroll.'
               : 'Browse payroll cutoffs and computed runs. Only admins can create or compute periods.'}
           </p>
         </div>
@@ -148,84 +212,133 @@ export default function PayrollPeriods() {
         </div>
       )}
 
-      {/* Create Period Card — admin only */}
+      {/* Create Period — collapsible */}
       {canPayrollWrite.period && (
-      <div className="card" style={{ marginBottom: 20 }}>
-        <div className="card-header">
-          <h3>Create Payroll Period</h3>
+        <div style={{ marginBottom: 20 }}>
+          {!showCreateForm ? (
+            <button className="btn btn-primary" onClick={() => setShowCreateForm(true)}>
+              ＋ New Payroll Period
+            </button>
+          ) : (
+            <div className="card">
+              <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3>Create Payroll Period</h3>
+                <button className="btn btn-secondary btn-sm" type="button" onClick={() => setShowCreateForm(false)}>✕ Cancel</button>
+              </div>
+              <form onSubmit={createPeriod}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Period Code</label>
+                    <input className="form-input" value={form.code} onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))} placeholder="Auto-generated if blank" />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Start Date *</label>
+                    <input className="form-input" type="date" required value={form.start_date} onChange={(e) => setForm((p) => ({ ...p, start_date: e.target.value }))} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">End Date *</label>
+                    <input className="form-input" type="date" required value={form.end_date} onChange={(e) => setForm((p) => ({ ...p, end_date: e.target.value }))} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Payout Date *</label>
+                    <input className="form-input" type="date" required value={form.payout_date} onChange={(e) => setForm((p) => ({ ...p, payout_date: e.target.value }))} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Frequency</label>
+                    <select className="form-input" value={form.frequency} onChange={(e) => setForm((p) => ({ ...p, frequency: e.target.value }))}>
+                      <option value="weekly">Weekly</option>
+                      <option value="semi_monthly">Semi-Monthly</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Notes</label>
+                    <input className="form-input" value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} />
+                  </div>
+                </div>
+                <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <button className="btn btn-secondary" type="button" onClick={() => setShowCreateForm(false)}>Cancel</button>
+                  <button className="btn btn-primary" type="submit" disabled={saving}>{saving ? 'Creating…' : 'Create Period'}</button>
+                </div>
+              </form>
+            </div>
+          )}
         </div>
-        <form onSubmit={createPeriod}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Period Code</label>
-              <input className="form-input" value={form.code} onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))} placeholder="Auto-generated if blank" />
-            </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Start Date *</label>
-              <input className="form-input" type="date" required value={form.start_date} onChange={(e) => setForm((p) => ({ ...p, start_date: e.target.value }))} />
-            </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">End Date *</label>
-              <input className="form-input" type="date" required value={form.end_date} onChange={(e) => setForm((p) => ({ ...p, end_date: e.target.value }))} />
-            </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Payout Date *</label>
-              <input className="form-input" type="date" required value={form.payout_date} onChange={(e) => setForm((p) => ({ ...p, payout_date: e.target.value }))} />
-            </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Frequency</label>
-              <select className="form-input" value={form.frequency} onChange={(e) => setForm((p) => ({ ...p, frequency: e.target.value }))}>
-                <option value="weekly">Weekly</option>
-                <option value="semi_monthly">Semi-Monthly</option>
-                <option value="monthly">Monthly</option>
-              </select>
-            </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Notes</label>
-              <input className="form-input" value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} />
-            </div>
-          </div>
-          <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end' }}>
-            <button className="btn btn-primary" type="submit" disabled={saving}>{saving ? 'Creating…' : 'Create Period'}</button>
-          </div>
-        </form>
-      </div>
       )}
 
-      {/* Periods grid */}
-      <div className="entity-toolbar" style={{ marginTop: 6 }}>
-        <div className="entity-toolbar-meta">
-          {loading ? 'Loading…' : `${periods.length} payroll cutoff${periods.length === 1 ? '' : 's'}`}
+      {/* Overlap warning */}
+      {overlappingIds.size > 0 && (
+        <div className="warning-msg" style={{ marginBottom: 14 }}>
+          <strong>Overlapping periods detected.</strong> {overlappingIds.size} period(s) marked below share the same frequency and date range. Employees may have been counted twice. Void the duplicate periods to correct this.
+        </div>
+      )}
+
+      {/* Status filter tabs */}
+      <div style={{ marginBottom: 10 }}>
+        <div className="payroll-period-tabs">
+          {STATUS_FILTER_OPTIONS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              className={`payroll-period-tab${statusFilter === s ? ' payroll-period-tab-active' : ''}`}
+              onClick={() => setStatusFilter(s)}
+            >
+              {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
+              {statusCounts[s] > 0 && <span className="payroll-period-tab-count">{statusCounts[s]}</span>}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 6 }}>
+          {loading ? 'Loading…' : `${filteredPeriods.length} of ${periods.length} period${periods.length === 1 ? '' : 's'}`}
         </div>
       </div>
-      {periods.length === 0 && !loading ? (
+
+      {filteredPeriods.length === 0 && !loading ? (
         <div className="card entity-empty">
           <div className="entity-empty-icon" style={{ background: 'var(--gold-light)', color: 'var(--gold-dark)' }}>
             <span style={{ fontFamily: 'Nunito', fontWeight: 800, fontSize: 18 }}>P</span>
           </div>
-          <div className="entity-empty-title">No payroll periods yet</div>
+          <div className="entity-empty-title">
+            {statusFilter === 'all' ? 'No payroll periods yet' : `No ${statusFilter} periods`}
+          </div>
           <div className="entity-empty-sub">
-            {canPayrollWrite.period
-              ? 'Create your first payroll cutoff above to start running payroll.'
-              : 'Once an admin creates a payroll cutoff, it will appear here.'}
+            {statusFilter !== 'all'
+              ? `There are no ${statusFilter} periods to show.`
+              : canPayrollWrite.period
+                ? 'Click "＋ New Payroll Period" above to create your first payroll cutoff.'
+                : 'Once an admin creates a payroll cutoff, it will appear here.'}
           </div>
         </div>
       ) : (
         <div className="period-card-grid">
-          {periods.map((period) => {
+          {filteredPeriods.map((period) => {
             const status = String(period.status || 'draft').toLowerCase()
             const isLocked = locked(period)
+            const hint = getNextStepHint(period)
+            const canDelete = canPayrollWrite.period &&
+              status === 'draft' &&
+              (!period.latest_run_id || String(period.latest_run_status || '').toLowerCase() === 'draft')
+
             return (
-              <div key={period.id} className={`period-card status-${status}`}>
+              <div key={period.id} className={`period-card status-${status}`} style={overlappingIds.has(period.id) ? { outline: '2px solid #f59e0b', outlineOffset: -2 } : {}}>
                 <div className="period-card-head">
-                  <div>
-                    <div className="period-card-code">{period.code}</div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="period-card-code" title={period.code}>{period.code}</div>
                     <div className="period-card-dates">
                       {formatDate(period.start_date)} — {formatDate(period.end_date)}
                     </div>
+                    {overlappingIds.has(period.id) && (
+                      <div style={{ fontSize: 11, color: '#b45309', fontWeight: 600, marginTop: 2 }}>
+                        Overlapping — may double-count employees
+                      </div>
+                    )}
                   </div>
                   <PeriodBadge status={period.status} />
                 </div>
+
+                {hint && (
+                  <div className="period-card-hint" style={{ color: hint.color }}>{hint.text}</div>
+                )}
 
                 <div className="period-card-body">
                   <div className="period-card-row">
@@ -242,34 +355,65 @@ export default function PayrollPeriods() {
                       <span className="period-card-stat-value">{period.employee_count > 0 ? period.employee_count : '—'}</span>
                     </div>
                     <div className="period-card-stat tone-gold">
-                      <span className="period-card-stat-label">Pay</span>
+                      <span className="period-card-stat-label">Net Pay</span>
                       <span className="period-card-stat-value">{period.total_net_pay > 0 ? formatCurrency(period.total_net_pay) : '—'}</span>
                     </div>
                   </div>
                 </div>
 
                 <div className="period-card-actions">
+                  {/* Inputs — always available */}
                   <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/payroll/periods/${period.id}/inputs`)}>
                     Inputs
                   </button>
+
+                  {/* Smart primary action */}
                   {!isLocked && canPayrollWrite.compute && (
-                    <button className="btn btn-outline btn-sm" onClick={() => syncAttendance(period)} disabled={syncingId === period.id}>
-                      {syncingId === period.id ? 'Syncing…' : 'Sync'}
-                    </button>
+                    Number(period.employee_count) > 0 ? (
+                      <>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => compute(period)}
+                          disabled={actionId === period.id}
+                        >
+                          {actionId === period.id ? 'Computing…' : 'Compute →'}
+                        </button>
+                        <button
+                          className="btn btn-outline btn-sm"
+                          title="Re-sync attendance data before computing"
+                          onClick={() => syncAttendance(period)}
+                          disabled={syncingId === period.id}
+                        >
+                          {syncingId === period.id ? 'Syncing…' : 'Re-sync'}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={() => loadInputs(period)}
+                        disabled={actionId === period.id}
+                      >
+                        {actionId === period.id ? 'Loading…' : 'Load Employees'}
+                      </button>
+                    )
                   )}
-                  {!isLocked && canPayrollWrite.compute && (
-                    <button className="btn btn-outline btn-sm" onClick={() => loadInputs(period)} disabled={actionId === period.id}>
-                      {actionId === period.id ? '…' : 'Load'}
-                    </button>
-                  )}
-                  {!isLocked && canPayrollWrite.compute && (
-                    <button className="btn btn-primary btn-sm" onClick={() => compute(period)} disabled={actionId === period.id}>
-                      {actionId === period.id ? 'Computing…' : 'Compute'}
-                    </button>
-                  )}
+
+                  {/* View run */}
                   {period.latest_run_id && (
                     <button className="btn btn-outline btn-sm" onClick={() => navigate(`/payroll/periods/${period.id}/preview`)}>
-                      Preview
+                      View Run →
+                    </button>
+                  )}
+
+                  {/* Delete draft — destructive, pushed right */}
+                  {canDelete && (
+                    <button
+                      className="btn btn-danger btn-sm"
+                      style={{ marginLeft: 'auto' }}
+                      onClick={() => deletePeriod(period)}
+                      disabled={actionId === period.id}
+                    >
+                      Delete
                     </button>
                   )}
                 </div>
@@ -286,11 +430,11 @@ export default function PayrollPeriods() {
           {[
             { step: '1', label: 'Create Period', desc: 'Set start/end dates and frequency' },
             { step: '2', label: 'Record Attendance', desc: 'Go to Attendance → add time-in/out records' },
-            { step: '3', label: 'Load Profiles', desc: 'Create payroll input rows and bootstrap missing payroll profiles' },
-            { step: '4', label: 'Sync Attendance', desc: 'Optional pre-check to review attendance before compute' },
-            { step: '5', label: 'Edit Inputs', desc: 'Adjust bonuses, loans, and other manual payroll fields' },
-            { step: '6', label: 'Compute', desc: 'Compute refreshes attendance fields, then runs statutory deductions' },
-            { step: '7', label: 'Preview & Release', desc: 'Finalize and release payslips' }
+            { step: '3', label: 'Load Employees', desc: 'Creates payroll input rows for all active employees' },
+            { step: '4', label: 'Edit Inputs', desc: 'Adjust bonuses, loans, and manual payroll fields' },
+            { step: '5', label: 'Compute', desc: 'Syncs attendance then runs all statutory deductions' },
+            { step: '6', label: 'Finalize', desc: 'Lock the run before releasing' },
+            { step: '7', label: 'Release', desc: 'Payslips become visible to employees' }
           ].map((item, i, arr) => (
             <div key={item.step} style={{ display: 'flex', alignItems: 'center', minWidth: 'fit-content' }}>
               <div style={{ textAlign: 'center', padding: '10px 16px' }}>

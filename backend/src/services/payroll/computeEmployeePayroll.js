@@ -130,17 +130,20 @@ function getLineAmount(lineAmounts, code, fallback = 0) {
 }
 
 function getEmployeeNumber(employee = {}, item = {}) {
-  const rawValue = employee.employee_id
+  const rawValue = employee.employee_number
+    || employee.employee_id
     || employee.id
     || employee.employee_record_id
-    || employee.employee_number
     || item.employee_id
     || item.user_id
+  if (!rawValue) return null
+  // If it's already a formatted string (e.g. EMP-0001), return as-is
+  if (typeof rawValue === 'string' && /\D/.test(rawValue)) return rawValue
   const numericValue = Number(rawValue)
   if (Number.isInteger(numericValue) && numericValue > 0) {
-    return String(numericValue).padStart(4, '0')
+    return `EMP-${String(numericValue).padStart(4, '0')}`
   }
-  return rawValue ? String(rawValue) : null
+  return String(rawValue)
 }
 
 function buildFormulaParts(parts = []) {
@@ -213,7 +216,14 @@ function buildPayslipView({ item = {}, profile = {}, input = {}, settings = {}, 
     { code: 'MANUAL_DEDUCTION', label: 'Other Deductions', amount: manualDeduction }
   ]
 
+  const shopInfo = effectiveSettings.shop_info || {}
+
   return {
+    shop: {
+      name:    shopInfo.name    || null,
+      address: shopInfo.address || null,
+      tin:     shopInfo.tin     || null
+    },
     employee: {
       display_name: employee.display_name
         || employee.full_name
@@ -227,7 +237,11 @@ function buildPayslipView({ item = {}, profile = {}, input = {}, settings = {}, 
       daily_rate: dailyRate,
       hourly_rate: hourlyRate,
       standard_hours_per_day: standardHoursPerDay,
-      email: employee.email || item.email || profile.email || null
+      email:          employee.email          || item.email || profile.email || null,
+      tin:            employee.tin            || null,
+      sss_number:     employee.sss_number     || null,
+      philhealth_pin: employee.philhealth_pin || null,
+      pagibig_mid:    employee.pagibig_mid    || null
     },
     period: {
       code: item.period_code || null,

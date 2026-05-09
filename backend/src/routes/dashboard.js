@@ -8,10 +8,21 @@ router.get('/stats', verifyToken, async (req, res) => {
   try {
     const results = {}
     const permissionInfo = await getUserPermissions(req.auth.id)
-    const roleNames = Array.isArray(permissionInfo?.roles) ? permissionInfo.roles : []
-    const isSalesClerk = roleNames.some((roleName) => String(roleName || '').trim().toLowerCase() === 'sales clerk')
+    const permissions = permissionInfo?.permissions || []
 
-    results.dashboard_profile = isSalesClerk ? 'sales_clerk' : 'default'
+    // Determine dashboard tier based on permissions
+    const hasFinanceReports = permissions.includes('finance.reports.view') || permissions.includes('admin.*')
+    const hasSalesCreate = permissions.includes('sales.create') || permissions.includes('admin.*')
+    const hasInventoryView = permissions.includes('inventory.view') || permissions.includes('admin.*')
+
+    let tier = 'fallback'
+    if (hasFinanceReports) {
+      tier = 'full'
+    } else if (hasSalesCreate && !hasFinanceReports) {
+      tier = 'sales'
+    } else if (hasInventoryView && !hasSalesCreate && !hasFinanceReports) {
+      tier = 'inventory'
+    }
 
     // Cards visible to every dashboard profile
     const [todaySales] = await db.pool.query(
@@ -33,7 +44,7 @@ router.get('/stats', verifyToken, async (req, res) => {
     )
     results.low_stock_count = lowStock[0].count || 0
 
-    if (!isSalesClerk) {
+    if (tier === 'full') {
       // Total sales (all time revenue)
       const [salesTotal] = await db.pool.query(
         `SELECT COALESCE(SUM(total), 0) AS total_sales, COUNT(*) AS total_orders FROM sales WHERE status = 'COMPLETED'`
@@ -125,6 +136,35 @@ router.get('/stats', verifyToken, async (req, res) => {
         if (err?.code !== 'ER_NO_SUCH_TABLE') {
           console.error('dashboard bale month snapshot query error:', err)
         }
+      }
+    } else if (tier === 'inventory') {
+      // Inventory-specific stats
+      results.total_products = prodCount[0].count || 0
+      results.low_stock_items = lowStock[0].count || 0
+
+      // Pending purchase orders
+      results.pending_purchase_orders = 0
+      try {
+        const [pendingPOs] = await db.pool.query(
+          `SELECT COUNT(*) AS count FROM purchases WHERE status IN ('draft', 'pending', 'ordered')`
+        )
+        results.pending_purchase_orders = pendingPOs[0].count || 0
+      } catch (err) {
+        if (err?.code !== 'ER_NO_SUCH_TABLE') {
+          console.error('dashboard pending POs query error:', err)
+        }
+      }
+
+      // Stock value (sum of stock_quantity * unit_cost for active products)
+      results.stock_value = 0
+      try {
+        const [stockValue] = await db.pool.query(
+          `SELECT COALESCE(SUM(stock_quantity * unit_cost), 0) AS total_value
+           FROM products WHERE is_active = 1`
+        )
+        results.stock_value = parseFloat(stockValue[0].total_value) || 0
+      } catch (err) {
+        console.error('dashboard stock value query error:', err)
       }
     }
 

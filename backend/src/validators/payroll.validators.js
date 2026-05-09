@@ -112,6 +112,7 @@ function validateProfilePayload(payload = {}, options = {}) {
   if (hasOwn(body, 'bank_account_name')) profile.bank_account_name = asText(body.bank_account_name, 'bank_account_name', { maxLength: 180, defaultValue: null })
   if (hasOwn(body, 'bank_account_number')) profile.bank_account_number = asText(body.bank_account_number, 'bank_account_number', { maxLength: 80, defaultValue: null })
   if (!partial || hasOwn(body, 'status')) profile.status = asEnum(body.status, 'status', PROFILE_STATUSES, { defaultValue: 'active' })
+  if (hasOwn(body, 'employee_number')) profile.employee_number = asText(body.employee_number, 'employee_number', { maxLength: 32, defaultValue: null })
 
   return profile
 }
