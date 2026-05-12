@@ -22,7 +22,18 @@ export default function Employees() {
     { name: 'name', label: 'Name' },
     // ADDED: Email field right after the name so we can auto-generate the user account
     { name: 'email', label: 'Email', type: 'email' },
-    { name: 'role', label: 'Role', type: 'select', options: roles.map(r => ({ value: r.name, label: r.name })) },
+    { name: 'role', label: 'Role', type: 'select', options: roles.map(r => ({ value: r.name, label: r.name })),
+      onFieldChange: (roleName, currentForm) => {
+        if (!roleName) return null
+        const matched = roles.find(r => r.name === roleName)
+        if (matched && Number(matched.salary_rate) > 0) {
+          const overrides = { pay_rate: Number(matched.salary_rate) }
+          if (matched.pay_basis) overrides.pay_basis = matched.pay_basis
+          return overrides
+        }
+        return null
+      }
+    },
     { name: 'contact_type', label: 'Contact Type', type: 'select', options: [
       { value: 'Mobile', label: 'Mobile Number' },
       { value: 'Telephone', label: 'Telephone Number' }
