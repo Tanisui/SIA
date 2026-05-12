@@ -107,10 +107,10 @@ router.post('/', express.json(), verifyToken, authorize('employees.create'), asy
 
     // 2. Insert into employees table
     const [empResult] = await conn.query(
-      `INSERT INTO employees (name, email, role, contact_type, contact, hire_date, pay_rate, employment_status, bank_details)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO employees (name, email, role, contact_type, contact, hire_date, pay_rate, pay_basis, employment_status, bank_details)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [name, email, role || null, contact_type || null, contact || null, hire_date || null,
-       resolvedPayRate, employment_status || 'ACTIVE',
+       resolvedPayRate, resolvedPayBasis, employment_status || 'ACTIVE',
        bank_details ? JSON.stringify(bank_details) : null]
     )
 
