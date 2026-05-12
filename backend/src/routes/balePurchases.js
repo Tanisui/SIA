@@ -8,6 +8,7 @@ const { logAuditEventSafe } = require('../utils/auditLog')
 const { ensureScannerSchema } = require('../services/scannerSchemaService')
 const { getRuntimeConfig } = require('../services/runtimeConfigService')
 const { resolveStockTransactionTimestamp } = require('../utils/inventoryStock')
+const { assignToExistingProduct } = require('../utils/baleBreakdownProductSync')
 
 const PAYMENT_STATUSES = ['PAID', 'PARTIAL', 'UNPAID']
 const PO_STATUSES = ['PENDING', 'ORDERED', 'RECEIVED', 'COMPLETED', 'CANCELLED']
@@ -1291,26 +1292,28 @@ router.post('/:id/breakdown', express.json(), verifyToken, authorize('inventory.
 router.put('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
 
 router.post('/:id/breakdown/assign-existing', express.json(), verifyToken,
-  authorize(['inventory.manage', 'inventory.receive']),
+  authorize('inventory.receive'),
   async (req, res) => {
     const conn = await db.pool.getConnection()
     try {
       const balePurchaseId = Number(req.params.id)
-      const { product_id, quantity, condition_grade, allocated_cost_per_unit } = req.body || {}
+      const { product_id, quantity } = req.body || {}
+
+      await conn.beginTransaction()
 
       const [purchaseRows] = await conn.query(
-        'SELECT * FROM bale_purchases WHERE id = ? LIMIT 1', [balePurchaseId]
+        'SELECT * FROM bale_purchases WHERE id = ? LIMIT 1 FOR UPDATE', [balePurchaseId]
       )
       if (!purchaseRows.length) return res.status(404).json({ error: 'Purchase not found' })
 
-      await conn.beginTransaction()
-      const { assignToExistingProduct } = require('../utils/baleBreakdownProductSync')
+      if (!['RECEIVED', 'COMPLETED'].includes(purchaseRows[0].po_status)) {
+        return res.status(409).json({ error: 'Can only assign to received or completed bale purchases' })
+      }
+
       const result = await assignToExistingProduct(conn, {
         balePurchaseId,
         productId: product_id,
-        quantity: Number(quantity),
-        conditionGrade: condition_grade || 'standard',
-        allocatedCostPerUnit: Number(allocated_cost_per_unit || 0)
+        quantity: Number(quantity)
       })
       await conn.commit()
       res.json({ ok: true, ...result })
