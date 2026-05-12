@@ -15,6 +15,7 @@ export default function DeliveryReceipts() {
   const [form, setForm]           = useState(defaultForm)
   const [showForm, setShowForm]   = useState(false)
   const [saving, setSaving]       = useState(false)
+  const [confirming, setConfirming] = useState(null)
   const [error, setError]         = useState(null)
   const [success, setSuccess]     = useState(null)
 
@@ -42,11 +43,14 @@ export default function DeliveryReceipts() {
 
   async function confirmDR(id) {
     if (!window.confirm('Confirm this Delivery Receipt? This unlocks bale breakdown for the linked Purchase Order.')) return
+    setError(null); setSuccess(null)
+    setConfirming(id)
     try {
       await api.put(`/api/delivery-receipts/${id}/confirm`)
       setSuccess('D.R. confirmed. Bale breakdown is now unlocked.')
       await load()
     } catch (err) { setError(err?.response?.data?.error || 'Failed to confirm') }
+    finally { setConfirming(null) }
   }
 
   return (
@@ -119,7 +123,7 @@ export default function DeliveryReceipts() {
               <td style={{ padding: '10px 12px', fontWeight: 600 }}>{dr.dr_number}</td>
               <td style={{ padding: '10px 12px' }}>{dr.bale_batch_no || '—'}</td>
               <td style={{ padding: '10px 12px' }}>{dr.supplier_name || '—'}</td>
-              <td style={{ padding: '10px 12px' }}>{dr.received_date}</td>
+              <td style={{ padding: '10px 12px' }}>{dr.received_date ? String(dr.received_date).slice(0, 10) : '—'}</td>
               <td style={{ padding: '10px 12px' }}>{dr.received_by || '—'}</td>
               <td style={{ padding: '10px 12px' }}>
                 <span style={{
@@ -131,8 +135,9 @@ export default function DeliveryReceipts() {
               <td style={{ padding: '10px 12px' }}>
                 {dr.status !== 'CONFIRMED' && (
                   <button onClick={() => confirmDR(dr.id)}
-                    style={{ padding: '4px 14px', borderRadius: 4, background: '#15803d', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 12 }}>
-                    Confirm
+                    disabled={confirming === dr.id}
+                    style={{ padding: '4px 14px', borderRadius: 4, background: confirming === dr.id ? '#94a3b8' : '#15803d', color: '#fff', border: 'none', cursor: confirming === dr.id ? 'default' : 'pointer', fontSize: 12 }}>
+                    {confirming === dr.id ? 'Confirming…' : 'Confirm'}
                   </button>
                 )}
               </td>
