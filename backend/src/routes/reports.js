@@ -157,6 +157,7 @@ router.get('/overview', verifyToken, authorize(['reports.view', 'finance.reports
       JOIN sales s ON s.id = si.sale_id
       LEFT JOIN products p ON p.id = si.product_id
       WHERE 1=1${cogsDateFilter}
+        AND s.status NOT IN ('VOID', 'CANCELLED', 'REFUNDED')
     `, cogsParams)
     const totalCogs = roundMoney(cogsRows[0]?.total_cogs || 0)
 
