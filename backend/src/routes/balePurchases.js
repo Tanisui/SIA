@@ -1159,6 +1159,20 @@ async function upsertBreakdown(req, res) {
       return res.status(404).json({ error: 'bale purchase not found' })
     }
 
+    // Guard: D.R. must be confirmed before breakdown can start
+    const [drRows] = await conn.query(
+      `SELECT id FROM delivery_receipts WHERE bale_purchase_id = ? AND status = 'CONFIRMED' LIMIT 1`,
+      [Number(req.params.id)]
+    )
+    if (!drRows.length) {
+      await conn.rollback().catch(() => {})
+      conn.release()
+      released = true
+      return res.status(400).json({
+        error: 'A confirmed Delivery Receipt is required before starting bale breakdown. Please create and confirm a D.R. first.'
+      })
+    }
+
     const [existingRows] = await conn.query('SELECT * FROM bale_breakdowns WHERE bale_purchase_id = ? LIMIT 1 FOR UPDATE', [balePurchaseId])
     const existing = existingRows[0] || {}
     const payload = normalizeBreakdownInput(req.body, existing)
