@@ -896,6 +896,15 @@ export default function Inventory() {
     setLoading(false)
   }, [])
 
+  const fetchCategories = useCallback(async () => {
+    try {
+      const res = await api.get('/categories')
+      setCategories(Array.isArray(res.data) ? res.data : [])
+    } catch {
+      // non-critical; existing categories remain
+    }
+  }, [])
+
   const fetchTransactions = useCallback(async () => {
     try {
       let url = '/inventory/transactions'
@@ -2180,6 +2189,7 @@ export default function Inventory() {
 
     setProductForm(nextForm)
     setCategorySearch(nextCategorySearch)
+    fetchCategories() // ensure freshest category list
     setShowProductModal(true)
   }
 
@@ -2835,6 +2845,7 @@ export default function Inventory() {
       condition_grade: String(p.condition_grade || '').trim().toLowerCase() || 'premium'
     })
     setCategorySearch(p.category || '')
+    fetchCategories() // ensure freshest category list
     setShowProductModal(true)
   }
 
