@@ -91,6 +91,7 @@ export default function Products() {
       type: 'number',
       required: false,
       validate: (value) => (value === '' || value === undefined || toNumber(value) >= 0 ? '' : 'Cost must be 0 or greater'),
+      placeholder: '₱0.00',
       inputProps: { min: 0, step: '0.01' }
     },
     {
@@ -170,7 +171,11 @@ export default function Products() {
     next.description = String(next.description || '').trim()
 
     next.category_id = next.category_id ? Number(next.category_id) : null
-    next.cost = toNumber(next.cost)
+    if (next.cost === '' || next.cost === undefined || next.cost === null) {
+      delete next.cost
+    } else {
+      next.cost = toNumber(next.cost)
+    }
     next.price = toNumber(next.price)
     next.low_stock_threshold = next.low_stock_threshold === '' || next.low_stock_threshold === undefined
       ? 10
