@@ -689,7 +689,7 @@ async function ensureProfilesForPeriod(conn, period = null) {
     let { profile, reason } = buildBootstrapProfileSeed(candidate, period)
 
     // If bootstrapping (no real profile), inherit pay_rate from the employees table
-    if (!profile || (!profile.id && profile.employee_id)) {
+    if (!profile || (!profile.id && !hasPositiveRate(profile.pay_rate))) {
       const empId = profile?.employee_id || Number(candidate.employee_id) || null
       if (empId) {
         const [empRows] = await conn.query(
