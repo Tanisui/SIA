@@ -800,7 +800,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
 })
 
 // Update product
-router.put('/:id', express.json(), verifyToken, authorize('products.edit'), async (req, res) => {
+router.put('/:id', express.json(), verifyToken, authorize('products.update'), async (req, res) => {
   const conn = await db.pool.getConnection()
   try {
     await ensureAutomatedReportsSchema()

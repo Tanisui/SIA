@@ -2,15 +2,12 @@ const { getNextSequentialBarcode, getNextSequentialSKU } = require('./barcodeSup
 const { generateProductQrImage } = require('../services/qrCodeService')
 const { updateProductQrImagePath } = require('../repositories/productRepository')
 const { applyProductStockDelta } = require('./inventoryStock')
+const { roundMoney } = require('./salesSupport')
 
 const GRADE_DEFINITIONS = [
   { field: 'premium_items', conditionGrade: 'premium', label: 'Premium' },
   { field: 'standard_items', conditionGrade: 'standard', label: 'Standard' }
 ]
-
-function roundMoney(value) {
-  return Math.round((Number(value) || 0) * 100) / 100
-}
 
 function toWholeNumber(value) {
   const parsed = Number(value)
