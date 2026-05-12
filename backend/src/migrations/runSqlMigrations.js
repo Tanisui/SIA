@@ -17,7 +17,8 @@ const SQL_MIGRATION_FILES = [
   path.join(__dirname, '..', 'database', 'migrations', '20260426_notifications_read_state.sql'),
   path.join(__dirname, '..', 'database', 'migrations', '20260509_payroll_industry_standard.sql'),
   path.join(__dirname, '..', 'database', 'migrations', '20260509_payroll_ph_frequency_cutoffs.sql'),
-  path.join(__dirname, '..', 'database', 'migrations', '20260512_delivery_receipts.sql')
+  path.join(__dirname, '..', 'database', 'migrations', '20260512_delivery_receipts.sql'),
+  path.join(__dirname, '..', 'database', 'migrations', '20260512_roles_salary_rate.sql')
 ]
 
 const DUPLICATE_ERROR_CODES = new Set([

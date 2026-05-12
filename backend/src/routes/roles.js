@@ -47,7 +47,7 @@ async function attachPermissions(conn, roleId, permissions) {
 
 router.get('/', verifyToken, authorize('roles.view'), async (req, res) => {
   try {
-    const [roles] = await db.pool.query('SELECT id, name, description, created_at FROM roles ORDER BY name')
+    const [roles] = await db.pool.query('SELECT id, name, description, salary_rate, pay_basis, created_at FROM roles ORDER BY name')
     const result = []
     for (const role of roles) {
       result.push({ ...role, permissions: await getRolePermissions(db.pool, role.id) })
@@ -62,11 +62,16 @@ router.get('/', verifyToken, authorize('roles.view'), async (req, res) => {
 router.post('/', express.json(), verifyToken, authorize('roles.create'), async (req, res) => {
   const conn = await db.pool.getConnection()
   try {
-    const { name, description, permissions } = req.body || {}
+    const { name, description, permissions, salary_rate, pay_basis } = req.body || {}
     if (!name) return res.status(400).json({ error: 'name required' })
 
     await conn.beginTransaction()
-    const [result] = await conn.query('INSERT INTO roles (name, description) VALUES (?, ?)', [name, description || null])
+    const [result] = await conn.query(
+      'INSERT INTO roles (name, description, salary_rate, pay_basis) VALUES (?, ?, ?, ?)',
+      [name, description || null,
+       Number(salary_rate) || 0,
+       ['DAILY', 'MONTHLY'].includes(pay_basis) ? pay_basis : 'DAILY']
+    )
     const roleId = result.insertId
     const resolvedPermissions = await attachPermissions(conn, roleId, permissions)
     await conn.commit()
@@ -100,7 +105,7 @@ router.put('/:id', express.json(), verifyToken, authorize('roles.update'), async
   const conn = await db.pool.getConnection()
   try {
     const id = Number(req.params.id)
-    const { name, description, permissions } = req.body || {}
+    const { name, description, permissions, salary_rate, pay_basis } = req.body || {}
 
     await conn.beginTransaction()
     const [beforeRows] = await conn.query('SELECT id, name, description FROM roles WHERE id = ? LIMIT 1', [id])
@@ -113,7 +118,13 @@ router.put('/:id', express.json(), verifyToken, authorize('roles.update'), async
     const beforePermissions = await getRolePermissions(conn, id)
 
     if (name) {
-      await conn.query('UPDATE roles SET name = ?, description = ? WHERE id = ?', [name, description || null, id])
+      await conn.query(
+        'UPDATE roles SET name = ?, description = ?, salary_rate = ?, pay_basis = ? WHERE id = ?',
+        [name, description || null,
+         Number(salary_rate) || 0,
+         ['DAILY', 'MONTHLY'].includes(pay_basis) ? pay_basis : 'DAILY',
+         id]
+      )
     }
 
     let afterPermissions = beforePermissions
