@@ -350,6 +350,18 @@ router.get('/', verifyToken, authorize(['products.view', 'inventory.view', 'inve
     await ensureScannerSchema()
     await ensureAutomatedReportsSchema()
 
+    if (req.query.search) {
+      const term = `%${req.query.search}%`
+      const [rows] = await conn.query(
+        `SELECT id, name, sku, category_id, stock_quantity, selling_price, cost
+         FROM products
+         WHERE (name LIKE ? OR sku LIKE ?) AND status = 'available'
+         ORDER BY name ASC LIMIT 30`,
+        [term, term]
+      )
+      return res.json(rows)
+    }
+
     const [rows] = await conn.query(`
       SELECT p.*, c.name AS category
       FROM products p

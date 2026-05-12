@@ -422,7 +422,28 @@ async function backfillMissingGeneratedProductsFromBreakdowns(conn) {
   }
 }
 
+async function assignToExistingProduct(conn, { balePurchaseId, productId, quantity, conditionGrade, allocatedCostPerUnit }) {
+  if (!productId || quantity <= 0) throw createSyncError('productId and positive quantity required')
+
+  const [productRows] = await conn.query(
+    'SELECT id, name, stock_quantity FROM products WHERE id = ? LIMIT 1',
+    [Number(productId)]
+  )
+  if (!productRows.length) throw createSyncError('Product not found')
+
+  await applyProductStockDelta(conn, {
+    productId: Number(productId),
+    deltaQuantity: toWholeNumber(quantity),
+    reference: `BALE_BREAKDOWN_ASSIGN|bale_purchase_id=${Number(balePurchaseId)}`,
+    reason: 'Assigned from bale breakdown',
+    transactionType: 'IN'
+  })
+
+  return { product_id: Number(productId), name: productRows[0].name, quantity_added: toWholeNumber(quantity) }
+}
+
 module.exports = {
   syncGeneratedProductsForBreakdown,
-  backfillMissingGeneratedProductsFromBreakdowns
+  backfillMissingGeneratedProductsFromBreakdowns,
+  assignToExistingProduct
 }

@@ -1290,6 +1290,40 @@ async function upsertBreakdown(req, res) {
 router.post('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
 router.put('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
 
+router.post('/:id/breakdown/assign-existing', express.json(), verifyToken,
+  authorize(['inventory.manage', 'inventory.receive']),
+  async (req, res) => {
+    const conn = await db.pool.getConnection()
+    try {
+      const balePurchaseId = Number(req.params.id)
+      const { product_id, quantity, condition_grade, allocated_cost_per_unit } = req.body || {}
+
+      const [purchaseRows] = await conn.query(
+        'SELECT * FROM bale_purchases WHERE id = ? LIMIT 1', [balePurchaseId]
+      )
+      if (!purchaseRows.length) return res.status(404).json({ error: 'Purchase not found' })
+
+      await conn.beginTransaction()
+      const { assignToExistingProduct } = require('../utils/baleBreakdownProductSync')
+      const result = await assignToExistingProduct(conn, {
+        balePurchaseId,
+        productId: product_id,
+        quantity: Number(quantity),
+        conditionGrade: condition_grade || 'standard',
+        allocatedCostPerUnit: Number(allocated_cost_per_unit || 0)
+      })
+      await conn.commit()
+      res.json({ ok: true, ...result })
+    } catch (err) {
+      await conn.rollback().catch(() => {})
+      const status = err.statusCode || 500
+      res.status(status).json({ error: err.message || 'failed to assign product' })
+    } finally {
+      conn.release()
+    }
+  }
+)
+
 // Receive a bale purchase: update receipt totals and keep a generic audit trail entry.
 router.post('/:id/receive', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
   const conn = await db.pool.getConnection()
