@@ -340,6 +340,8 @@ export default function Roles() {
   const [desc, setDesc] = useState('')
   const [perms, setPerms] = useState([])
   const [permissionSearch, setPermissionSearch] = useState('')
+  const [salaryRate, setSalaryRate] = useState('')
+  const [payBasis, setPayBasis] = useState('DAILY')
 
   const reloadRoles = async () => {
     const rolesRes = await api.get('/roles')
@@ -353,6 +355,8 @@ export default function Roles() {
     setDesc('')
     setPerms([])
     setPermissionSearch('')
+    setSalaryRate('')
+    setPayBasis('DAILY')
     setError(null)
   }
 
@@ -430,11 +434,18 @@ export default function Roles() {
     if (!perms.length) return setError('Select at least one permission for this role.')
 
     try {
+      const payload = {
+        name,
+        description: desc,
+        permissions: perms,
+        salary_rate: Number(salaryRate) || 0,
+        pay_basis: payBasis || 'DAILY'
+      }
       if (editing) {
-        await api.put(`/roles/${editing}`, { name, description: desc, permissions: perms })
+        await api.put(`/roles/${editing}`, payload)
         setSuccess('Role updated.')
       } else {
-        await api.post('/roles', { name, description: desc, permissions: perms })
+        await api.post('/roles', payload)
         setSuccess('Role created.')
       }
       setTimeout(async () => {
@@ -452,6 +463,8 @@ export default function Roles() {
     setDesc(role.description || '')
     setPerms(role.permissions || [])
     setPermissionSearch('')
+    setSalaryRate(role.salary_rate != null ? String(role.salary_rate) : '')
+    setPayBasis(role.pay_basis || 'DAILY')
     setShowForm(true)
     setError(null)
     setSuccess(null)
@@ -463,6 +476,8 @@ export default function Roles() {
     setDesc('')
     setPerms([])
     setPermissionSearch('')
+    setSalaryRate('')
+    setPayBasis('DAILY')
     setShowForm(true)
     setError(null)
     setSuccess(null)
@@ -554,6 +569,23 @@ export default function Roles() {
                 <div>
                   <label className="form-label">Description</label>
                   <input className="form-input" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="What is this role responsible for?" />
+                </div>
+                <div>
+                  <label className="form-label">Default Salary Rate (₱)</label>
+                  <input
+                    className="form-input"
+                    type="number" min="0" step="0.01"
+                    value={salaryRate}
+                    onChange={(e) => setSalaryRate(e.target.value)}
+                    placeholder="e.g. 600 for daily rate"
+                  />
+                </div>
+                <div>
+                  <label className="form-label">Pay Basis</label>
+                  <select className="form-input" value={payBasis} onChange={(e) => setPayBasis(e.target.value)}>
+                    <option value="DAILY">Daily</option>
+                    <option value="MONTHLY">Monthly</option>
+                  </select>
                 </div>
               </div>
 
@@ -714,7 +746,12 @@ export default function Roles() {
                     </div>
 
                     <div className="role-card-foot">
-                      <span className="role-card-detail">{summary.detail}</span>
+                      <span className="role-card-detail">
+                        {role.salary_rate != null && role.salary_rate !== 0
+                          ? <><strong>₱{Number(role.salary_rate).toLocaleString()} / {role.pay_basis === 'MONTHLY' ? 'Monthly' : 'Daily'}</strong>{' · '}</>
+                          : null}
+                        {summary.detail}
+                      </span>
                       <div className="role-card-actions" onClick={(e) => e.stopPropagation()}>
                         <button className="btn btn-outline btn-sm" type="button" onClick={() => startEdit(role)}>Edit</button>
                         <button className="btn btn-danger btn-sm" type="button" onClick={() => deleteRole(role.id)} disabled={isFullAccess}>Delete</button>
