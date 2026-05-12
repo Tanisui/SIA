@@ -438,7 +438,7 @@ export default function Roles() {
         name,
         description: desc,
         permissions: perms,
-        salary_rate: Number(salaryRate) || 0,
+        salary_rate: Math.max(0, Number(salaryRate) || 0),
         pay_basis: payBasis || 'DAILY'
       }
       if (editing) {
