@@ -4,12 +4,25 @@ const db = require('../database')
 const { verifyToken, authorize } = require('../middleware/authMiddleware')
 const { logAuditEventSafe } = require('../utils/auditLog')
 
-function nextDrNumber(existingNums) {
-  const max = existingNums.reduce((m, n) => {
-    const seq = Number(String(n).replace(/\D/g, '')) || 0
-    return Math.max(m, seq)
+async function getNextDrNumber(conn) {
+  const [rows] = await conn.query(
+    "SELECT dr_number FROM delivery_receipts WHERE dr_number LIKE 'DR-%' ORDER BY id DESC LIMIT 200"
+  )
+  const maxSeq = rows.reduce((max, r) => {
+    const m = String(r.dr_number || '').match(/^DR-(\d+)$/)
+    return m ? Math.max(max, Number(m[1])) : max
   }, 0)
-  return `DR-${String(max + 1).padStart(4, '0')}`
+
+  let nextSeq = maxSeq + 1
+  for (let attempts = 0; attempts < 200; attempts++) {
+    const candidate = `DR-${String(nextSeq).padStart(4, '0')}`
+    const [existing] = await conn.query(
+      'SELECT id FROM delivery_receipts WHERE dr_number = ? LIMIT 1', [candidate]
+    )
+    if (!existing.length) return candidate
+    nextSeq++
+  }
+  throw new Error('Could not generate unique DR number after 200 attempts')
 }
 
 // GET /api/delivery-receipts — list all, optionally filter by bale_purchase_id
@@ -54,20 +67,29 @@ router.post('/', express.json(), verifyToken, authorize('inventory.receive'), as
       return res.status(400).json({ error: 'bale_purchase_id and received_date are required' })
     }
 
-    const [purchaseRows] = await conn.query(
-      'SELECT id, po_status FROM bale_purchases WHERE id = ? LIMIT 1', [Number(bale_purchase_id)]
-    )
-    if (!purchaseRows.length) return res.status(404).json({ error: 'purchase order not found' })
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(received_date)) {
+      return res.status(400).json({ error: 'received_date must be in YYYY-MM-DD format' })
+    }
+
+    const resolvedReceivedBy = received_by || String(req.auth.id)
 
     await conn.beginTransaction()
 
-    const [numRows] = await conn.query('SELECT dr_number FROM delivery_receipts ORDER BY id DESC LIMIT 100')
-    const drNumber = nextDrNumber(numRows.map(r => r.dr_number))
+    const [purchaseRows] = await conn.query(
+      'SELECT id, po_status FROM bale_purchases WHERE id = ? LIMIT 1 FOR UPDATE', [Number(bale_purchase_id)]
+    )
+    if (!purchaseRows.length) {
+      await conn.rollback()
+      conn.release()
+      return res.status(404).json({ error: 'purchase order not found' })
+    }
+
+    const drNumber = await getNextDrNumber(conn)
 
     const [result] = await conn.query(
       `INSERT INTO delivery_receipts (dr_number, bale_purchase_id, received_date, received_by, status, notes)
        VALUES (?, ?, ?, ?, 'RECEIVED', ?)`,
-      [drNumber, Number(bale_purchase_id), received_date, received_by || null, notes || null]
+      [drNumber, Number(bale_purchase_id), received_date, resolvedReceivedBy, notes || null]
     )
 
     // Advance P.O. to RECEIVED if it was PENDING or ORDERED
