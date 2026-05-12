@@ -86,6 +86,14 @@ export default function Products() {
       placeholder: 'e.g. Nike, Zara, Penshoppe'
     },
     {
+      name: 'cost',
+      label: 'Purchase Price / Cost (₱)',
+      type: 'number',
+      required: false,
+      validate: (value) => (value === '' || value === undefined || toNumber(value) >= 0 ? '' : 'Cost must be 0 or greater'),
+      inputProps: { min: 0, step: '0.01' }
+    },
+    {
       name: 'price',
       label: 'Selling Price (₱)',
       type: 'number',
@@ -162,6 +170,7 @@ export default function Products() {
     next.description = String(next.description || '').trim()
 
     next.category_id = next.category_id ? Number(next.category_id) : null
+    next.cost = toNumber(next.cost)
     next.price = toNumber(next.price)
     next.low_stock_threshold = next.low_stock_threshold === '' || next.low_stock_threshold === undefined
       ? 10
