@@ -74,7 +74,8 @@ function defaultPeriodForm() {
   return {
     code: '',
     ...range,
-    frequency: 'semi_monthly', notes: ''
+    frequency: 'semi_monthly', notes: '',
+    _datesManuallySet: false
   }
 }
 
@@ -269,20 +270,36 @@ export default function PayrollPeriods() {
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Start Date *</label>
                     <input className="form-input" type="date" required value={form.start_date}
-                      onChange={(e) => setForm((p) => ({ ...p, ...buildCutoffRange(p.frequency, e.target.value) }))} />
+                      onChange={(e) => {
+                        const newStart = e.target.value
+                        setForm((p) => {
+                          if (p._datesManuallySet) return { ...p, start_date: newStart, _datesManuallySet: true }
+                          const suggested = buildCutoffRange(p.frequency, newStart)
+                          return { ...p, ...suggested, _datesManuallySet: false }
+                        })
+                      }} />
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">End Date *</label>
-                    <input className="form-input" type="date" required readOnly value={form.end_date} />
+                    <input className="form-input" type="date" required value={form.end_date}
+                      onChange={(e) => setForm((p) => ({ ...p, end_date: e.target.value, _datesManuallySet: true }))} />
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Payout Date *</label>
-                    <input className="form-input" type="date" required value={form.payout_date} onChange={(e) => setForm((p) => ({ ...p, payout_date: e.target.value }))} />
+                    <input className="form-input" type="date" required value={form.payout_date}
+                      onChange={(e) => setForm((p) => ({ ...p, payout_date: e.target.value, _datesManuallySet: true }))} />
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Frequency</label>
                     <select className="form-input" value={form.frequency}
-                      onChange={(e) => setForm((p) => ({ ...p, frequency: e.target.value, ...buildCutoffRange(e.target.value, p.start_date) }))}>
+                      onChange={(e) => {
+                        const newFreq = e.target.value
+                        setForm((p) => {
+                          if (p._datesManuallySet) return { ...p, frequency: newFreq }
+                          const suggested = buildCutoffRange(newFreq, p.start_date)
+                          return { ...p, frequency: newFreq, ...suggested }
+                        })
+                      }}>
                       <option value="daily">Daily</option>
                       <option value="weekly">Weekly</option>
                       <option value="semi_monthly">Semi-Monthly</option>

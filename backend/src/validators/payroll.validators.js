@@ -104,25 +104,28 @@ function validatePeriodCutoff(frequency, startDate, endDate) {
   const sameMonth = startYear === endYear && startMonth === endMonth
   const monthLastDay = lastDayOfMonth(startYear, startMonth)
 
+  // Log warnings for non-standard ranges but do not reject them — users may
+  // intentionally create custom date ranges that don't match the canonical
+  // cutoffs for a given frequency (e.g. a 10-day "weekly" period).
   if (frequency === 'daily' && startDate !== endDate) {
-    throw validationError('daily payroll periods must start and end on the same date')
+    console.warn(`[payroll] Non-standard daily period: start ${startDate} end ${endDate}`)
   }
 
   if (frequency === 'weekly' && daysBetweenInclusive(startDate, endDate) !== 7) {
-    throw validationError('weekly payroll periods must cover exactly 7 calendar days')
+    console.warn(`[payroll] Non-standard weekly period: ${daysBetweenInclusive(startDate, endDate)} days (${startDate} – ${endDate})`)
   }
 
   if (frequency === 'semi_monthly') {
     const firstHalf = sameMonth && startDay === 1 && endDay === 15
     const secondHalf = sameMonth && startDay === 16 && endDay === monthLastDay
     if (!firstHalf && !secondHalf) {
-      throw validationError('semi-monthly payroll periods must be either day 1-15 or day 16 through the last day of the same month')
+      console.warn(`[payroll] Non-standard semi-monthly period: ${startDate} – ${endDate}`)
     }
   }
 
   if (frequency === 'monthly') {
     if (!sameMonth || startDay !== 1 || endDay !== monthLastDay) {
-      throw validationError('monthly payroll periods must cover one full calendar month')
+      console.warn(`[payroll] Non-standard monthly period: ${startDate} – ${endDate}`)
     }
   }
 }
