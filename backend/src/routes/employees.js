@@ -93,7 +93,7 @@ router.post('/', express.json(), verifyToken, authorize('employees.create'), asy
 
     // 1b. Resolve pay_rate — if not provided, inherit from the role's salary_rate
     let resolvedPayRate = Number(pay_rate) || 0
-    let resolvedPayBasis = pay_basis || 'DAILY'
+    let resolvedPayBasis = ['DAILY', 'MONTHLY'].includes(pay_basis) ? pay_basis : 'DAILY'
 
     if (resolvedPayRate === 0 && role) {
       const [roleRows] = await conn.query(
