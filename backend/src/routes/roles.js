@@ -86,7 +86,7 @@ router.post('/', express.json(), verifyToken, authorize('roles.create'), async (
         severity: 'high',
         target_label: name,
         summary: `Created role "${name}"`,
-        after: { name, description: description || null, permissions: resolvedPermissions },
+        after: { name, description: description || null, salary_rate: Number(salary_rate) || 0, pay_basis: ['DAILY', 'MONTHLY'].includes(pay_basis) ? pay_basis : 'DAILY', permissions: resolvedPermissions },
         metrics: { permission_count: resolvedPermissions.length }
       }
     })
@@ -106,9 +106,12 @@ router.put('/:id', express.json(), verifyToken, authorize('roles.update'), async
   try {
     const id = Number(req.params.id)
     const { name, description, permissions, salary_rate, pay_basis } = req.body || {}
+    if (!name) return res.status(400).json({ error: 'name required' })
 
     await conn.beginTransaction()
-    const [beforeRows] = await conn.query('SELECT id, name, description FROM roles WHERE id = ? LIMIT 1', [id])
+    const [beforeRows] = await conn.query(
+      'SELECT id, name, description, salary_rate, pay_basis FROM roles WHERE id = ? LIMIT 1', [id]
+    )
     if (!beforeRows.length) {
       await conn.rollback()
       return res.status(404).json({ error: 'role not found' })
@@ -117,15 +120,13 @@ router.put('/:id', express.json(), verifyToken, authorize('roles.update'), async
     const before = beforeRows[0]
     const beforePermissions = await getRolePermissions(conn, id)
 
-    if (name) {
-      await conn.query(
-        'UPDATE roles SET name = ?, description = ?, salary_rate = ?, pay_basis = ? WHERE id = ?',
-        [name, description || null,
-         Number(salary_rate) || 0,
-         ['DAILY', 'MONTHLY'].includes(pay_basis) ? pay_basis : 'DAILY',
-         id]
-      )
-    }
+    await conn.query(
+      'UPDATE roles SET name = ?, description = ?, salary_rate = ?, pay_basis = ? WHERE id = ?',
+      [name, description || null,
+       Number(salary_rate) || 0,
+       ['DAILY', 'MONTHLY'].includes(pay_basis) ? pay_basis : 'DAILY',
+       id]
+    )
 
     let afterPermissions = beforePermissions
     if (Array.isArray(permissions)) {
@@ -133,7 +134,9 @@ router.put('/:id', express.json(), verifyToken, authorize('roles.update'), async
       afterPermissions = await attachPermissions(conn, id, permissions)
     }
 
-    const [afterRows] = await conn.query('SELECT id, name, description FROM roles WHERE id = ? LIMIT 1', [id])
+    const [afterRows] = await conn.query(
+      'SELECT id, name, description, salary_rate, pay_basis FROM roles WHERE id = ? LIMIT 1', [id]
+    )
     await conn.commit()
 
     await logAuditEventSafe(db.pool, {
@@ -146,8 +149,8 @@ router.put('/:id', express.json(), verifyToken, authorize('roles.update'), async
         severity: 'high',
         target_label: afterRows[0].name,
         summary: `Updated role "${afterRows[0].name}"`,
-        before: { name: before.name, description: before.description, permissions: beforePermissions },
-        after: { name: afterRows[0].name, description: afterRows[0].description, permissions: afterPermissions },
+        before: { name: before.name, description: before.description, salary_rate: before.salary_rate, pay_basis: before.pay_basis, permissions: beforePermissions },
+        after: { name: afterRows[0].name, description: afterRows[0].description, salary_rate: afterRows[0].salary_rate, pay_basis: afterRows[0].pay_basis, permissions: afterPermissions },
         metrics: { permission_count: afterPermissions.length }
       }
     })
