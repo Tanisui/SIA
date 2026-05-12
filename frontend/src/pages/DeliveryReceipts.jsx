@@ -22,7 +22,7 @@ export default function DeliveryReceipts() {
   async function load() {
     const [drRes, poRes] = await Promise.allSettled([
       api.get('/api/delivery-receipts'),
-      api.get('/api/bale-purchases')
+      api.get('/bale-purchases')
     ])
     if (drRes.status === 'fulfilled') setReceipts(drRes.value.data || [])
     if (poRes.status === 'fulfilled') setOrders(poRes.value.data || [])
