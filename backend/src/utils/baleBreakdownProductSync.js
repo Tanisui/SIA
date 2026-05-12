@@ -422,11 +422,11 @@ async function backfillMissingGeneratedProductsFromBreakdowns(conn) {
   }
 }
 
-async function assignToExistingProduct(conn, { balePurchaseId, productId, quantity, conditionGrade, allocatedCostPerUnit }) {
+async function assignToExistingProduct(conn, { balePurchaseId, productId, quantity }) {
   if (!productId || quantity <= 0) throw createSyncError('productId and positive quantity required')
 
   const [productRows] = await conn.query(
-    'SELECT id, name, stock_quantity FROM products WHERE id = ? LIMIT 1',
+    'SELECT id, name, stock_quantity FROM products WHERE id = ? AND COALESCE(is_active, 1) = 1 LIMIT 1',
     [Number(productId)]
   )
   if (!productRows.length) throw createSyncError('Product not found')
