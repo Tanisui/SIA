@@ -89,6 +89,7 @@ function buildBootstrapProfileSeed(candidate, period = null) {
   const bankFields = extractBootstrapBankFields(candidate?.bank_details)
   return {
     profile: {
+      employee_id: Number(candidate.employee_id) || null,
       user_id: Number(candidate.user_id),
       employment_type: normalizeBootstrapEmploymentType(candidate.employment_type),
       pay_basis: normalizeBootstrapPayBasis(candidate.pay_basis, period),
@@ -685,7 +686,33 @@ async function ensureProfilesForPeriod(conn, period = null) {
   let autoCreatedCount = 0
 
   for (const candidate of candidates) {
-    const { profile, reason } = buildBootstrapProfileSeed(candidate, period)
+    let { profile, reason } = buildBootstrapProfileSeed(candidate, period)
+
+    // If bootstrapping (no real profile), inherit pay_rate from the employees table
+    if (!profile || (!profile.id && profile.employee_id)) {
+      const empId = profile?.employee_id || Number(candidate.employee_id) || null
+      if (empId) {
+        const [empRows] = await conn.query(
+          'SELECT pay_rate, pay_basis FROM employees WHERE id = ? LIMIT 1',
+          [empId]
+        )
+        if (empRows.length && Number(empRows[0].pay_rate) > 0) {
+          if (!profile) {
+            // Rebuild the seed using the freshly-fetched pay_rate
+            const enrichedCandidate = { ...candidate, pay_rate: empRows[0].pay_rate, pay_basis: empRows[0].pay_basis }
+            const rebuilt = buildBootstrapProfileSeed(enrichedCandidate, period)
+            profile = rebuilt.profile
+            reason = rebuilt.reason
+          } else if (!hasPositiveRate(profile.pay_rate)) {
+            profile.pay_rate = Number(empRows[0].pay_rate)
+            if (!profile.pay_basis || profile.pay_basis === PAYROLL_PROFILE_BOOTSTRAP_DEFAULTS.pay_basis) {
+              profile.pay_basis = empRows[0].pay_basis?.toLowerCase() || 'daily'
+            }
+          }
+        }
+      }
+    }
+
     if (!profile) {
       skippedEmployees.push({
         user_id: Number(candidate.user_id),
@@ -696,12 +723,14 @@ async function ensureProfilesForPeriod(conn, period = null) {
       continue
     }
 
-    const columns = Object.keys(profile)
+    // Strip internal-only fields that are not columns in payroll_profiles
+    const { employee_id: _employeeId, ...profileRow } = profile
+    const columns = Object.keys(profileRow)
     await conn.query(
       `INSERT INTO payroll_profiles (${columns.join(', ')})
        VALUES (${columns.map(() => '?').join(', ')})
        ON DUPLICATE KEY UPDATE updated_at = updated_at`,
-      columns.map((column) => profile[column])
+      columns.map((column) => profileRow[column])
     )
     autoCreatedCount += 1
   }
