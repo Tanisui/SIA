@@ -1317,10 +1317,19 @@ router.post('/:id/breakdown/assign-existing', express.json(), verifyToken,
       const [purchaseRows] = await conn.query(
         'SELECT * FROM bale_purchases WHERE id = ? LIMIT 1 FOR UPDATE', [balePurchaseId]
       )
-      if (!purchaseRows.length) return res.status(404).json({ error: 'Purchase not found' })
+      if (!purchaseRows.length) {
+        await conn.rollback().catch(() => {})
+        return res.status(404).json({ error: 'Purchase not found' })
+      }
 
       if (!['RECEIVED', 'COMPLETED'].includes(purchaseRows[0].po_status)) {
+        await conn.rollback().catch(() => {})
         return res.status(409).json({ error: 'Can only assign to received or completed bale purchases' })
+      }
+
+      if (!purchaseRows[0].dr_confirmed) {
+        await conn.rollback().catch(() => {})
+        return res.status(400).json({ error: 'A confirmed Delivery Receipt is required before assigning products.' })
       }
 
       const result = await assignToExistingProduct(conn, {

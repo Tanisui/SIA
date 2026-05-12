@@ -80,7 +80,6 @@ router.post('/', express.json(), verifyToken, authorize('inventory.receive'), as
     )
     if (!purchaseRows.length) {
       await conn.rollback()
-      conn.release()
       return res.status(404).json({ error: 'purchase order not found' })
     }
 

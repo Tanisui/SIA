@@ -174,8 +174,8 @@ router.put('/:id', express.json(), verifyToken, authorize('employees.update'), a
   let conn;
   try {
     const id = req.params.id
-    const { name, email, role, contact_type, contact, hire_date, pay_rate, employment_status, bank_details } = req.body
-    
+    const { name, email, role, contact_type, contact, hire_date, pay_rate, pay_basis, employment_status, bank_details } = req.body
+
     conn = await db.pool.getConnection()
     await conn.beginTransaction()
 
@@ -189,6 +189,7 @@ router.put('/:id', express.json(), verifyToken, authorize('employees.update'), a
     if (contact !== undefined) { updates.push('contact = ?'); params.push(contact) }
     if (hire_date !== undefined) { updates.push('hire_date = ?'); params.push(hire_date) }
     if (pay_rate !== undefined) { updates.push('pay_rate = ?'); params.push(pay_rate) }
+    if (pay_basis !== undefined) { updates.push('pay_basis = ?'); params.push(['DAILY', 'MONTHLY'].includes(pay_basis) ? pay_basis : 'DAILY') }
     if (employment_status !== undefined) { updates.push('employment_status = ?'); params.push(employment_status) }
     if (bank_details !== undefined) { updates.push('bank_details = ?'); params.push(JSON.stringify(bank_details)) }
     
