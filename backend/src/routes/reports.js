@@ -149,6 +149,18 @@ router.get('/overview', verifyToken, authorize(['reports.view', 'finance.reports
       ORDER BY total DESC
     `, expenseCategoryParams)
 
+    const cogsParams = []
+    const cogsDateFilter = buildDateFilter('s', 'date', from, to, cogsParams)
+    const [cogsRows] = await db.pool.query(`
+      SELECT COALESCE(SUM(si.qty * COALESCE(p.cost, 0)), 0) AS total_cogs
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN products p ON p.id = si.product_id
+      WHERE 1=1${cogsDateFilter}
+        AND s.status NOT IN ('VOID', 'CANCELLED', 'REFUNDED')
+    `, cogsParams)
+    const totalCogs = roundMoney(cogsRows[0]?.total_cogs || 0)
+
     const salesTotals = salesTotalsRows[0] || {}
     const returnTotals = returnsRows[0] || {}
     const expenseTotals = expenseTotalsRows[0] || {}
@@ -169,7 +181,9 @@ router.get('/overview', verifyToken, authorize(['reports.view', 'finance.reports
         total_sales,
         returns_total: returnsTotal,
         net_revenue: roundMoney(totalSales - returnsTotal),
-        net_after_expenses: roundMoney(totalSales - returnsTotal - approvedPaidExpenses)
+        net_after_expenses: roundMoney(totalSales - returnsTotal - approvedPaidExpenses),
+        total_cogs: totalCogs,
+        net_income: roundMoney(totalSales - returnsTotal - totalCogs - approvedPaidExpenses)
       },
       expenses_report: {
         total_expenses: roundMoney(expenseTotals.total_expenses),

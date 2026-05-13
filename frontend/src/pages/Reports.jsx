@@ -168,6 +168,7 @@ export default function Reports() {
   const [to, setTo] = useState(initialRange.to)
   const [report, setReport] = useState(null)
   const [directReport, setDirectReport] = useState(null)
+  const [overview, setOverview] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [pages, setPages] = useState({
@@ -189,6 +190,17 @@ export default function Reports() {
     }
   }
 
+  async function loadOverview(fromValue = from, toValue = to) {
+    try {
+      const query = withQuery(fromValue, toValue)
+      const res = await api.get(`/reports/overview${query}`)
+      setOverview(res.data || null)
+    } catch (err) {
+      console.error('overview report error', err)
+      setOverview(null)
+    }
+  }
+
   async function loadReport({ keepData = true, fromValue = from, toValue = to } = {}) {
     try {
       setLoading(true)
@@ -197,7 +209,8 @@ export default function Reports() {
       const query = withQuery(fromValue, toValue)
       const [baleRes] = await Promise.all([
         api.get(`/reports/automated${query}`),
-        loadDirectPurchases(fromValue, toValue)
+        loadDirectPurchases(fromValue, toValue),
+        loadOverview(fromValue, toValue)
       ])
       setReport(baleRes.data || null)
     } catch (err) {
@@ -942,6 +955,23 @@ export default function Reports() {
       ) : report ? (
         <>
           <ReportSummaryCards cards={summaryCards} loading={loading} />
+
+          {overview ? (
+            <div className="reports-summary-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 4 }}>
+              {[
+                { label: 'Net Income', value: overview.revenue_report?.net_income, sub: 'After COGS & expenses', tone: toNumber(overview.revenue_report?.net_income) >= 0 ? 'success' : 'danger' },
+                { label: 'Cost of Goods Sold', value: overview.revenue_report?.total_cogs, sub: null, tone: 'default' }
+              ].map(({ label, value, sub, tone }) => (
+                <div key={label} className="card reports-summary-card">
+                  <div className="card-title">{label}</div>
+                  <div className={`card-value-sm reports-summary-value reports-summary-value-${tone}`}>
+                    {loading ? '...' : formatCurrency(value)}
+                  </div>
+                  {sub ? <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{sub}</div> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
 
           {!hasRows ? (
             <ReportsEmptyState

@@ -296,7 +296,18 @@ export default function EntityPage({
   const formSchema = useMemo(() => schema.filter((f) => !f.hidden && !f.hideInForm), [schema])
 
   const onChange = (name, value) => {
-    setForm((prev) => ({ ...prev, [name]: value }))
+    setForm((prev) => {
+      const next = { ...prev, [name]: value }
+      // If the schema field has an onFieldChange callback, call it and merge any returned overrides
+      const fieldDef = schema.find(f => f.name === name)
+      if (fieldDef && typeof fieldDef.onFieldChange === 'function') {
+        const overrides = fieldDef.onFieldChange(value, next)
+        if (overrides && typeof overrides === 'object') {
+          return { ...next, ...overrides }
+        }
+      }
+      return next
+    })
     setFieldErrors((prev) => {
       if (!prev[name]) return prev
       const next = { ...prev }

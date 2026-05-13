@@ -438,8 +438,17 @@ export default function Purchasing() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
-            <button className="btn btn-primary" type="submit" disabled={submitting}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12, flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+            {selectedBreakdownBale && !selectedBreakdownBale.dr_confirmed ? (
+              <span style={{ color: '#dc2626', fontSize: 13, display: 'block', marginTop: 8 }}>
+                ⚠ A confirmed Delivery Receipt is required before starting breakdown.
+              </span>
+            ) : null}
+            <button
+              className="btn btn-primary"
+              type="submit"
+              disabled={submitting || (selectedBreakdownBale != null && !selectedBreakdownBale.dr_confirmed)}
+            >
               {submitting ? 'Saving...' : 'Save Bale Breakdown'}
             </button>
           </div>

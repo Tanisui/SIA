@@ -1,9 +1,10 @@
 const express = require('express')
 const router = express.Router()
 const db = require('../database')
+const { verifyToken } = require('../middleware/authMiddleware')
 const { ensurePurchasingPermissions } = require('../services/purchasingPermissionService')
 
-router.get('/permissions', async (req, res) => {
+router.get('/permissions', verifyToken, async (req, res) => {
   try {
     await ensurePurchasingPermissions()
     const [rows] = await db.pool.query('SELECT id, name, description FROM permissions ORDER BY name')
@@ -14,7 +15,7 @@ router.get('/permissions', async (req, res) => {
   }
 })
 
-router.get('/roles', async (req, res) => {
+router.get('/roles', verifyToken, async (req, res) => {
   try {
     await ensurePurchasingPermissions()
     const [roles] = await db.pool.query('SELECT id, name, description FROM roles ORDER BY name')
@@ -35,7 +36,7 @@ router.get('/roles', async (req, res) => {
   }
 })
 
-router.get('/users/:id/roles', async (req, res) => {
+router.get('/users/:id/roles', verifyToken, async (req, res) => {
   try {
     const userId = Number(req.params.id)
     if (!userId) return res.status(400).json({ error: 'invalid user id' })

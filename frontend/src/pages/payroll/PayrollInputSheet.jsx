@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import api from '../../api/api.js'
 import {
@@ -59,6 +59,8 @@ export default function PayrollInputSheet() {
   const [error,        setError]        = useState(null)
   const [success,      setSuccess]      = useState(null)
   const [expandedUser, setExpandedUser] = useState(null)
+  const [autoSyncDone, setAutoSyncDone] = useState(false)
+  const autoSynced = useRef(false)
 
   const showMsg = (m) => { setSuccess(m); setTimeout(() => setSuccess(null), 4200) }
 
@@ -76,6 +78,14 @@ export default function PayrollInputSheet() {
   }
 
   useEffect(() => { loadPeriod() }, [periodId]) // eslint-disable-line
+
+  useEffect(() => {
+    if (autoSynced.current || !periodId) return
+    autoSynced.current = true
+    api.post(`/api/payroll/periods/${periodId}/inputs/sync-attendance`)
+      .then(() => { setAutoSyncDone(true); loadPeriod() })
+      .catch(() => {})
+  }, [periodId]) // eslint-disable-line
 
   const locked = useMemo(() => ['finalized', 'released', 'void'].includes(String(period?.status || '')), [period?.status])
 
@@ -195,6 +205,11 @@ export default function PayrollInputSheet() {
 
       {error   && <div className="error-msg"   style={{ marginBottom: 14 }}>{error}</div>}
       {success && <div className="success-msg" style={{ marginBottom: 14 }}>{success}</div>}
+      {autoSyncDone && (
+        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>
+          Attendance auto-loaded. Fields reflect current attendance records.
+        </div>
+      )}
 
       <div className="card">
         <div className="card-header">

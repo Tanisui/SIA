@@ -1,0 +1,15 @@
+CREATE TABLE IF NOT EXISTS delivery_receipts (
+  id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  dr_number        VARCHAR(50) NOT NULL UNIQUE,
+  bale_purchase_id BIGINT UNSIGNED NOT NULL,
+  received_date    DATE NOT NULL,
+  received_by      VARCHAR(255),
+  status           ENUM('PENDING','RECEIVED','CONFIRMED') NOT NULL DEFAULT 'PENDING',
+  notes            TEXT,
+  created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (bale_purchase_id) REFERENCES bale_purchases(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE bale_purchases
+  ADD COLUMN IF NOT EXISTS dr_confirmed TINYINT(1) NOT NULL DEFAULT 0;

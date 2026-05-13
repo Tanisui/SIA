@@ -77,8 +77,8 @@ router.get('/:id', verifyToken, authorize(EMPLOYEE_PICKER_PERMS), async (req, re
 router.post('/', express.json(), verifyToken, authorize('employees.create'), async (req, res) => {
   let conn; // We use a specific connection to run a Database Transaction
   try {
-    const { name, email, role, contact_type, contact, hire_date, pay_rate, employment_status, bank_details } = req.body
-    
+    const { name, email, role, contact_type, contact, hire_date, pay_rate, pay_basis, employment_status, bank_details } = req.body
+
     if (!name || !email) return res.status(400).json({ error: 'Name and Email are required' })
 
     conn = await db.pool.getConnection()
@@ -91,12 +91,26 @@ router.post('/', express.json(), verifyToken, authorize('employees.create'), asy
       return res.status(400).json({ error: 'Email is already in use by another employee' })
     }
 
+    // 1b. Resolve pay_rate — if not provided, inherit from the role's salary_rate
+    let resolvedPayRate = Number(pay_rate) || 0
+    let resolvedPayBasis = ['DAILY', 'MONTHLY'].includes(pay_basis) ? pay_basis : 'DAILY'
+
+    if (resolvedPayRate === 0 && role) {
+      const [roleRows] = await conn.query(
+        'SELECT salary_rate, pay_basis FROM roles WHERE name = ? LIMIT 1', [role]
+      )
+      if (roleRows.length && Number(roleRows[0].salary_rate) > 0) {
+        resolvedPayRate = Number(roleRows[0].salary_rate)
+        resolvedPayBasis = roleRows[0].pay_basis || 'DAILY'
+      }
+    }
+
     // 2. Insert into employees table
     const [empResult] = await conn.query(
-      `INSERT INTO employees (name, email, role, contact_type, contact, hire_date, pay_rate, employment_status, bank_details)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO employees (name, email, role, contact_type, contact, hire_date, pay_rate, pay_basis, employment_status, bank_details)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [name, email, role || null, contact_type || null, contact || null, hire_date || null,
-       pay_rate || 0, employment_status || 'ACTIVE',
+       resolvedPayRate, resolvedPayBasis, employment_status || 'ACTIVE',
        bank_details ? JSON.stringify(bank_details) : null]
     )
 
@@ -160,8 +174,8 @@ router.put('/:id', express.json(), verifyToken, authorize('employees.update'), a
   let conn;
   try {
     const id = req.params.id
-    const { name, email, role, contact_type, contact, hire_date, pay_rate, employment_status, bank_details } = req.body
-    
+    const { name, email, role, contact_type, contact, hire_date, pay_rate, pay_basis, employment_status, bank_details } = req.body
+
     conn = await db.pool.getConnection()
     await conn.beginTransaction()
 
@@ -175,6 +189,7 @@ router.put('/:id', express.json(), verifyToken, authorize('employees.update'), a
     if (contact !== undefined) { updates.push('contact = ?'); params.push(contact) }
     if (hire_date !== undefined) { updates.push('hire_date = ?'); params.push(hire_date) }
     if (pay_rate !== undefined) { updates.push('pay_rate = ?'); params.push(pay_rate) }
+    if (pay_basis !== undefined) { updates.push('pay_basis = ?'); params.push(['DAILY', 'MONTHLY'].includes(pay_basis) ? pay_basis : 'DAILY') }
     if (employment_status !== undefined) { updates.push('employment_status = ?'); params.push(employment_status) }
     if (bank_details !== undefined) { updates.push('bank_details = ?'); params.push(JSON.stringify(bank_details)) }
     

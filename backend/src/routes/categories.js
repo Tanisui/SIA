@@ -30,7 +30,7 @@ async function findCategoryByName(name) {
 }
 
 // List all categories
-router.get('/', verifyToken, authorize(['products.view', 'products.create', 'products.edit', 'inventory.view', 'inventory.adjust']), async (req, res) => {
+router.get('/', verifyToken, authorize(['products.view', 'products.create', 'products.update', 'inventory.view', 'inventory.adjust']), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const [rows] = await db.pool.query('SELECT id, name, description FROM categories ORDER BY name')
@@ -42,7 +42,7 @@ router.get('/', verifyToken, authorize(['products.view', 'products.create', 'pro
 })
 
 // Resolve a category by name, creating it when bale purchase categories do not exist yet.
-router.post('/resolve', express.json(), verifyToken, authorize(['products.create', 'products.edit']), async (req, res) => {
+router.post('/resolve', express.json(), verifyToken, authorize(['products.create', 'products.update']), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
 
@@ -82,7 +82,7 @@ router.post('/resolve', express.json(), verifyToken, authorize(['products.create
 })
 
 // List category-specific product types
-router.get('/:id/types', verifyToken, authorize(['products.view', 'products.create', 'products.edit', 'inventory.view', 'inventory.adjust']), async (req, res) => {
+router.get('/:id/types', verifyToken, authorize(['products.view', 'products.create', 'products.update', 'inventory.view', 'inventory.adjust']), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const categoryId = Number(req.params.id)
@@ -139,7 +139,7 @@ router.get('/:id/types', verifyToken, authorize(['products.view', 'products.crea
 })
 
 // Get single category
-router.get('/:id', verifyToken, authorize(['products.view', 'products.create', 'products.edit', 'inventory.view', 'inventory.adjust']), async (req, res) => {
+router.get('/:id', verifyToken, authorize(['products.view', 'products.create', 'products.update', 'inventory.view', 'inventory.adjust']), async (req, res) => {
   try {
     await ensureAutomatedReportsSchema()
     const [rows] = await db.pool.query('SELECT id, name, description FROM categories WHERE id = ? LIMIT 1', [req.params.id])

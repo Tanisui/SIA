@@ -15,6 +15,75 @@ const DEFAULT_COMPANY_INFO = {
 }
 const AUTO_PO_PREFIX = 'BALE-PO'
 
+function AssignExistingProduct({ balePurchaseId, onAssigned }) {
+  const [search, setSearch] = useState('')
+  const [results, setResults] = useState([])
+  const [selected, setSelected] = useState(null)
+  const [qty, setQty] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!search.trim()) { setResults([]); return }
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.get(`/products?search=${encodeURIComponent(search)}`)
+        setResults(r.data || [])
+      } catch { setResults([]) }
+    }, 300)
+    return () => clearTimeout(t)
+  }, [search])
+
+  async function handleAssign() {
+    if (!selected || !qty || Number(qty) <= 0) return
+    setSaving(true); setError(null)
+    try {
+      await api.post(`/bale-purchases/${balePurchaseId}/breakdown/assign-existing`, {
+        product_id: selected.id, quantity: Number(qty)
+      })
+      setSearch(''); setSelected(null); setQty('')
+      onAssigned && onAssigned()
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Failed to assign product')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: 16, marginTop: 12, background: '#f8fafc' }}>
+      <h4 style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 600 }}>Assign to Existing Product</h4>
+      <input
+        placeholder="Search product by name or SKU…"
+        value={search} onChange={e => { setSearch(e.target.value); setSelected(null) }}
+        style={{ width: '100%', padding: '6px 10px', marginBottom: 6, borderRadius: 6, border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+      />
+      {results.length > 0 && (
+        <div style={{ border: '1px solid #e2e8f0', borderRadius: 6, maxHeight: 160, overflowY: 'auto', marginBottom: 8, background: '#fff' }}>
+          {results.map(p => (
+            <div key={p.id}
+              onClick={() => setSelected(p)}
+              style={{ padding: '6px 10px', cursor: 'pointer', background: selected?.id === p.id ? '#dbeafe' : 'transparent', borderBottom: '1px solid #f1f5f9' }}>
+              <strong style={{ fontSize: 13 }}>{p.name}</strong>
+              <span style={{ fontSize: 12, color: '#64748b', marginLeft: 8 }}>SKU: {p.sku || '—'} · Stock: {p.stock_quantity}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {selected && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+          <span style={{ fontSize: 13, color: '#374151' }}>Qty to add to <strong>{selected.name}</strong>:</span>
+          <input type="number" min="1" value={qty} onChange={e => setQty(e.target.value)}
+            style={{ width: 80, padding: '4px 8px', borderRadius: 4, border: '1px solid #cbd5e1', textAlign: 'center' }} />
+          <button onClick={handleAssign} disabled={saving || !qty || Number(qty) <= 0}
+            style={{ padding: '5px 16px', borderRadius: 4, background: saving ? '#94a3b8' : '#1e40af', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 13 }}>
+            {saving ? 'Saving…' : 'Assign'}
+          </button>
+        </div>
+      )}
+      {error && <div style={{ color: '#dc2626', fontSize: 13, marginTop: 4 }}>{error}</div>}
+    </div>
+  )
+}
+
 function todayDateInput() {
   const now = new Date()
   const localDate = new Date(now.getTime() - (now.getTimezoneOffset() * 60000))
@@ -1265,6 +1334,11 @@ export default function BalePurchaseOrder() {
                           )}
                         </div>
                       </div>
+
+                      {/* Assign to existing product (only for received/completed orders) */}
+                      {canManageOrders && (status === 'RECEIVED' || status === 'COMPLETED') && (
+                        <AssignExistingProduct balePurchaseId={order.id} onAssigned={fetchOrders} />
+                      )}
                     </div>
                   )
                 })}

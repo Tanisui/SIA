@@ -37,6 +37,7 @@ const NAV_ITEMS = [
     perm: ['inventory.view', 'inventory.receive', 'reports.view', 'finance.reports.view'],
     children: [
       { to: '/bale-purchase-order', label: 'Purchase Orders' },
+      { to: '/delivery-receipts', label: 'Delivery Receipts' },
       { to: '/purchasing', tab: 'bale-breakdowns', label: 'Bale Breakdown' }
     ]
   },

@@ -24,6 +24,7 @@ import Layout from './components/Layout.js'
 import ProtectedRoute from './components/ProtectedRoute.js'
 import ChangePassword from './pages/ChangePassword';
 import BalePurchaseOrder from './pages/BalePurchaseOrder.jsx';
+import DeliveryReceipts from './pages/DeliveryReceipts.jsx';
 import Attendance from './pages/Attendance.jsx'
 import PayrollProfiles from './pages/payroll/PayrollProfiles.jsx'
 import PayrollPeriods from './pages/payroll/PayrollPeriods.jsx'
@@ -48,9 +49,6 @@ export default function App() {
           React.createElement(Route, { path: 'users', element: React.createElement(ProtectedRoute, { perm: 'users.view' }, React.createElement(Users, null)) }),
           React.createElement(Route, { path: 'users/new', element: React.createElement(ProtectedRoute, { perm: 'users.view' }, React.createElement(UserFormPage, { mode: 'create' })) }),
           React.createElement(Route, { path: 'users/:id/edit', element: React.createElement(ProtectedRoute, { perm: 'users.view' }, React.createElement(UserFormPage, { mode: 'edit' })) }),
-          React.createElement(Route, { path: 'employees', element: React.createElement(Navigate, { to: '/users', replace: true }) }),
-          React.createElement(Route, { path: 'employees/new', element: React.createElement(ProtectedRoute, { perm: 'users.view' }, React.createElement(UserFormPage, { mode: 'create' })) }),
-          React.createElement(Route, { path: 'employees/:id/edit', element: React.createElement(ProtectedRoute, { perm: 'users.view' }, React.createElement(UserFormPage, { mode: 'edit' })) }),
           React.createElement(Route, { path: 'roles', element: React.createElement(ProtectedRoute, { perm: 'roles.view' }, React.createElement(Roles, null)) }),
           React.createElement(Route, { path: 'categories', element: React.createElement(Categories, null) }),
           React.createElement(Route, { path: 'suppliers', element: React.createElement(Suppliers, null) }),
@@ -78,7 +76,8 @@ export default function App() {
           React.createElement(Route, { path: 'payroll', element: React.createElement(Navigate, { to: '/payroll/my-payslips', replace: true }) }),
           React.createElement(Route, { path: 'account-security', element: React.createElement(ChangePassword, null) }),
           React.createElement(Route, { path: 'change-password', element: React.createElement(Navigate, { to: '/account-security', replace: true }) }),
-          React.createElement(Route, { path: 'bale-purchase-order', element: React.createElement(BalePurchaseOrder, null) })
+          React.createElement(Route, { path: 'bale-purchase-order', element: React.createElement(BalePurchaseOrder, null) }),
+          React.createElement(Route, { path: 'delivery-receipts', element: React.createElement(DeliveryReceipts, null) })
         )
       }),
       React.createElement(Route, { path: '*', element: React.createElement(Navigate, { to: '/' }) })

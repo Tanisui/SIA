@@ -2,15 +2,12 @@ const { getNextSequentialBarcode, getNextSequentialSKU } = require('./barcodeSup
 const { generateProductQrImage } = require('../services/qrCodeService')
 const { updateProductQrImagePath } = require('../repositories/productRepository')
 const { applyProductStockDelta } = require('./inventoryStock')
+const { roundMoney } = require('./salesSupport')
 
 const GRADE_DEFINITIONS = [
   { field: 'premium_items', conditionGrade: 'premium', label: 'Premium' },
   { field: 'standard_items', conditionGrade: 'standard', label: 'Standard' }
 ]
-
-function roundMoney(value) {
-  return Math.round((Number(value) || 0) * 100) / 100
-}
 
 function toWholeNumber(value) {
   const parsed = Number(value)
@@ -422,7 +419,28 @@ async function backfillMissingGeneratedProductsFromBreakdowns(conn) {
   }
 }
 
+async function assignToExistingProduct(conn, { balePurchaseId, productId, quantity }) {
+  if (!productId || quantity <= 0) throw createSyncError('productId and positive quantity required')
+
+  const [productRows] = await conn.query(
+    'SELECT id, name, stock_quantity FROM products WHERE id = ? AND COALESCE(is_active, 1) = 1 LIMIT 1',
+    [Number(productId)]
+  )
+  if (!productRows.length) throw createSyncError('Product not found')
+
+  await applyProductStockDelta(conn, {
+    productId: Number(productId),
+    deltaQuantity: toWholeNumber(quantity),
+    reference: `BALE_BREAKDOWN_ASSIGN|bale_purchase_id=${Number(balePurchaseId)}`,
+    reason: 'Assigned from bale breakdown',
+    transactionType: 'IN'
+  })
+
+  return { product_id: Number(productId), name: productRows[0].name, quantity_added: toWholeNumber(quantity) }
+}
+
 module.exports = {
   syncGeneratedProductsForBreakdown,
-  backfillMissingGeneratedProductsFromBreakdowns
+  backfillMissingGeneratedProductsFromBreakdowns,
+  assignToExistingProduct
 }

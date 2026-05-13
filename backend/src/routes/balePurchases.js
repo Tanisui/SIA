@@ -8,6 +8,7 @@ const { logAuditEventSafe } = require('../utils/auditLog')
 const { ensureScannerSchema } = require('../services/scannerSchemaService')
 const { getRuntimeConfig } = require('../services/runtimeConfigService')
 const { resolveStockTransactionTimestamp } = require('../utils/inventoryStock')
+const { assignToExistingProduct } = require('../utils/baleBreakdownProductSync')
 
 const PAYMENT_STATUSES = ['PAID', 'PARTIAL', 'UNPAID']
 const PO_STATUSES = ['PENDING', 'ORDERED', 'RECEIVED', 'COMPLETED', 'CANCELLED']
@@ -1158,6 +1159,19 @@ async function upsertBreakdown(req, res) {
       return res.status(404).json({ error: 'bale purchase not found' })
     }
 
+    // Guard: D.R. must be confirmed before breakdown can start
+    const [drRows] = await conn.query(
+      `SELECT id FROM delivery_receipts WHERE bale_purchase_id = ? AND status = 'CONFIRMED' LIMIT 1`,
+      [balePurchaseId]
+    )
+    if (!drRows.length) {
+      await conn.rollback().catch(() => {})
+      safeRelease()
+      return res.status(400).json({
+        error: 'A confirmed Delivery Receipt is required before starting bale breakdown. Please create and confirm a D.R. first.'
+      })
+    }
+
     const [existingRows] = await conn.query('SELECT * FROM bale_breakdowns WHERE bale_purchase_id = ? LIMIT 1 FOR UPDATE', [balePurchaseId])
     const existing = existingRows[0] || {}
     const payload = normalizeBreakdownInput(req.body, existing)
@@ -1289,6 +1303,51 @@ async function upsertBreakdown(req, res) {
 
 router.post('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
 router.put('/:id/breakdown', express.json(), verifyToken, authorize('inventory.receive'), upsertBreakdown)
+
+router.post('/:id/breakdown/assign-existing', express.json(), verifyToken,
+  authorize('inventory.receive'),
+  async (req, res) => {
+    const conn = await db.pool.getConnection()
+    try {
+      const balePurchaseId = Number(req.params.id)
+      const { product_id, quantity } = req.body || {}
+
+      await conn.beginTransaction()
+
+      const [purchaseRows] = await conn.query(
+        'SELECT * FROM bale_purchases WHERE id = ? LIMIT 1 FOR UPDATE', [balePurchaseId]
+      )
+      if (!purchaseRows.length) {
+        await conn.rollback().catch(() => {})
+        return res.status(404).json({ error: 'Purchase not found' })
+      }
+
+      if (!['RECEIVED', 'COMPLETED'].includes(purchaseRows[0].po_status)) {
+        await conn.rollback().catch(() => {})
+        return res.status(409).json({ error: 'Can only assign to received or completed bale purchases' })
+      }
+
+      if (!purchaseRows[0].dr_confirmed) {
+        await conn.rollback().catch(() => {})
+        return res.status(400).json({ error: 'A confirmed Delivery Receipt is required before assigning products.' })
+      }
+
+      const result = await assignToExistingProduct(conn, {
+        balePurchaseId,
+        productId: product_id,
+        quantity: Number(quantity)
+      })
+      await conn.commit()
+      res.json({ ok: true, ...result })
+    } catch (err) {
+      await conn.rollback().catch(() => {})
+      const status = err.statusCode || 500
+      res.status(status).json({ error: err.message || 'failed to assign product' })
+    } finally {
+      conn.release()
+    }
+  }
+)
 
 // Receive a bale purchase: update receipt totals and keep a generic audit trail entry.
 router.post('/:id/receive', express.json(), verifyToken, authorize('inventory.receive'), async (req, res) => {
