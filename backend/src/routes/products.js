@@ -12,6 +12,7 @@ const {
 } = require('../utils/barcodeSupport')
 const { normalizeScannedCode, isScannedCodeValid } = require('../utils/scannerSupport')
 const { ensureScannerSchema } = require('../services/scannerSchemaService')
+const { ensureManualProductInsertGuard } = require('../services/productManualStockGuardService')
 const { generateProductQrImage } = require('../services/qrCodeService')
 const { applyProductStockDelta } = require('../utils/inventoryStock')
 const {
@@ -75,6 +76,13 @@ function duplicateFieldMessage(field) {
   if (field === 'barcode') return 'Barcode already exists'
   if (field === 'sku') return 'SKU already exists'
   return 'Duplicate value already exists'
+}
+
+function manualDuplicateProductMessage(product) {
+  const normalizedName = String(product?.name || '').trim() || 'This manual product'
+  const normalizedSku = String(product?.sku || '').trim()
+  const label = normalizedSku ? `${normalizedName} (${normalizedSku})` : normalizedName
+  return `A similar manual product already exists: ${label}. Use Inventory > Stock In for that product instead of creating another one.`
 }
 
 function normalizeComparableText(value) {
@@ -207,19 +215,6 @@ async function resolveOrCreateCategoryByName(conn, name) {
       typeName: resolvedInput.typeName || null
     }
   }
-}
-
-async function resolveSupplierId(conn, supplierId) {
-  if (supplierId === undefined || supplierId === null || String(supplierId).trim() === '') return null
-
-  const normalizedSupplierId = Number(supplierId)
-  if (!Number.isInteger(normalizedSupplierId) || normalizedSupplierId <= 0) {
-    throw createHttpError(400, 'supplier_id must be a valid supplier')
-  }
-
-  const [rows] = await conn.query('SELECT id FROM suppliers WHERE id = ? LIMIT 1', [normalizedSupplierId])
-  if (!rows.length) throw createHttpError(400, 'supplier not found')
-  return normalizedSupplierId
 }
 
 async function resolveCategoryNameById(conn, categoryId) {
@@ -429,6 +424,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
   const conn = await db.pool.getConnection()
   try {
     await ensureAutomatedReportsSchema()
+    await ensureManualProductInsertGuard(conn)
     await conn.beginTransaction()
     await ensureScannerSchema(conn)
 
@@ -447,7 +443,6 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
       color,
       barcode,
       product_source,
-      supplier_id,
       bale_purchase_id,
       condition_grade
     } = req.body || {}
@@ -475,7 +470,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
     }
     let normalizedStockQuantity = Number.isFinite(requestedInitialStock)
       ? Math.floor(requestedInitialStock)
-      : 1
+      : 0
 
     const normalizedSourceInput = String(product_source || '').trim().toLowerCase()
     const isBaleSourceCreate = normalizedSourceInput === 'bale_breakdown'
@@ -491,6 +486,9 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
     let normalizedSubcategoryInput = subcategory
 
     const normalizedPrice = roundMoney(price)
+    if (normalizedPrice <= 0) {
+      throw createHttpError(400, 'Selling price must be greater than 0')
+    }
     const normalizedLowStockThreshold = Number.isFinite(Number(low_stock_threshold))
       ? Math.max(0, Number(low_stock_threshold))
       : 10
@@ -508,8 +506,6 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
     let stockInReference = null
     let stockInReason = null
     let stockInCreatedAt = new Date()
-    let normalizedManualSupplierId = null
-
     if (!isBarcodeBlank(requestedBarcode)) {
       normalizedBarcode = normalizeBarcode(requestedBarcode)
       if (!validateBarcodeFormat(normalizedBarcode)) throw createHttpError(400, BARCODE_FORMAT_ERROR)
@@ -580,7 +576,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
 
       normalizedSourceBreakdownId = Number(breakdown.breakdown_id) || null
       normalizedAllocatedCost = roundMoney(Number(breakdown.cost_per_saleable_item) || 0)
-      normalizedCost = normalizedCostInput > 0 ? normalizedCostInput : normalizedAllocatedCost
+      normalizedCost = normalizedAllocatedCost
 
       if (!normalizedCategoryId && breakdown.bale_category) {
         const resolvedCategory = await resolveOrCreateCategoryByName(conn, breakdown.bale_category)
@@ -595,10 +591,13 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
       stockInReference = `BALE_PRODUCT_CREATE|bale_purchase_id=${normalizedBalePurchaseId}|breakdown_id=${normalizedSourceBreakdownId || ''}|grade=${normalizedConditionGrade}`
       stockInReason = `Created from bale record (${gradeLabel})`
       normalizedProductSource = 'bale_breakdown'
-    }
-
-    if (normalizedProductSource === 'manual') {
-      normalizedManualSupplierId = await resolveSupplierId(conn, supplier_id)
+    } else {
+      if (normalizedStockQuantity > 0) {
+        throw createHttpError(400, 'Manual product creation does not add stock. Use Inventory > Stock In.')
+      }
+      if (normalizedCostInput <= 0) {
+        throw createHttpError(400, 'Cost price must be greater than 0')
+      }
     }
 
     normalizedSubcategory = await normalizeCategoryType(conn, normalizedCategoryId, normalizedSubcategoryInput)
@@ -609,8 +608,26 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
       throw createHttpError(400, 'category or type is required when product name is not provided')
     }
 
-    const shouldAttemptSimilarMerge = !requestedSku && !requestedBarcode
-    const mergeDeltaQuantity = isBaleSourceCreate ? requestedBaleQuantity : normalizedStockQuantity
+    if (normalizedProductSource === 'manual') {
+      const duplicateManualProduct = await findSimilarProductForMerge(conn, {
+        name: normalizedName,
+        brand: normalizedBrand,
+        size: normalizedSize,
+        categoryId: normalizedCategoryId,
+        subcategory: normalizedSubcategory,
+        productSource: normalizedProductSource,
+        balePurchaseId: normalizedBalePurchaseId,
+        conditionGrade: normalizedConditionGrade,
+        price: normalizedPrice
+      })
+
+      if (duplicateManualProduct) {
+        throw createHttpError(409, manualDuplicateProductMessage(duplicateManualProduct))
+      }
+    }
+
+    const shouldAttemptSimilarMerge = isBaleSourceCreate && !requestedSku && !requestedBarcode
+    const mergeDeltaQuantity = requestedBaleQuantity
 
     if (shouldAttemptSimilarMerge && mergeDeltaQuantity > 0) {
       const mergeCandidate = await findSimilarProductForMerge(conn, {
@@ -634,7 +651,6 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
         const stockResult = await applyProductStockDelta(conn, {
           productId: mergeCandidate.id,
           deltaQuantity: mergeDeltaQuantity,
-          supplierId: normalizedManualSupplierId,
           userId: req.auth.id,
           reference: mergeReference,
           reason: mergeReason,
@@ -687,10 +703,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
       }
     }
 
-    const shouldRecordManualInitialStock = normalizedProductSource === 'manual'
-      && normalizedManualSupplierId
-      && normalizedStockQuantity > 0
-    const insertStockQuantity = shouldRecordManualInitialStock ? 0 : normalizedStockQuantity
+    const insertStockQuantity = 0
 
     const [result] = await conn.query(
       `INSERT INTO products (
@@ -717,7 +730,7 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
         normalizedBalePurchaseId,
         normalizedConditionGrade,
         normalizedAllocatedCost || 0,
-        'available',
+        'sold',
         normalizedDateEncoded
       ]
     )
@@ -727,6 +740,13 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
       await conn.query(
         'UPDATE products SET barcode = ? WHERE id = ?',
         [normalizedBarcode, result.insertId]
+      )
+    }
+
+    if (!isBaleSourceCreate) {
+      await conn.query(
+        "UPDATE products SET stock_quantity = 0, status = 'sold' WHERE id = ?",
+        [result.insertId]
       )
     }
 
@@ -744,17 +764,6 @@ router.post('/', express.json(), verifyToken, authorize('products.create'), asyn
         reference: stockInReference,
         reason: stockInReason,
         createdAt: stockInCreatedAt,
-        transactionType: 'IN'
-      })
-    } else if (shouldRecordManualInitialStock) {
-      await applyProductStockDelta(conn, {
-        productId: result.insertId,
-        deltaQuantity: normalizedStockQuantity,
-        supplierId: normalizedManualSupplierId,
-        userId: req.auth.id,
-        reference: 'PRODUCT_CREATE_INITIAL_STOCK',
-        reason: 'Initial manual stock from product create',
-        createdAt: new Date(),
         transactionType: 'IN'
       })
     }
@@ -852,13 +861,6 @@ router.put('/:id', express.json(), verifyToken, authorize('products.update'), as
       throw createHttpError(400, 'Product type and bale source link cannot be changed after creation.')
     }
 
-    if (stock_quantity !== undefined && existingProductSource !== 'manual') {
-      const sourceLabel = existingProductSource === 'repaired_damage'
-        ? 'received repaired'
-        : 'bale-linked'
-      throw createHttpError(400, `Stock quantity for ${sourceLabel} products is managed by its dedicated intake flow.`)
-    }
-
     const updates = []
     const params = []
 
@@ -890,10 +892,23 @@ router.put('/:id', express.json(), verifyToken, authorize('products.update'), as
       updates.push('subcategory = ?')
       params.push(await normalizeCategoryType(conn, nextCategoryId, subcategory !== undefined ? subcategory : ''))
     }
-    if (price !== undefined) { updates.push('price = ?'); params.push(price) }
-    if (cost !== undefined) { updates.push('cost = ?'); params.push(cost) }
     if (stock_quantity !== undefined) {
-      throw createHttpError(400, 'Stock quantity cannot be edited here. Use Inventory > Stock In for manual products.')
+      throw createHttpError(400, 'Stock quantity cannot be edited here. Use Inventory > Stock In or Stock Out/Adjust.')
+    }
+    if (price !== undefined) {
+      const normalizedPrice = roundMoney(price)
+      if (normalizedPrice <= 0) throw createHttpError(400, 'Selling price must be greater than 0')
+      updates.push('price = ?')
+      params.push(normalizedPrice)
+    }
+    if (cost !== undefined) {
+      if (existingProductSource === 'bale_breakdown') {
+        throw createHttpError(400, 'Cost price for bale-linked products is managed from the bale record.')
+      }
+      const normalizedCost = roundMoney(cost)
+      if (normalizedCost <= 0) throw createHttpError(400, 'Cost price must be greater than 0')
+      updates.push('cost = ?')
+      params.push(normalizedCost)
     }
     if (low_stock_threshold !== undefined) { updates.push('low_stock_threshold = ?'); params.push(low_stock_threshold) }
     if (size !== undefined) { updates.push('size = ?'); params.push(size) }

@@ -11,6 +11,7 @@ import { PRODUCT_SIZE_OPTIONS } from '../constants/productSizes.js'
 // ─── Helpers ───
 const fmt = (n) => Number(n || 0).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })
 const normalizeScanCode = (v) => String(v || '').trim().toUpperCase()
+const roundCurrency = (value) => Math.round((Number(value) || 0) * 100) / 100
 
 function parseInventoryDateTime(value) {
   if (!value) return null
@@ -191,6 +192,13 @@ function productSourceLabel(product) {
   return 'Manual'
 }
 
+function productCreationSourceLabel(product) {
+  const sourceKey = productSourceKey(product)
+  if (sourceKey === 'bale_breakdown') return 'From Bale Record'
+  if (sourceKey === 'repaired_damage') return 'Repaired Item'
+  return 'Manual Product'
+}
+
 function stockInProductLabel(product) {
   const identityParts = [
     product?.category,
@@ -257,15 +265,15 @@ function createEmptyProductForm(overrides = {}) {
     description: '',
     category_id: '',
     subcategory: '',
+    cost: '',
     price: '',
-    stock_quantity: '1',
+    stock_quantity: '',
     low_stock_threshold: '10',
     size: '',
     barcode: '',
     product_source: 'manual',
-    supplier_id: '',
     bale_purchase_id: '',
-    condition_grade: 'premium',
+    condition_grade: '',
     ...overrides
   }
 }
@@ -823,6 +831,7 @@ export default function Inventory() {
   const [filterType, setFilterType] = useState('')
   const [transactionSearchQuery, setTransactionSearchQuery] = useState('')
   const [transactionsPage, setTransactionsPage] = useState(1)
+  const [productsPage, setProductsPage] = useState(1)
   const [shrinkageSearchQuery, setShrinkageSearchQuery] = useState('')
   const [shrinkagePage, setShrinkagePage] = useState(1)
   const [inventoryReportSearchQuery, setInventoryReportSearchQuery] = useState('')
@@ -1344,6 +1353,7 @@ export default function Inventory() {
   }, [tab, fetchBaleStockOptions, fetchTransactions, fetchOverviewTransactions, fetchDamaged, fetchLowStock, fetchShrinkage, fetchSummary])
 
   useEffect(() => { setTransactionsPage(1) }, [transactionSearchQuery, filterType])
+  useEffect(() => { setProductsPage(1) }, [productSearchQuery, products])
   useEffect(() => { setShrinkagePage(1) }, [shrinkageSearchQuery])
 
   useEffect(() => {
@@ -2175,11 +2185,20 @@ export default function Inventory() {
     let nextCategorySearch = ''
 
     if (String(nextForm.product_source || '').trim().toLowerCase() === 'bale_breakdown' && nextForm.bale_purchase_id) {
+      if (!Number.isFinite(Number(nextForm.stock_quantity)) || Number(nextForm.stock_quantity) <= 0) {
+        nextForm.stock_quantity = '1'
+      }
+      if (!String(nextForm.condition_grade || '').trim()) {
+        nextForm.condition_grade = 'premium'
+      }
       const selectedBale = baleStockOptions.find((row) => String(row.bale_purchase_id) === String(nextForm.bale_purchase_id))
       const baleCategory = String(selectedBale?.bale_category || '').trim()
       if (baleCategory) {
         nextForm.subcategory = ''
       }
+    } else {
+      nextForm.stock_quantity = ''
+      nextForm.condition_grade = ''
     }
 
     if (!nextCategorySearch) {
@@ -2210,7 +2229,8 @@ export default function Inventory() {
     openCreateProductModal({
       product_source: 'bale_breakdown',
       bale_purchase_id: String(selectedBaleStockOptionId),
-      condition_grade: defaultGrade
+      condition_grade: defaultGrade,
+      stock_quantity: '1'
     })
   }
 
@@ -2666,7 +2686,8 @@ export default function Inventory() {
         : sourceKey === 'repaired_damage'
           ? 'repaired_damage'
           : 'manual'
-      const isSystemManagedSource = normalizedSource === 'bale_breakdown' || normalizedSource === 'repaired_damage'
+      const isBaleCreate = !isEditing && normalizedSource === 'bale_breakdown'
+      const isBaleCostManaged = normalizedSource === 'bale_breakdown'
 
       payload.sku = String(payload.sku || '').trim()
       payload.barcode = String(payload.barcode || '').trim()
@@ -2674,9 +2695,12 @@ export default function Inventory() {
       payload.description = String(payload.description || '').trim()
       payload.subcategory = String(payload.subcategory || '').trim()
 
+      payload.cost = payload.cost === '' || payload.cost === undefined
+        ? 0
+        : Number(payload.cost)
       payload.price = Number(payload.price)
       payload.stock_quantity = payload.stock_quantity === '' || payload.stock_quantity === undefined
-        ? 1
+        ? 0
         : Number(payload.stock_quantity)
       payload.low_stock_threshold = payload.low_stock_threshold === '' || payload.low_stock_threshold === undefined
         ? 10
@@ -2685,9 +2709,9 @@ export default function Inventory() {
       payload.name = buildProductNameFromClassification(payload, categories, categorySearch)
 
       if (!payload.name) return setError('Select a category or type before saving this product')
+      if (!isBaleCostManaged && (!Number.isFinite(payload.cost) || payload.cost <= 0)) return setError('Cost price must be greater than 0')
       if (!Number.isFinite(payload.price) || payload.price <= 0) return setError('Selling price must be greater than 0')
-      if (!Number.isFinite(payload.stock_quantity) || payload.stock_quantity < 0) return setError('Stock quantity must be 0 or greater')
-      payload.stock_quantity = Math.floor(payload.stock_quantity)
+      payload.cost = roundCurrency(payload.cost)
       payload.low_stock_threshold = Number.isFinite(payload.low_stock_threshold) ? Math.max(0, payload.low_stock_threshold) : 10
 
       const selectedCategoryTypeOptionsLoaded = String(categoryTypeCategoryId || '') === String(payload.category_id || '')
@@ -2696,7 +2720,7 @@ export default function Inventory() {
         return setError('Type is required for the selected category')
       }
 
-      if (!isEditing && normalizedSource === 'bale_breakdown') {
+      if (isBaleCreate) {
         const balePurchaseId = Number(payload.bale_purchase_id)
         if (!Number.isInteger(balePurchaseId) || balePurchaseId <= 0) {
           return setError('Choose a bale record before creating this product')
@@ -2730,13 +2754,9 @@ export default function Inventory() {
         payload.stock_quantity = requestedBaleQuantity
       } else if (!isEditing) {
         payload.product_source = 'manual'
-        payload.supplier_id = payload.supplier_id ? Number(payload.supplier_id) : null
-        if (payload.supplier_id !== null && (!Number.isInteger(payload.supplier_id) || payload.supplier_id <= 0)) {
-          return setError('Please select a valid supplier')
-        }
-        if (payload.supplier_id === null) delete payload.supplier_id
         delete payload.bale_purchase_id
         delete payload.condition_grade
+        delete payload.stock_quantity
       }
 
       delete payload.source_breakdown_id
@@ -2746,10 +2766,10 @@ export default function Inventory() {
 
       if (isEditing) {
         delete payload.product_source
-        delete payload.supplier_id
         delete payload.bale_purchase_id
         delete payload.condition_grade
-        if (isSystemManagedSource) delete payload.stock_quantity
+        delete payload.stock_quantity
+        if (normalizedSource === 'bale_breakdown') delete payload.cost
       }
 
       if (!payload.sku) delete payload.sku
@@ -2758,44 +2778,7 @@ export default function Inventory() {
       if (!payload.description) delete payload.description
 
       if (isEditing) {
-        try {
-          await api.put(`/products/${editingProduct}`, payload)
-        } catch (updateErr) {
-          const backendMessage = String(updateErr?.response?.data?.error || '').toLowerCase()
-          const isLegacyStockQuantityRule = backendMessage.includes('stock quantity is managed through stock in')
-
-          if (!isLegacyStockQuantityRule) {
-            throw updateErr
-          }
-
-          const editingProductId = Number(editingProduct)
-          const previousStockQuantity = Number(
-            products.find((row) => Number(row.id) === editingProductId)?.stock_quantity ?? 0
-          )
-          const nextStockQuantity = Number(payload.stock_quantity)
-          const stockDelta = Math.floor(nextStockQuantity) - Math.floor(previousStockQuantity)
-
-          const updatePayloadWithoutStock = { ...payload }
-          delete updatePayloadWithoutStock.stock_quantity
-
-          await api.put(`/products/${editingProduct}`, updatePayloadWithoutStock)
-
-          if (stockDelta > 0) {
-            await api.post('/inventory/stock-in', {
-              product_id: editingProductId,
-              quantity: stockDelta,
-              reference: 'PRODUCT_EDIT_QUANTITY_COMPAT',
-              date: buildStockInTimestamp(new Date().toISOString().slice(0, 10))
-            })
-          } else if (stockDelta < 0) {
-            await api.post('/inventory/stock-out/adjust', {
-              product_id: editingProductId,
-              quantity: Math.abs(stockDelta),
-              reason: 'Quantity adjusted from Product Management'
-            })
-          }
-        }
-
+        await api.put(`/products/${editingProduct}`, payload)
         showMsg('Product updated')
         await fetchAll()
       } else {
@@ -2812,7 +2795,11 @@ export default function Inventory() {
           const quantitySuffix = adjustedQuantity > 0 ? ` (+${adjustedQuantity})` : ''
           showMsg(`${sourceLabel} quantity adjusted for similar existing product${quantitySuffix}.`)
         } else {
-          showMsg(gradeLabel ? `${gradeLabel} product created successfully.` : 'Product created')
+          showMsg(
+            gradeLabel
+              ? `${gradeLabel} product created successfully.`
+              : 'Product created. Use Inventory > Stock In to add inventory.'
+          )
         }
 
         await Promise.all([
@@ -2834,9 +2821,9 @@ export default function Inventory() {
     setEditingProduct(p.id)
     setProductForm({
       sku: p.sku || '', name: p.name || '', brand: p.brand || '', description: p.description || '',
-      category_id: p.category_id || '', price: p.price || '',
+      category_id: p.category_id || '', cost: String(p.cost ?? ''), price: String(p.price ?? ''),
       subcategory: p.subcategory || '',
-      stock_quantity: String(p.stock_quantity ?? 0), low_stock_threshold: p.low_stock_threshold || '10',
+      stock_quantity: String(p.stock_quantity ?? 0), low_stock_threshold: String(p.low_stock_threshold ?? 10),
       size: p.size || '',
       barcode: p.barcode || '',
       product_source: p.product_source || (Number(p.bale_purchase_id || 0) > 0 ? 'bale_breakdown' : 'manual'),
@@ -2910,10 +2897,15 @@ export default function Inventory() {
     listedProducts.filter((product) => {
       const linkedBaleOption = Number(product?.bale_purchase_id || 0) > 0
         ? baleOptionByPurchaseId.get(String(product.bale_purchase_id))
-        : null
+      : null
       return productSearchMatches(product, linkedBaleOption, productSearchText)
     })
   ), [baleOptionByPurchaseId, listedProducts, productSearchText])
+  const PRODUCTS_PAGE_SIZE = 10
+  const productsTotalPages = Math.max(1, Math.ceil(searchedProducts.length / PRODUCTS_PAGE_SIZE))
+  const pagedProducts = useMemo(() => (
+    searchedProducts.slice((productsPage - 1) * PRODUCTS_PAGE_SIZE, productsPage * PRODUCTS_PAGE_SIZE)
+  ), [searchedProducts, productsPage])
   const selectedBaleStockOption = useMemo(() => (
     baleStockOptions.find((row) => String(row.bale_purchase_id) === String(selectedBaleStockOptionId)) || null
   ), [baleStockOptions, selectedBaleStockOptionId])
@@ -3024,7 +3016,7 @@ export default function Inventory() {
   const isCreateBaleSource = !editingProduct && String(productForm.product_source || 'manual').toLowerCase() === 'bale_breakdown'
   const isEditingBaleProduct = Boolean(editingProduct) && String(productForm.product_source || 'manual').toLowerCase() === 'bale_breakdown'
   const isEditingRepairedProduct = Boolean(editingProduct) && String(productForm.product_source || 'manual').toLowerCase() === 'repaired_damage'
-  const isSystemManagedProductQuantity = isEditingBaleProduct || isEditingRepairedProduct
+  const isProductCostReadOnly = isCreateBaleSource || isEditingBaleProduct
   const productFormBaleOption = useMemo(() => (
     baleStockOptions.find((row) => String(row.bale_purchase_id) === String(productForm.bale_purchase_id || '')) || null
   ), [baleStockOptions, productForm.bale_purchase_id])
@@ -3036,6 +3028,9 @@ export default function Inventory() {
   const productFormAvailableForSelectedGrade = productFormSelectedGrade === 'premium'
     ? productFormPendingPremium
     : productFormPendingStandard
+  const productFormDisplayedCost = isCreateBaleSource
+    ? (productFormBaleOption?.cost_per_saleable_item ?? '')
+    : (productForm.cost ?? '')
   const categoryTypeOptionsMatchSelectedCategory = String(categoryTypeCategoryId || '') === String(productForm.category_id || '')
   const selectedProductCategoryHasTypes = categoryTypeOptionsMatchSelectedCategory && categoryTypeOptions.length > 0
   const isBaleCategorySyncedProduct = isCreateBaleSource || isEditingBaleProduct
@@ -3203,9 +3198,12 @@ export default function Inventory() {
   , [filteredShrinkage, shrinkagePage])
 
   const editingProductRow = products.find((p) => Number(p.id) === Number(editingProduct)) || null
+  const editingProductStockQuantity = editingProductRow
+    ? Number(editingProductRow.stock_quantity || 0)
+    : Number(productForm.stock_quantity || 0)
   const editingProductSourceText = editingProductRow
-    ? productSourceLabel(editingProductRow)
-    : productSourceLabel(productForm)
+    ? productCreationSourceLabel(editingProductRow)
+    : productCreationSourceLabel(productForm)
 
   return React.createElement('div', { className: 'page' },
     React.createElement('div', { className: 'page-header' },
@@ -4033,11 +4031,11 @@ export default function Inventory() {
         React.createElement('form', { className: 'inventory-product-form', onSubmit: handleSaveProduct },
           React.createElement('div', { className: 'inventory-product-form-grid', style: { display: 'grid', gap: 12 } },
             React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Stock Source'),
+              React.createElement('label', { className: 'form-label' }, 'Creation Source'),
               editingProduct
                 ? React.createElement('input', {
                     className: 'form-input',
-                    value: productSourceLabel(productForm),
+                    value: productCreationSourceLabel(productForm),
                     disabled: true,
                     readOnly: true
                   })
@@ -4056,35 +4054,22 @@ export default function Inventory() {
                       setProductForm((form) => ({
                         ...form,
                         product_source: nextSource,
-                        supplier_id: nextSource === 'manual' ? form.supplier_id : '',
                         bale_purchase_id: nextBalePurchaseId,
+                        stock_quantity: nextSource === 'bale_breakdown'
+                          ? (Number(form.stock_quantity) > 0 ? String(Math.floor(Number(form.stock_quantity))) : '1')
+                          : '',
                         category_id: nextSource === 'bale_breakdown' ? '' : form.category_id,
                         subcategory: nextSource === 'bale_breakdown' ? '' : form.subcategory,
                         condition_grade: nextSource === 'bale_breakdown'
                           ? (String(form.condition_grade || '').trim().toLowerCase() === 'standard' ? 'standard' : 'premium')
-                          : 'premium'
+                          : ''
                       }))
                       if (nextSource === 'bale_breakdown' && nextBalePurchaseId) applyBaleCategoryToProductForm(nextBalePurchaseId).catch(() => {})
                     }
                   },
-                    React.createElement('option', { value: 'manual' }, 'Manual'),
+                    React.createElement('option', { value: 'manual' }, 'Manual Product'),
                     React.createElement('option', { value: 'bale_breakdown' }, 'From Bale Record')
                   )
-            ),
-            !editingProduct && !isCreateBaleSource && React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Supplier'),
-              React.createElement('select', {
-                className: 'form-input',
-                value: productForm.supplier_id || '',
-                onChange: (e) => setProductForm((form) => ({ ...form, supplier_id: e.target.value })),
-                disabled: suppliers.length === 0
-              },
-                React.createElement('option', { value: '' }, suppliers.length ? '-- Select supplier --' : 'No suppliers available'),
-                ...suppliers.map((supplier) => React.createElement('option', {
-                  key: `product-manual-supplier-${supplier.id}`,
-                  value: supplier.id
-                }, supplier.name))
-              )
             ),
             (isCreateBaleSource || isEditingBaleProduct) && React.createElement('div', { className: 'form-group' },
               React.createElement('label', { className: 'form-label' }, 'Bale Record *'),
@@ -4233,20 +4218,42 @@ export default function Inventory() {
               React.createElement('input', { className: 'form-input', value: productForm.brand, onChange: e => setProductForm(f => ({ ...f, brand: e.target.value })), placeholder: 'e.g. Nike, Zara...' })
             ),
             React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Selling Price'),
-              React.createElement('input', { className: 'form-input', type: 'number', step: '0.01', value: productForm.price, onChange: e => setProductForm(f => ({ ...f, price: e.target.value })) })
-            ),
-            React.createElement('div', { className: 'form-group' },
-              React.createElement('label', { className: 'form-label' }, 'Quantity'),
+              React.createElement('label', { className: 'form-label' }, 'Cost Price'),
               React.createElement('input', {
                 className: 'form-input',
                 type: 'number',
-                min: isCreateBaleSource ? 1 : 0,
+                step: '0.01',
+                min: '0',
+                value: productFormDisplayedCost,
+                onChange: isProductCostReadOnly ? undefined : (e) => setProductForm((f) => ({ ...f, cost: e.target.value })),
+                disabled: isProductCostReadOnly,
+                readOnly: isProductCostReadOnly,
+                placeholder: isCreateBaleSource ? 'Auto-filled from bale record' : undefined
+              })
+            ),
+            React.createElement('div', { className: 'form-group' },
+              React.createElement('label', { className: 'form-label' }, 'Selling Price'),
+              React.createElement('input', { className: 'form-input', type: 'number', step: '0.01', value: productForm.price, onChange: e => setProductForm(f => ({ ...f, price: e.target.value })) })
+            ),
+            isCreateBaleSource && React.createElement('div', { className: 'form-group' },
+              React.createElement('label', { className: 'form-label' }, 'Units to Create'),
+              React.createElement('input', {
+                className: 'form-input',
+                type: 'number',
+                min: 1,
                 step: 1,
                 value: productForm.stock_quantity,
-                onChange: (e) => setProductForm((f) => ({ ...f, stock_quantity: e.target.value })),
-                disabled: isSystemManagedProductQuantity,
-                readOnly: isSystemManagedProductQuantity
+                onChange: (e) => setProductForm((f) => ({ ...f, stock_quantity: e.target.value }))
+              })
+            ),
+            editingProduct && React.createElement('div', { className: 'form-group' },
+              React.createElement('label', { className: 'form-label' }, 'Current Stock'),
+              React.createElement('input', {
+                className: 'form-input',
+                type: 'number',
+                value: String(editingProductStockQuantity),
+                disabled: true,
+                readOnly: true
               })
             ),
             React.createElement('div', { className: 'form-group' },
@@ -4266,20 +4273,26 @@ export default function Inventory() {
             React.createElement('textarea', { className: 'form-input', value: productForm.description, onChange: e => setProductForm(f => ({ ...f, description: e.target.value })), rows: 2 })
           ),
           React.createElement('div', { className: 'inventory-product-form-help', style: { marginBottom: 14, color: 'var(--text-light)', fontSize: 12 } },
-            React.createElement('div', null, `Stock Source: ${editingProductSourceText}.`),
+            React.createElement('div', null, `Creation Source: ${editingProductSourceText}.`),
             React.createElement('div', { style: { marginTop: 4 } }, 'Product name is generated automatically from Type, or from Category when no Type is selected.'),
+            !editingProduct && !isCreateBaleSource && React.createElement('div', { style: { marginTop: 4 } },
+              'Creating a manual product only saves the catalog item. Use Inventory > Stock In to receive units.'
+            ),
             (isCreateBaleSource || isEditingBaleProduct) && React.createElement('div', { style: { marginTop: 4 } },
               isEditingBaleProduct
                 ? 'Bale Grade (Premium or Standard) is locked for bale-linked products and cannot be changed during edit.'
                 : `Available for ${productFormSelectedGrade === 'premium' ? 'Premium' : 'Standard'}: ${productFormAvailableForSelectedGrade}.`
             ),
             isCreateBaleSource && React.createElement('div', { style: { marginTop: 4 } },
-              'Set Quantity to add multiple units from this bale grade. If a similar product exists, the quantity is added to that existing product.'
+              'Cost Price is auto-filled from the selected bale record and cannot be changed here.'
             ),
-            isSystemManagedProductQuantity && React.createElement('div', { style: { marginTop: 4 } },
+            isCreateBaleSource && React.createElement('div', { style: { marginTop: 4 } },
+              'Set Units to Create to add multiple units from this bale grade. If a similar product exists, the quantity is added to that existing product.'
+            ),
+            editingProduct && React.createElement('div', { style: { marginTop: 4 } },
               isEditingRepairedProduct
-                ? 'Quantity for received repaired products is created from the Damaged tab and cannot be edited here.'
-                : 'Quantity for bale-linked products is created from the bale record flow and cannot be edited here.'
+                ? 'Current stock is read-only here. Use Inventory flows to receive or remove repaired-product units.'
+                : 'Current stock is read-only here. Use Inventory > Stock In or Stock Out/Adjust to change quantity.'
             )
           ),
           React.createElement('div', { className: 'inventory-product-form-actions', style: { display: 'flex', gap: 8 } },
@@ -4312,7 +4325,98 @@ export default function Inventory() {
               ? 'Try a different keyword, or clear the search.'
               : 'Use Stock In to bring in your first product.')
           )
-        : React.createElement('div', { className: 'inventory-product-tile-grid' },
+        : React.createElement('div', { className: 'card inventory-products-table-card' },
+            React.createElement('div', { className: 'inventory-products-table' },
+              React.createElement('table', { className: 'inventory-products-grid-table' },
+                React.createElement('thead', null,
+                  React.createElement('tr', null,
+                    React.createElement('th', null, 'SKU / Barcode'),
+                    React.createElement('th', null, 'Product'),
+                    React.createElement('th', null, 'Source'),
+                    React.createElement('th', null, 'Cost Price'),
+                    React.createElement('th', null, 'Selling Price'),
+                    React.createElement('th', null, 'Stock'),
+                    React.createElement('th', null, 'Low Stock Threshold'),
+                    React.createElement('th', null, 'Actions')
+                  )
+                ),
+                React.createElement('tbody', null,
+                  pagedProducts.map((p) => {
+                    const linkedBaleOption = Number(p?.bale_purchase_id || 0) > 0
+                      ? baleOptionByPurchaseId.get(String(p.bale_purchase_id))
+                      : null
+                    const stock = Number(p.stock_quantity || 0)
+                    const threshold = Number(p.low_stock_threshold || 10)
+                    const stockChipClass = stock <= 0
+                      ? 'inventory-chip inventory-chip--danger'
+                      : stock <= threshold
+                        ? 'inventory-chip inventory-chip--warning'
+                        : 'inventory-chip inventory-chip--success'
+                    const sourceDetail = p.condition_grade
+                      ? toTitleCaseWords(p.condition_grade)
+                      : productSourceKey(p) === 'repaired_damage'
+                        ? 'Ready to Sell'
+                        : null
+
+                    return React.createElement('tr', { key: `product-row-${p.id}` },
+                      React.createElement('td', null,
+                        React.createElement('div', { className: 'inventory-product-primary' }, p.sku || 'No SKU'),
+                        React.createElement('div', { className: 'inventory-product-meta' }, p.barcode || 'No barcode')
+                      ),
+                      React.createElement('td', { className: 'inventory-product-cell-main' },
+                        React.createElement('div', { className: 'inventory-product-primary' }, p.name || 'Unnamed product'),
+                        React.createElement('div', { className: 'inventory-product-meta' },
+                          `${p.brand || 'No brand'} • ${p.category || 'Uncategorized'}${p.subcategory ? ` • ${p.subcategory}` : ''}${p.size ? ` • Size ${p.size}` : ''}`
+                        )
+                      ),
+                      React.createElement('td', { className: 'inventory-product-cell-source' },
+                        React.createElement('div', { className: 'inventory-product-chips' },
+                          React.createElement('span', { className: 'inventory-chip' }, productSourceLabel(p)),
+                          sourceDetail && React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, sourceDetail),
+                          linkedBaleOption?.bale_batch_no && React.createElement('span', { className: 'inventory-chip inventory-chip--subtle' }, linkedBaleOption.bale_batch_no)
+                        )
+                      ),
+                      React.createElement('td', { className: 'inventory-product-cell-price' }, fmt(p.cost)),
+                      React.createElement('td', { className: 'inventory-product-cell-price' }, fmt(p.price)),
+                      React.createElement('td', { className: 'inventory-product-cell-stock' },
+                        React.createElement('div', { className: 'inventory-stock-pill' }, stock),
+                        React.createElement('div', { className: 'inventory-product-meta' },
+                          React.createElement('span', { className: stockChipClass }, stock <= 0 ? 'Out' : stock <= threshold ? 'Low' : 'Healthy')
+                        )
+                      ),
+                      React.createElement('td', { className: 'inventory-product-cell-stock' }, threshold),
+                      React.createElement('td', { className: 'inventory-product-cell-actions' },
+                        React.createElement('div', { className: 'inventory-product-actions' },
+                          React.createElement('button', {
+                            type: 'button',
+                            className: 'product-action-icon',
+                            title: `View QR for ${p.name}`,
+                            onClick: () => openQrPreview(p)
+                          }, qrActionIcon()),
+                          React.createElement('button', {
+                            type: 'button',
+                            className: 'product-action-icon',
+                            title: `Edit ${p.name}`,
+                            onClick: () => startEditProduct(p)
+                          }, editActionIcon()),
+                          React.createElement('button', {
+                            type: 'button',
+                            className: 'product-action-icon product-action-icon--danger',
+                            title: `Delete ${p.name}`,
+                            onClick: () => deleteProduct(p.id)
+                          }, deleteActionIcon())
+                        )
+                      )
+                    )
+                  })
+                )
+              )
+            ),
+            React.createElement('div', { className: 'inventory-products-table-footer' },
+              React.createElement(PaginationInfo, { current: productsPage, pageSize: PRODUCTS_PAGE_SIZE, total: searchedProducts.length }),
+              productsTotalPages > 1 && React.createElement(Pagination, { current: productsPage, total: productsTotalPages, onPageChange: setProductsPage })
+            ),
+            false && React.createElement('div', { style: { display: 'none' } },
             searchedProducts.map((p) => {
               const linkedBaleOption = Number(p?.bale_purchase_id || 0) > 0
                 ? baleOptionByPurchaseId.get(String(p.bale_purchase_id))
@@ -4384,7 +4488,7 @@ export default function Inventory() {
                 )
               )
             })
-          ),
+          )),
 
       false && qrPreviewProduct && React.createElement('div', {
         className: 'modal-backdrop',

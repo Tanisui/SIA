@@ -4404,14 +4404,37 @@ tbody tr:hover {
   overflow-x: auto;
 }
 
+.inventory-products-table-card {
+  padding: 0;
+  overflow: hidden;
+}
+
 .inventory-products-grid-table {
+  width: 100%;
   min-width: 840px;
+}
+
+.inventory-products-grid-table thead th {
+  background: linear-gradient(180deg, var(--surface) 0%, var(--surface-muted) 100%);
+  border-bottom: 1px solid var(--hairline-soft);
+}
+
+.inventory-products-grid-table tbody tr + tr td {
+  border-top: 1px solid var(--hairline-soft);
 }
 
 .inventory-products-grid-table tbody td {
   vertical-align: top;
   padding-top: 0.9rem;
   padding-bottom: 0.9rem;
+}
+
+.inventory-products-table-footer {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.95rem 1.15rem 1.1rem;
+  border-top: 1px solid var(--hairline-soft);
+  background: linear-gradient(180deg, var(--surface) 0%, rgba(249, 246, 240, 0.92) 100%);
 }
 
 .inventory-product-cell-main {
